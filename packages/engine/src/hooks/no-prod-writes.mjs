@@ -195,7 +195,7 @@ export function decide(input, opts = {}) {
   // cuando el motor lo instala como hook global — pero por defecto respeta el
   // mismo principio: si noxloop no esta corriendo, esta sesion es de una
   // persona y no le corresponde a este hook decidir.
-  const activa = tareaActiva(opts);
+  const activa = tareaActiva(opts, input);
   if (!activa && !opts.always) return ALLOW;
 
   for (const segmento of segmentar(comando)) {

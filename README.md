@@ -15,14 +15,23 @@ dejar pull requests abiertos. No mergea. No despliega. Ahí termina, a propósit
                                                             └─ T3 ─┘   (rebase, verifica, integra)
 ```
 
-> **Estado: en construcción.** El motor base está completo y probado (80 tests,
-> typecheck y validación de esquemas en verde). La ejecución de tareas, el
-> paralelismo y los tres proveedores reales están especificados y en curso — ver
+> **Estado: el recorrido completo funciona contra un gestor de prueba.** 180
+> tests, typecheck y validación de esquemas en verde. Lo que falta para usarlo en
+> serio son los tres proveedores reales y el modo daemon — ver
 > [el plan de trabajo](#el-plan-de-trabajo).
 
 ---
 
 ## Qué lo hace distinto
+
+**El test existió y falló antes del código, y se puede comprobar sin leer el motor.**
+Cada tarea deja dos commits, en este orden:
+
+```
+$ git log --format='%h %s' --reverse <rama>
+a1b2c3d  test(app): ocultar la columna costo (T001, H-42)
+e4f5g6h  feat(app): ocultar la columna costo (T001, H-42)
+```
 
 **El TDD no es una preferencia: es un hook.** Ningún archivo de producción se
 puede escribir antes de que exista un test que falló y que alguien vio fallar.
@@ -137,7 +146,7 @@ persona no eligió.
 ## Verificación
 
 ```bash
-npm test          # 80 tests: unitarios, contrato de proveedor, y guardas de constitución
+npm test          # 180 tests: unitarios, contrato de proveedor, integración y guardas de constitución
 npm run typecheck # tsc --checkJs, sin paso de build
 npm run validate  # la configuración de ejemplo contra su esquema
 ```
@@ -159,12 +168,13 @@ contratos y 84 tareas en 8 fases.
 |---|---|---|
 | 1. Setup | monorepo, CI, esquemas | ✅ 7/7 |
 | 2. Fundacional | configuración, estado con guardas, gates, hooks, worktrees, lock, contrato de proveedor, CLI | ✅ 22/22 |
-| 3. US1 — un ticket, un PR | runner con el SDK, driver del ciclo TDD, PRs, comandos del plugin | 14 tareas |
-| 4. US2 — paralelismo | scheduler, cola de integración, hitos, fan-out | 12 tareas |
+| 3. US1 — un ticket, un PR | runner con el SDK, planificador, driver del ciclo TDD, commits, PRs, plugin | ✅ 14/14 |
+| 4. US2 — paralelismo | scheduler, cola de integración, driver concurrente | ✅ 7/12 — faltan hitos y el fan-out |
 | 5. US3 — proveedores | Azure DevOps, GitHub, Linear | 9 tareas |
 | 6. US4 — retomar | reanudación, worktrees huérfanos, destrabar | 7 tareas |
 | 7. US5 — adoptabilidad | documentación de adopción, migración | 7 tareas |
 | 8. Pulido | daemon, disparo por asignación y mención | 6 tareas |
+| Descubiertas | 8 huecos que el plan no había previsto, todos cerrados | ✅ 8/8 |
 
 Dos tareas bloquean la publicación y no se negocian: **T035** (el límite de
 autonomía, verificado pidiendo un merge y un deploy) y **T080** (que los hooks

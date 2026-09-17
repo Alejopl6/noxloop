@@ -20,10 +20,7 @@ import { validate } from "../src/schema.mjs";
 const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 const PENDIENTES = {
-  plan: "T036-T040 (fase 3 de tasks.md)",
-  run: "T036-T040 (fase 3 de tasks.md)",
-  resume: "T068 (fase 6 de tasks.md)",
-  milestone: "T049-T052 (fase 4 de tasks.md)",
+  milestone: "T051 (fase 4 de tasks.md)",
   inbox: "T079 (fase 8 de tasks.md)",
   daemon: "T079-T080 (fase 8 de tasks.md)",
   unstick: "T070 (fase 6 de tasks.md)",
@@ -33,12 +30,16 @@ const AYUDA = `noxloop ${VERSION} — un ticket entra, un pull request sale.
 
   noxloop doctor                    que esta declarado, que falta, que credencial no esta
   noxloop validate [archivo]        valida una configuracion contra el esquema
+  noxloop plan <item>               planifica y PARA. Es el punto de aprobacion humana
+  noxloop run <item>                ejecuta el plan: tareas en paralelo, un PR
+  noxloop resume <item>             retoma un recorrido interrumpido
+  noxloop dispatch <item>           resuelve el nivel del ticket y delega
   noxloop status [<item>]           el estado de los recorridos, sin interpretacion
   noxloop add-target <item> <tarea> <ruta> "<motivo>"
                                     amplia el alcance de una tarea, con su motivo
 
 Todavia no implementados (cada uno dice que tarea lo trae):
-  plan, run, resume, milestone, inbox, daemon, unstick
+  milestone, inbox, daemon, unstick
 
 Opciones globales:
   --config <ruta>   por defecto ./noxloop.config.json
@@ -152,6 +153,25 @@ async function main() {
     for (const p of r.problemas) aviso(`  ✗ ${p}`);
     for (const a of r.avisos) aviso(`  · ${a}`);
     if (!r.ready) process.exit(1);
+    return;
+  }
+
+  if (comando === "plan" || comando === "run" || comando === "resume" || comando === "dispatch") {
+    const itemId = args._[1];
+    if (!itemId) {
+      aviso(`uso: noxloop ${comando} <item>`);
+      process.exit(1);
+    }
+    const config = cargar(args);
+    const { ejecutarComando } = await import("../src/comandos.mjs");
+    const r = await ejecutarComando(comando, itemId, config, {
+      dryRun: Boolean(args.flags["dry-run"]),
+      search: args.flags.search ? [String(args.flags.search)] : [],
+      materialize: args.flags["no-materialize"] ? false : true,
+    });
+    salidaJson(r);
+    for (const linea of r.humano || []) aviso(linea);
+    if (r.ok === false) process.exit(1);
     return;
   }
 

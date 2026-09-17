@@ -28,7 +28,7 @@ export function decide(input, opts = {}) {
   const ruta = input?.tool_input?.file_path;
   if (!ruta) return ALLOW;
 
-  const activa = tareaActiva(opts);
+  const activa = tareaActiva(opts, input);
   if (!activa) return ALLOW;
   const { task } = activa;
 

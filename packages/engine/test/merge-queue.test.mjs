@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRun } from "../src/state.mjs";
+import { createRun, saveRun } from "../src/state.mjs";
 import { drain } from "../src/merge-queue.mjs";
 
 const git = (cwd, ...args) =>
@@ -61,6 +61,10 @@ function runCon(esc, home) {
     t.branch = `task/${t.id}`;
   }
   run.item.branch = ITEM_BRANCH;
+  // Se persiste: las transiciones leen el estado FRESCO del disco, que es lo
+  // que evita que dos tareas en paralelo se pisen. Un estado que solo vive en
+  // memoria no existe para ellas.
+  saveRun(run, { home });
   return run;
 }
 
