@@ -181,11 +181,41 @@ contrato fijo y donde hoy se paga prosa para pasar datos entre ellos. `pipeline`
 y `parallel` con `schema` devuelven objetos validados en vez de texto que hay
 que interpretar.
 
-**A verificar antes de apostar**: `Workflow` es una herramienta de sesión de
-Claude Code. Que una sesión del SDK pueda invocarla **no está confirmado**. Por
-eso la decisión la acota al plugin: en el camino headless, el mismo fan-out se
-arma en JavaScript con varias `query()` concurrentes, que sí está confirmado. El
-motor no puede depender de una capacidad sin verificar.
+**MEDIDO (2026-09-17). Se puede, y conviene NO usarlo.**
+
+Una sesión del SDK **sí** puede invocar `Workflow`: la tool viene en la lista de
+26 por defecto y solo hace falta permiso (`allowedTools: ["Workflow"]`, o
+`canUseTool`, o `bypassPermissions` — las tres medidas). Los hooks **sí** corren
+dentro de los subagentes del workflow, con el deny sosteniéndose, así que el
+límite de autonomía no se perdería por esa vía. La tool es **asíncrona**: el
+`tool_result` es un marcador y el valor de retorno llega por
+`system/task_notification`.
+
+Y entonces se midió lo que importa. Fan-out de 4, mismo trabajo por worker, dos
+repeticiones:
+
+| Mecanismo | Reloj (mediana) | Costo |
+|---|---|---|
+| `Workflow` con `parallel([4])` | **55,65 s** | $1,46 |
+| Cuatro `query()` concurrentes | **18,12 s** | $0,52 |
+
+**Tres veces más lento y dos y media más caro**, con ±2 s de varianza. Y no es
+serialización: los cuatro agentes arrancaron dentro de 4 ms y el span fue 45,7 s
+contra 137,4 s de suma de duraciones — corrieron concurrentes de verdad. La
+penalidad es la latencia por subagente (25-46 s contra 7-18 s con el trabajo
+idéntico), su prompt de sistema de ~27k tokens, y ~7 s del turno del orquestador
+que decide llamar la tool.
+
+**Conclusión: para el reloj, varias `query()` concurrentes desde JavaScript es el
+camino, y es el que el motor ya usa.** `Workflow` queda para el camino
+interactivo, donde lo que se compra es la orquestación declarativa y no la
+velocidad.
+
+Lo que NO se midió, y por eso la conclusión tiene alcance: N=4 con dos
+repeticiones en una sola máquina, un solo modelo y una sola forma de trabajo.
+No se midió el punto de cruce con N grande (10-50, donde el cap de concurrencia
+compartido del workflow podría darlo vuelta frente a 50 procesos), ni con
+`pipeline()` multi-etapa, que es donde ese DSL promete su mejor caso.
 
 ---
 

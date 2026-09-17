@@ -131,7 +131,10 @@ export async function reduceMessages(mensajes, opts = {}) {
     // exactamente el verde inventado.
     return {
       ok: false, sessionId, budgetExhausted: false, isError: true, subtype: "stream_incompleto",
-      turns: 0, usd: null, segundos, text: texto || parcial || "el stream termino sin resultado", via: null,
+      turns: 0, usd: null, segundos, text: texto || parcial || "el stream termino sin resultado",
+      // No saber NO es aprobar: una fase cortada no produce veredicto.
+      findings: null,
+      via: null,
     };
   }
 
@@ -139,6 +142,7 @@ export async function reduceMessages(mensajes, opts = {}) {
   const budgetExhausted = typeof subtype === "string" && subtype.toLowerCase().includes("budget");
   const isError = final.is_error === true;
 
+  const salida = texto || parcial || "";
   return {
     ok: !isError && !budgetExhausted,
     sessionId,
@@ -148,9 +152,45 @@ export async function reduceMessages(mensajes, opts = {}) {
     turns: final.num_turns ?? 0,
     usd: final.total_cost_usd ?? null,
     segundos,
-    text: texto || parcial || "",
+    text: salida,
+    // Solo la fase REVIEW lo consume, pero se deriva siempre: el marcador no
+    // aparece en la salida de las otras fases, y derivarlo aca deja el campo
+    // con UN productor en vez de ninguno.
+    findings: veredictoDeRevision(salida),
     via: null,
   };
+}
+
+/** El marcador con el que el revisor declara un bloqueo. Lo exige `reviewer.md`. */
+const MARCADOR_BLOQUEANTE = /^[ \t]*hallazgo bloqueante\s*:/im;
+
+/**
+ * El veredicto de una revision, leido del texto que devolvio la fase.
+ *
+ * EL CABLE QUE ESTO CIERRA, y estuvo cortado. El driver decidia con
+ * `r.findings === "blocking"` y **nada producia ese campo**: `reduceMessages`
+ * nunca lo emitia, asi que la comparacion era siempre falsa y la revision no
+ * podia bloquear nada en produccion. Los tests pasaban porque el doble de
+ * prueba rellenaba el campo a mano — el verde inventado que el principio II
+ * prohibe, dentro del mecanismo que existe para atraparlo.
+ *
+ * El agente SI escribia el marcador; nadie lo leia.
+ *
+ * TRES ESTADOS Y NO DOS. `clean` es un veredicto completo —reviso y no
+ * encontro—; `null` es "no se sabe", y pasa cuando la fase se corto. Tratarlos
+ * igual convierte una fase que fallo en una revision aprobada.
+ *
+ * SE EXIGE AL PRINCIPIO DE UNA LINEA, y no en cualquier parte del texto: un
+ * revisor que explica como se declara un hallazgo no esta declarando uno. Es el
+ * mismo falso positivo que `no-prod-writes` ya cometio una vez — mencionar no es
+ * declarar.
+ *
+ * @param {string | null | undefined} texto
+ * @returns {"blocking" | "clean" | null}
+ */
+export function veredictoDeRevision(texto) {
+  if (typeof texto !== "string" || !texto.trim()) return null;
+  return MARCADOR_BLOQUEANTE.test(texto) ? "blocking" : "clean";
 }
 
 /**
@@ -251,7 +291,7 @@ export async function runPhase(opts, inject = {}) {
   } catch (e) {
     return {
       ok: false, sessionId: null, budgetExhausted: false, isError: true, subtype: "transporte_fallo",
-      turns: 0, usd: null, segundos: 0, text: e?.message || String(e), via,
+      turns: 0, usd: null, segundos: 0, text: e?.message || String(e), findings: null, via,
     };
   }
 }
