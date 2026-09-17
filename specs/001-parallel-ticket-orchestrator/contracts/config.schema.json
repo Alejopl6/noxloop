@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noxloop.dev/schemas/config.schema.json",
+  "title": "noxloop.config.json",
+  "description": "Configuracion de un proyecto. Es el unico lugar donde viven nombres propios: el motor no contiene ninguno.",
+  "type": "object",
+  "required": ["version", "provider", "repos"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "home": {
+      "type": "string",
+      "description": "Donde vive el estado. Por defecto ~/.noxloop. Fuera de los repos a proposito."
+    },
+    "provider": {
+      "type": "object",
+      "required": ["name", "module"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "module": {
+          "type": "string",
+          "description": "Ruta o especificador del modulo del proveedor. Puede vivir fuera de este repositorio."
+        },
+        "options": { "type": "object" },
+        "stateMap": {
+          "type": "object",
+          "description": "Estado canonico -> estado nativo. null significa que este proyecto no tiene ese estado y el motor no lo escribe.",
+          "required": ["todo", "in_progress", "blocked", "in_review", "done"],
+          "additionalProperties": false,
+          "properties": {
+            "todo": { "type": ["string", "null"] },
+            "in_progress": { "type": ["string", "null"] },
+            "blocked": { "type": ["string", "null"] },
+            "in_review": { "type": ["string", "null"] },
+            "done": { "type": ["string", "null"] }
+          }
+        },
+        "levelMap": {
+          "type": "object",
+          "description": "Tipo nativo -> nivel canonico, con un default explicito. Nunca se compara el nombre del tipo en el codigo.",
+          "required": ["default"],
+          "properties": {
+            "default": { "enum": ["epic", "feature", "story", "task"] }
+          },
+          "additionalProperties": { "enum": ["epic", "feature", "story", "task"] }
+        }
+      }
+    },
+    "forge": {
+      "type": "object",
+      "description": "Donde vive el codigo y los pull requests. Puede ser distinto del gestor de tickets, y es lo normal.",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["github", "azure-repos", "gitlab"] },
+        "cli": { "type": "string", "default": "gh" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "description": "Como se reconoce a noxloop en el gestor, para el disparo.",
+      "additionalProperties": false,
+      "properties": {
+        "assignee": { "type": "string" },
+        "mention": { "type": "string" }
+      }
+    },
+    "repos": {
+      "type": "object",
+      "description": "Un repositorio de trabajo por clave. La clave es como lo nombran las tareas del plan.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["remote", "baseBranch", "gate"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "description": "Checkout local. Si falta, se busca; siempre se verifica contra el remote." },
+          "remote": { "type": "string" },
+          "baseBranch": { "type": "string" },
+          "gate": { "type": "string", "description": "El comando cuyo exit code decide si una tarea cumple." },
+          "fastGate": { "type": "string", "description": "Version corta para tiers baratos y para el rechequeo tras el rebase." },
+          "runners": {
+            "type": "object",
+            "description": "Como correr UN test suelto en el bucle RED/GREEN, donde el gate completo seria inviable. {file} se sustituye.",
+            "additionalProperties": { "type": "string" }
+          },
+          "env": {
+            "type": "object",
+            "description": "Variables que el gate necesita. Admiten ${VAR:-default}.",
+            "additionalProperties": { "type": "string" }
+          },
+          "gaps": {
+            "type": "array",
+            "description": "Lo que este gate NO cubre. Se declara para que la ausencia sea visible en el PR y no se confunda con un verde real.",
+            "items": { "type": "string" }
+          },
+          "timeoutMs": { "type": "integer", "minimum": 1000 }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxParallelTasks": { "type": "integer", "minimum": 1, "default": 4 },
+        "maxParallelItems": { "type": "integer", "minimum": 1, "default": 2 },
+        "maxCostUsd": { "type": ["number", "null"], "description": "Techo por hito. null = sin techo. NO existe techo por invocacion: corta a mitad de una unidad indivisible." },
+        "phaseTimeoutMin": { "type": "integer", "minimum": 1, "default": 30 },
+        "callsPerItem": { "type": "integer", "minimum": 1, "default": 60 },
+        "stallRounds": { "type": "integer", "minimum": 1, "default": 2 },
+        "pollIntervalSec": { "type": "integer", "minimum": 30, "default": 120 }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "description": "Intentos por bucle, por tarea. Son por bucle y no globales: agotar GREEN no consume GATE.",
+      "additionalProperties": false,
+      "properties": {
+        "red": { "type": "integer", "minimum": 1, "default": 2 },
+        "green": { "type": "integer", "minimum": 1, "default": 3 },
+        "gate": { "type": "integer", "minimum": 1, "default": 3 },
+        "review": { "type": "integer", "minimum": 1, "default": 2 }
+      }
+    },
+    "tiers": {
+      "type": "object",
+      "description": "Que abarata cada tier. El paso RED no figura porque no es configurable: corre siempre.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["model", "effort", "gate", "review", "fanout"],
+        "additionalProperties": false,
+        "properties": {
+          "model": { "type": "string" },
+          "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+          "gate": { "enum": ["fast", "full"] },
+          "review": { "type": "boolean" },
+          "fanout": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
