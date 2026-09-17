@@ -128,19 +128,19 @@ US3.
 
 - [X] T044 [P] [US2] Test del scheduler en `packages/engine/test/scheduler.test.mjs`: la tabla completa del escenario 2 de `quickstart.md`, incluyendo `blocked` vs `unreachable` y el recorte por `maxParallelTasks`
 - [X] T045 [P] [US2] Test de la cola en `packages/engine/test/merge-queue.test.mjs`: repositorio git real, dos ramas que tocan la misma línea, rebase que falla, tarea que vuelve a `green` con el conflicto textual, rama base intacta, y gate **después** del rebase
-- [ ] T046 [P] [US2] Test de hito en `packages/engine/test/milestone.test.mjs`: orden desde dependencias cuando el proveedor las tiene, serialización declarada cuando no, `--skip` y `--only`, y el reporte final de bloqueadas e inalcanzables
-- [ ] T047 [US2] Test de concurrencia en `packages/engine/test/parallel.test.mjs`: N tareas concurrentes sobre el mismo repositorio mantienen el estado consistente y ninguna observa los cambios sin integrar de otra
-- [ ] T048 [P] [US2] Test del techo por hito en `packages/engine/test/milestone-budget.test.mjs`: al alcanzarlo el recorrido se detiene ordenadamente, sin cortar una tarea a mitad
+- [X] T046 [P] [US2] Test de hito en `packages/engine/test/milestone.test.mjs`: orden desde dependencias cuando el proveedor las tiene, serialización declarada cuando no, `--skip` y `--only`, y el reporte final de bloqueadas e inalcanzables
+- [X] T047 [US2] Test de concurrencia en `packages/engine/test/parallel.test.mjs`: N tareas concurrentes sobre el mismo repositorio mantienen el estado consistente y ninguna observa los cambios sin integrar de otra
+- [X] T048 [P] [US2] Test del techo por hito en `packages/engine/test/milestone-budget.test.mjs`: al alcanzarlo el recorrido se detiene ordenadamente, sin cortar una tarea a mitad
 
 ### Implementación
 
 - [X] T049 [US2] Implementar `packages/engine/src/scheduler.mjs`: orden topológico, dependencias duras contra `integrated`, recorte por ancho, y cálculo de `unreachable`
 - [X] T050 [US2] Implementar `packages/engine/src/merge-queue.mjs`: cola serial, rebase sobre la punta, re-verificación con el gate rápido, e integración o rechazo con la causa
-- [ ] T051 [US2] Implementar `packages/engine/src/milestone.mjs`: rama del hito, orden de items, exclusiones declaradas antes de arrancar, notas como canal de vuelta, y contabilidad de gasto
+- [X] T051 [US2] Implementar `packages/engine/src/milestone.mjs`: rama del hito, orden de items, exclusiones declaradas antes de arrancar, notas como canal de vuelta, y contabilidad de gasto
 - [X] T052 [US2] Extender `driver.mjs` a ejecución concurrente: lanzar el ReadySet, esperar la primera que termine, recalcular desde disco, y respetar `maxParallelItems`
-- [ ] T053 [P] [US2] Escribir `packages/plugin/workflows/planning-fanout.mjs`: `pipeline` analista → planificador → materialización con salida validada por esquema
-- [ ] T054 [P] [US2] Escribir `packages/plugin/workflows/review-fanout.mjs` y `packages/plugin/agents/review-fanout.md`: revisores en paralelo con una lente cada uno, solo en tier `large`
-- [ ] T055 [P] [US2] Escribir `packages/plugin/commands/noxloop-milestone.md`
+- [X] T053 [P] [US2] Escribir `packages/plugin/workflows/planning-fanout.mjs`: `pipeline` analista → planificador → materialización con salida validada por esquema
+- [X] T054 [P] [US2] Escribir `packages/plugin/workflows/review-fanout.mjs` y `packages/plugin/agents/review-fanout.md`: revisores en paralelo con una lente cada uno, solo en tier `large`
+- [X] T055 [P] [US2] Escribir `packages/plugin/commands/noxloop-milestone.md`
 
 **Checkpoint**: US2 entregable. El paralelismo es observable y la integración no produce el fallo de las ramas encadenadas.
 
@@ -179,15 +179,15 @@ US3.
 
 ### Tests (OBLIGATORIO — TDD) ⚠️
 
-- [ ] T065 [P] [US4] Test de reanudación en `packages/engine/test/resume.test.mjs`: no repite tareas `integrated`, conserva intentos, y el resultado final coincide con el de la corrida sin interrupción
-- [ ] T066 [P] [US4] Test de worktree huérfano en `packages/engine/test/worktree.test.mjs`: se detecta, y solo se limpia si no tiene cambios sin commitear
-- [ ] T067 [P] [US4] Test de `unstick`: registra la decisión y devuelve la tarea al bucle sin implementar nada
+- [X] T065 [P] [US4] Test de reanudación en `packages/engine/test/resume.test.mjs`: no repite tareas `integrated`, conserva intentos, y el resultado final coincide con el de la corrida sin interrupción
+- [X] T066 [P] [US4] Test de worktree huérfano en `packages/engine/test/worktree.test.mjs`: se detecta, y solo se limpia si no tiene cambios sin commitear
+- [X] T067 [P] [US4] Test de `unstick`: registra la decisión y devuelve la tarea al bucle sin implementar nada
 
 ### Implementación
 
-- [ ] T068 [US4] Implementar `resume` en `bin/noxloop.mjs` y la recuperación de tareas a medias en `driver.mjs`: decidir antes de seguir, nunca pisar
-- [ ] T069 [P] [US4] Implementar la limpieza de worktrees huérfanos en `worktree.mjs`
-- [ ] T070 [P] [US4] Implementar `unstick` en `bin/noxloop.mjs` y `state.mjs`
+- [X] T068 [US4] Implementar `resume` en `bin/noxloop.mjs` y la recuperación de tareas a medias en `driver.mjs`: decidir antes de seguir, nunca pisar
+- [X] T069 [P] [US4] Implementar la limpieza de worktrees huérfanos en `worktree.mjs`
+- [X] T070 [P] [US4] Implementar `unstick` en `bin/noxloop.mjs` y `state.mjs`
 - [ ] T071 [P] [US4] Escribir `packages/plugin/commands/noxloop-status.md` y la skill `packages/plugin/skills/orchestration/SKILL.md`
 
 **Checkpoint**: US4 entregable.
@@ -202,16 +202,16 @@ US3.
 
 ### Tests (OBLIGATORIO — TDD) ⚠️
 
-- [ ] T072 [P] [US5] Test de la configuración de ejemplo: `examples/noxloop.config.json` valida contra el esquema y `doctor` la acepta
-- [ ] T073 [P] [US5] Test de `doctor`: enumera cada carencia por separado y no inventa ningún valor por defecto que pueda escribir en el lugar equivocado
+- [X] T072 [P] [US5] Test de la configuración de ejemplo: `examples/noxloop.config.json` valida contra el esquema y `doctor` la acepta
+- [X] T073 [P] [US5] Test de `doctor`: enumera cada carencia por separado y no inventa ningún valor por defecto que pueda escribir en el lugar equivocado
 
 ### Implementación
 
 - [X] T074 [P] [US5] Escribir `examples/noxloop.config.json` (+ `examples/README.md`), comentado y listo para copiar. **Adelantada desde la fase 7**: `npm run validate` la necesita para poder correr en CI desde el primer commit. `gates.example.json` no hizo falta: los gates viven dentro de la configuracion, no en un archivo aparte
-- [ ] T075 [P] [US5] Escribir `README.md`: qué es, el argumento, instalación, y el primer ticket en cinco comandos
-- [ ] T076 [P] [US5] Escribir `docs/ADOPTING.md`: instalación en una organización nueva, paso por paso
-- [ ] T077 [P] [US5] Escribir `docs/PARALLELISM.md` y `docs/AUTONOMY.md`: el DAG, la cola y dónde termina la autonomía, cada uno con el fallo que evita
-- [ ] T078 [P] [US5] Escribir `docs/MIGRATING.md`: cómo mover un harness existente atado a un gestor a esta estructura
+- [X] T075 [P] [US5] Escribir `README.md`: qué es, el argumento, instalación, y el primer ticket en cinco comandos
+- [X] T076 [P] [US5] Escribir `docs/ADOPTING.md`: instalación en una organización nueva, paso por paso
+- [X] T077 [P] [US5] Escribir `docs/PARALLELISM.md` y `docs/AUTONOMY.md`: el DAG, la cola y dónde termina la autonomía, cada uno con el fallo que evita
+- [X] T078 [P] [US5] Escribir `docs/MIGRATING.md`: cómo mover un harness existente atado a un gestor a esta estructura
 
 **Checkpoint**: US5 entregable. El proyecto es publicable.
 
@@ -219,11 +219,11 @@ US3.
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T079 [P] Implementar `inbox` y `daemon` en `bin/noxloop.mjs`: consulta periódica con deduplicación por ticket, instancia única por lock
+- [X] T079 [P] Implementar `inbox` y `daemon` en `bin/noxloop.mjs`: consulta periódica con deduplicación por ticket, instancia única por lock
 - [X] T080 Resolver la pregunta abierta 3 de `research.md` con un test: pedir un merge desde una sesión headless lanzada por el motor y verificar que lo intercepta. **Cerrado y medido**: `--settings` (CLI) y `options.settings` / `options.hooks` (SDK) funcionan, verificado en una sesión real, dentro de un subagente y en una sesión retomada, con el plugin **sin instalar**. Lo implementa `session-settings.mjs`, y `runner.mjs` se niega a lanzar una sesión sin guardas
 - [X] T081 [P] Dejar `npm run typecheck` (`tsc --checkJs`) en verde sobre todo el motor y los proveedores. **Adelantada**: corrio contra el codigo de la fase 2 y encontro 17 errores reales (acumuladores inferidos como `never`, `home` opcional pasado a una firma que lo exige, el `code` de un error de spawn sin tipar). Arreglarlos despues habria sido arqueologia
-- [ ] T082 [P] Escribir `CHANGELOG.md` y `CONTRIBUTING.md`
-- [ ] T083 [P] Agregar al CI en `.github/workflows/ci.yml` la guarda de nombres propios y la validación de los ejemplos
+- [X] T082 [P] Escribir `CHANGELOG.md` y `CONTRIBUTING.md`
+- [X] T083 [P] Agregar al CI en `.github/workflows/ci.yml` la guarda de nombres propios y la validación de los ejemplos
 - [ ] T084 Verificar los ocho escenarios de `quickstart.md` de punta a punta y registrar el resultado real de cada uno
 
 ---
@@ -256,6 +256,83 @@ remoto real moviéndole la rama principal.
 - [X] T097 H5 — `validateHookSettings` juntaba rutas que terminaran en `.mjs` y contaba. Decía `ok: true` con el hook de Bash apuntando a un archivo inexistente, con el nombre del evento mal escrito y con `PreToolUse` vacío. Ahora exige las cuatro guardas, cada una en su evento y su matcher, y nombra la que falta
 - [X] T098 Chequeo 7 de la suite de contrato: validaba el **fixture**, no el proveedor. Ahora le pasa un mapa de estados incompleto y exige que el proveedor no invente el nombre nativo. Los tres proveedores ya pasaban, así que no cambió ningún comportamiento — cambió lo que el chequeo puede afirmar
 - [X] T099 `contracts/provider.md` mandaba correr `node --test providers/<nuevo>/`, que **falla con `MODULE_NOT_FOUND` en Node ≥ 22** porque el runner ya no expande directorios. Quien adoptara el proyecto se comía un error ajeno a su proveedor en el paso 4 de cinco
+
+### Tercera ronda de descubiertas
+
+De los cuatro workflows del daemon, el hito, la reanudacion y la documentacion.
+Los cuatro escepticos rompieron algo.
+
+- [X] T100 **La carrera del lock**, que rompia la promesa de instancia unica. `acquire` decidia con `existsSync` y escribia despues: dos daemons que arrancan juntos caen los dos en la ventana. Medido con dos procesos reales: **16 de 25 arranques se tomaron el mismo lock**. El primer arreglo (`open` con `wx`) movio la ventana en vez de cerrarla —el archivo queda visible VACIO entre el `open` y el `write`, y el otro proceso lo lee ilegible y lo declara huerfano— y bajo a 18 de 20. El que cierra es `link`: el contenido se escribe en un temporal y el nombre final aparece en una sola operacion atomica que falla si ya existe. Con `packages/engine/test/lock-carrera.test.mjs`, que usa **procesos de verdad** apuntando a un instante acordado, porque la carrera no existe dentro de un proceso
+- [X] T101 Un lock de **otra maquina** ya no se roba: `lock.mjs` trataba como huerfano cualquier lock cuyo host no fuera el propio, y con un `NOXLOOP_HOME` compartido eso son dos daemons sobre la misma bandeja sin que ninguno se entere. Y se recupera por antiguedad, porque respetarlo para siempre traba el recurso si esa maquina murio
+- [X] T102 Un **pid reusado** ya no traba el recurso para siempre: `process.kill(pid, 0)` dice "vivo" si el sistema reasigno el pid, y sin techo de antiguedad el lock de un daemon muerto quedaba en pie culpando a un pid que no es un daemon
+- [X] T103 **Transitorio no es rechazo.** La bandeja indexaba lo omitido por la huella del ticket, asi que un 502 del gestor a mitad de un despacho dejaba el ticket parado hasta que alguien le cambiara el titulo. Ahora una omision declara su clase: un rechazo del planificador no se arregla esperando, un fallo del mundo si — con espera creciente y con techo, y conservando la clase al refrescar (reponerla a `permanente` en cada vuelta convertia un fallo transitorio en definitivo en la primera pasada que lo mirara)
+- [X] T104 **El techo de gasto no podia dispararse nunca.** El recorrido de un hito lee `run.spent.usd` para decidir si se detiene, y NADA del motor lo escribia: el techo existia en la configuracion, en el esquema y en el codigo que lo consulta. `addSpend` en `state.mjs` y el driver anotando cada invocacion, con costo o sin el
+- [X] T105 **El cache de `makeResolve` era por repositorio**, y un hito resuelve varias ramas del mismo: la segunda historia habria trabajado en el worktree de la primera, y su gate habria medido el codigo ajeno. Ahora la clave incluye la rama
+- [X] T106 **El test de punta a punta del cableado** (`packages/engine/test/e2e-asignar-a-pr.test.mjs`), que es el hueco que el esceptico del daemon marco con estas palabras: "nada de esto prueba el cableado; `despachar` esta inyectado en todos los tests". Setenta tests afirmaban sobre el bucle y cero sobre el recorrido. Ahora se inyecta **solo** lo que no puede existir sin cuenta —el modelo y el forge— y corre de verdad la bandeja, la deduplicacion, el despacho por nivel, el planificador, el estado con sus guardas, el scheduler, los worktrees, el gate, los dos commits y la cola
+- [X] T107 El cableado al CLI de todo lo anterior: `inbox`, `daemon`, `milestone`, `diagnose`, `resume`, `unstick` y `prune`, mas el despachador real que la bandeja y el daemon usan, y las inyecciones que hacen probable ese camino
+- [X] T108 `--dry-run` creaba el worktree de la tarea. Lo cacho el test de punta a punta
+
+### Cuarta ronda: lo que encontro la revision en frio
+
+Un agente que no escribio nada del proyecto siguio la documentacion corriendo
+cada comando y contrastando cada afirmacion contra el codigo. Encontro **once
+afirmaciones que el codigo no respaldaba** —las corrigio en la doc— y estos
+fallos reales, que arregle yo:
+
+- [X] T109 **La causa real del fallo al abrir el PR se tiraba.** `createPR`
+  devuelve el stderr del forge y el resumen retornaba `pr: null` sin motivo, asi
+  que el reporte decia "sin PR: no se llego a abrir" y la causa —la rama sin
+  empujar, permisos, un PR que ya existe— se perdia. Es el mismo fallo que el
+  motor prohibe en una tarea: nunca resumir un error a "falla el build"
+- [X] T110 **`syncItemBranch` era codigo muerto en el camino de `run`.** Existia
+  en la cola y solo la importaba el recorrido de un hito, asi que un
+  `noxloop run` nunca ponia la rama del item al dia con su base: con el worktree
+  del item venido de un recorrido anterior, cada tarea rebasaba contra algo que
+  ya cambio y el conflicto aparecia **al integrar** en vez de al empezar — que es
+  exactamente lo que la cola existe para evitar
+- [X] T111 `requiredEnv` se iteraba sin comprobar que fuera una lista: un
+  proveedor que lo exportara como string hacia que `doctor` lo recorriera
+  caracter por caracter y reportara un problema por cada letra, en el comando
+  cuyo valor es que la lista de carencias sea legible
+- [X] T112 Cuatro textos que habian dejado de ser ciertos: `dispatch` decia que
+  `milestone` no estaba implementado, `session-settings.mjs` seguia listando como
+  sin confirmar lo que T080 confirmo y midio, el encabezado de
+  `guard-inversion.test.mjs` decia 12 grafias y la lista tiene 18, y el
+  comentario de `log.mjs` decia stdout cuando escribe en stderr
+- [X] T113 `.specify/memory/.constitution-template.json` seguia versionado: es
+  metadata de plantilla de spec-kit, la misma atribucion de terceros que el
+  commit `dd5db29` vino a limpiar, y entro porque el `.gitignore` des-ignoraba
+  `/.specify/memory/` entero
+
+### Huecos declarados, abiertos a proposito
+
+Ninguno es un olvido. Se declaran porque un hueco dicho vale mas que un verde
+inventado.
+
+- [ ] T114 **`provider.options` no se valida.** En `config.schema.json` es
+  `{"type": "object"}` sin `properties` ni `additionalProperties`, asi que nada
+  de lo que un proveedor real necesita ahi se describe ni se comprueba, y un
+  proveedor no tiene forma de declarar el esquema de sus opciones. Una opcion
+  mal escrita (`organization` por `organizacion`) pasa la validacion y falla a
+  mitad de un recorrido — la clase de fallo que la decision D9 de `research.md`
+  dice que validar vino a matar. El ejemplo lo esquiva porque no declara
+  `options`, asi que el hueco no se ve desde la puerta de entrada. El arreglo
+  natural es un `optionsSchema` opcional en el contrato de proveedor; no lo
+  construi porque ninguno de los tres lo usaria todavia, y media solucion aca es
+  peor que el hueco declarado
+- [ ] T115 **`doctor` no puede probar su propia rama degradada.**
+  `sdkDisponible()` resuelve el paquete con `createRequire` y no acepta
+  inyeccion, y como el SDK es `optionalDependency` un `npm ci` normal lo
+  instala. O sea: el camino que el README promete —"si falta, se degrada a
+  invocar el CLI y lo dice"— casi nunca se recorre en los tests. El test que
+  existe es una bicondicional (ausente ⇔ hay aviso, y en ningun caso un
+  problema), que es lo mas que se puede afirmar sin un subproceso con un
+  `node_modules` falso
+- [ ] T116 **El merge local en dos tiempos** (`git checkout main` y despues
+  `git merge task/x`) no lo frena el hook. No se cerro porque bloquear
+  `checkout` es el sobre-bloqueo que este hook ya cometio una vez, y la salida a
+  lo compartido si esta cerrada: publicarlo exige un `git push origin main`, que
+  esta probado bloqueado
 
 ## Dependencies
 

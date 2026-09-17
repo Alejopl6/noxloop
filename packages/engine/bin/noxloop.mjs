@@ -19,27 +19,34 @@ import { validate } from "../src/schema.mjs";
 
 const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
-const PENDIENTES = {
-  milestone: "T051 (fase 4 de tasks.md)",
-  inbox: "T079 (fase 8 de tasks.md)",
-  daemon: "T079-T080 (fase 8 de tasks.md)",
-  unstick: "T070 (fase 6 de tasks.md)",
-};
+const PENDIENTES = {};
+
+/** Los subcomandos que llevan un item, y los que no. */
+const CON_ITEM = ["plan", "run", "resume", "dispatch", "milestone", "diagnose", "unstick"];
+const SIN_ITEM = ["inbox", "daemon", "prune"];
 
 const AYUDA = `noxloop ${VERSION} — un ticket entra, un pull request sale.
 
   noxloop doctor                    que esta declarado, que falta, que credencial no esta
   noxloop validate [archivo]        valida una configuracion contra el esquema
+
+  noxloop inbox                     que tickets hay asignados o mencionados. No ejecuta nada
+  noxloop daemon                    el bucle: asignar un ticket es todo lo que hay que hacer
+
   noxloop plan <item>               planifica y PARA. Es el punto de aprobacion humana
   noxloop run <item>                ejecuta el plan: tareas en paralelo, un PR
-  noxloop resume <item>             retoma un recorrido interrumpido
+  noxloop milestone <item>          prepara el recorrido de una epica o feature, y PARA
+  noxloop milestone <item> --go     lo lanza  [--max-items N] [--skip a,b] [--only c]
   noxloop dispatch <item>           resuelve el nivel del ticket y delega
+
   noxloop status [<item>]           el estado de los recorridos, sin interpretacion
+  noxloop diagnose <item>           que quedo a medias, y que decision hace falta
+  noxloop resume <item>             retoma un recorrido interrumpido
+  noxloop unstick <item> --task <t> --nota "<que se decidio>"
+                                    devuelve una tarea bloqueada al bucle
+  noxloop prune [--force]           limpia worktrees huerfanos (sin --force no descarta trabajo)
   noxloop add-target <item> <tarea> <ruta> "<motivo>"
                                     amplia el alcance de una tarea, con su motivo
-
-Todavia no implementados (cada uno dice que tarea lo trae):
-  milestone, inbox, daemon, unstick
 
 Opciones globales:
   --config <ruta>   por defecto ./noxloop.config.json
@@ -116,7 +123,7 @@ async function main() {
     aviso(
       `\`noxloop ${comando}\` todavia no esta implementado.\n` +
         `Lo trae ${PENDIENTES[comando]}.\n` +
-        `Lo que ya funciona: doctor, validate, status, add-target.`,
+        `Lo que ya funciona: ${[...CON_ITEM, ...SIN_ITEM, "doctor", "validate", "status", "add-target"].join(", ")}.`,
     );
     process.exit(2);
   }
@@ -156,19 +163,44 @@ async function main() {
     return;
   }
 
-  if (comando === "plan" || comando === "run" || comando === "resume" || comando === "dispatch") {
+  if (CON_ITEM.includes(comando) || SIN_ITEM.includes(comando)) {
     const itemId = args._[1];
-    if (!itemId) {
+    if (CON_ITEM.includes(comando) && !itemId) {
       aviso(`uso: noxloop ${comando} <item>`);
       process.exit(1);
     }
     const config = cargar(args);
     const { ejecutarComando } = await import("../src/comandos.mjs");
-    const r = await ejecutarComando(comando, itemId, config, {
+
+    // El daemon corre hasta que se lo interrumpe, y tiene que soltar el lock al
+    // salir: si no, el proximo arranque lo encuentra tomado por un pid muerto.
+    const ac = new AbortController();
+    if (comando === "daemon") {
+      for (const senial of ["SIGINT", "SIGTERM"]) {
+        process.on(senial, () => {
+          aviso(`\nrecibi ${senial}: termino la vuelta y suelto el lock...`);
+          ac.abort();
+        });
+      }
+    }
+
+    const verbo = /** @type {any} */ (comando);
+    const r = /** @type {any} */ (await ejecutarComando(verbo, itemId, config, {
       dryRun: Boolean(args.flags["dry-run"]),
       search: args.flags.search ? [String(args.flags.search)] : [],
       materialize: args.flags["no-materialize"] ? false : true,
-    });
+      go: Boolean(args.flags.go),
+      force: Boolean(args.flags.force),
+      maxItems: args.flags["max-items"] ? Number(args.flags["max-items"]) : undefined,
+      maxCostUsd: args.flags["max-cost"] ? Number(args.flags["max-cost"]) : undefined,
+      skip: args.flags.skip ? String(args.flags.skip).split(",").map((x) => x.trim()) : undefined,
+      only: args.flags.only ? String(args.flags.only).split(",").map((x) => x.trim()) : undefined,
+      repo: args.flags.repo ? String(args.flags.repo) : undefined,
+      task: args.flags.task ? String(args.flags.task) : undefined,
+      nota: args.flags.nota ? String(args.flags.nota) : undefined,
+      volverA: args.flags["volver-a"] ? String(args.flags["volver-a"]) : undefined,
+      signal: ac.signal,
+    }));
     salidaJson(r);
     for (const linea of r.humano || []) aviso(linea);
     if (r.ok === false) process.exit(1);

@@ -64,9 +64,16 @@ export async function doctor(config, opts = {}) {
       ...proveedor,
       ok: v.ok,
       capabilities: v.ok ? mod.capabilities() : null,
-      requiredEnv: mod.requiredEnv || [],
+      // Se normaliza a lista: un proveedor que exporte `requiredEnv` como
+      // string hacia que doctor lo recorriera CARACTER POR CARACTER y reportara
+      // un problema por cada letra — justo el comando cuyo valor es que la lista
+      // de carencias sea legible.
+      requiredEnv: Array.isArray(mod.requiredEnv) ? mod.requiredEnv : (mod.requiredEnv ? [String(mod.requiredEnv)] : []),
     };
     for (const p of v.problems) problemas.push(`proveedor ${config.provider.name}: ${p}`);
+    if (mod.requiredEnv && !Array.isArray(mod.requiredEnv)) {
+      avisos.push(`el proveedor ${config.provider.name} declara requiredEnv como ${typeof mod.requiredEnv} y no como lista; se interpreto como una sola variable`);
+    }
     for (const varName of proveedor.requiredEnv) {
       if (!env[varName]) {
         problemas.push(`falta la variable de entorno ${varName}, que el proveedor ${config.provider.name} necesita`);

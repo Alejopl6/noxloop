@@ -20,4 +20,6 @@ Thumbs.db
 # de este proyecto. Ver CONTRIBUTING.md.
 /.specify/*
 !/.specify/memory/
+# ...pero no su metadata de plantilla, que es de spec-kit y no de este proyecto.
+/.specify/memory/.constitution-template.json
 /.claude/skills/speckit-*

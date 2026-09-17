@@ -19,10 +19,10 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import {
   loadRun, saveRun, transition, bump, setTaskFields, setItemFields,
-  setActiveTask, clearActiveTask, clearLastFailure, BUDGETS_DEFAULT,
+  setActiveTask, clearActiveTask, clearLastFailure, addSpend, BUDGETS_DEFAULT,
 } from "./state.mjs";
 import { readySet } from "./scheduler.mjs";
-import { drain } from "./merge-queue.mjs";
+import { drain, syncItemBranch } from "./merge-queue.mjs";
 import { acquire } from "./lock.mjs";
 import * as worktreeMod from "./worktree.mjs";
 import { commitPaths, mensajeDeFase } from "./vcs.mjs";
@@ -75,8 +75,26 @@ export async function runItem(itemId, deps) {
   }
 
   try {
-    const { itemBranch, baseBranch } = deps.resolve(run.tasks[0].repo);
+    const { itemBranch, baseBranch, integrationPath } = deps.resolve(run.tasks[0].repo);
     setItemFields(run, { branch: itemBranch, baseBranch, prTarget: baseBranch }, { home });
+
+    // LA RAMA DEL ITEM SE PONE AL DIA ANTES DE EMPEZAR, y no al final.
+    //
+    // Arrancar sobre una base vieja significa que cada tarea va a rebasar contra
+    // algo que ya cambio, y el conflicto aparece AL INTEGRAR en vez de al
+    // empezar — que es exactamente lo que la cola existe para evitar. Pasaba de
+    // verdad cuando el worktree del item venia de un recorrido anterior: la
+    // funcion existia en la cola y solo la usaba el recorrido de un hito, asi
+    // que un `noxloop run` nunca la llamaba.
+    const alDia = syncItemBranch(integrationPath, itemBranch, baseBranch);
+    if (!alDia.ok) {
+      // No se fuerza. Que la rama del item conflictue con su base es una
+      // decision humana, y decirlo ahora cuesta un mensaje; descubrirlo al
+      // integrar cuesta el recorrido.
+      log.warn(`la rama del item no se pudo poner al dia: ${alDia.reason}`);
+    } else {
+      log.info(`rama del item al dia con ${alDia.base}`);
+    }
 
     await escribirEstadoEnGestor(run, "in_progress", deps);
 
@@ -143,9 +161,9 @@ export async function runItem(itemId, deps) {
     const gaps = Object.fromEntries(
       [...new Set(run.tasks.map((t) => t.repo))].map((r) => [r, config.repos?.[r]?.gaps || []]),
     );
-    const { integrationPath, baseBranch: base } = deps.resolve(run.tasks[0].repo);
+    const destino = deps.resolve(run.tasks[0].repo);
     const pr = await deps.createPR(run, {
-      cwd: integrationPath, base: run.item.prTarget || base, gaps,
+      cwd: destino.integrationPath, base: run.item.prTarget || destino.baseBranch, gaps,
       cli: config.forge?.cli, refs: deps.prRefs || [],
     });
 
@@ -163,6 +181,15 @@ export async function runItem(itemId, deps) {
       integrated: integradas,
       blocked: bloqueadas,
       prAlreadyExisted: Boolean(pr?.alreadyExisted),
+      // LA CAUSA REAL, TEXTUAL. Antes se tiraba: `createPR` devuelve el stderr
+      // del forge y este resumen retornaba `pr: null` sin motivo, asi que el
+      // reporte decia "sin PR: no se llego a abrir" y la causa —que la rama no
+      // esta empujada, que faltan permisos, que ya hay un PR— se perdia. Es el
+      // mismo fallo que el motor prohibe en una tarea: nunca resumir un error a
+      // "falla el build".
+      ...(pr?.url ? {} : { reason: pr?.error || "el forge no devolvio una URL ni un error" }),
+      // El hito lo consume para su techo de gasto.
+      spent: loadRun(itemId, { home })?.spent || { usd: 0, calls: 0 },
     };
   } finally {
     for (const t of (loadRun(itemId, { home })?.tasks || [])) {
@@ -385,6 +412,18 @@ async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   if (r?.sessionId && r.sessionId !== t.sessionId) {
     setTaskFields(loadRun(run.item.id, { home: deps.home }), taskId, { sessionId: r.sessionId }, { home: deps.home });
   }
+
+  // TODA invocacion se anota, con costo o sin el. El techo de gasto de un hito
+  // lee esto para decidir si se detiene, y hasta ahora nadie lo escribia: el
+  // techo existia en la configuracion y en el codigo que lo consulta, y no podia
+  // dispararse nunca. Un limite que se lee como puesto y no lo esta es peor que
+  // no tenerlo.
+  try {
+    addSpend(loadRun(run.item.id, { home: deps.home }), { usd: r?.usd ?? null, calls: 1 }, { home: deps.home });
+  } catch (e) {
+    (deps.log || consolaMuda()).warn(`no se pudo anotar el gasto de la fase: ${e.message}`);
+  }
+
   return r || { ok: false, budgetExhausted: false, text: "la fase no devolvio nada" };
 }
 

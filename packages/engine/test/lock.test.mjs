@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { acquire } from "../src/lock.mjs";
 
@@ -28,8 +28,11 @@ test("un lock de un proceso muerto se recupera en vez de bloquear para siempre",
   const h = home();
   mkdirSync(join(h, "locks"), { recursive: true });
   // pid 2^22 + 1: por encima del maximo de cualquier sistema, garantizado inexistente
+  // El host tiene que ser el PROPIO: un lock de otra maquina ya no se roba, y
+  // eso tiene su test aparte en lock-carrera.test.mjs. Lo que este caso prueba
+  // es el pid muerto.
   writeFileSync(join(h, "locks", "run-42.json"),
-    JSON.stringify({ pid: 4194305, acquiredAt: new Date().toISOString(), host: "x" }));
+    JSON.stringify({ pid: 4194305, acquiredAt: new Date().toISOString(), host: hostname() }));
   const r = acquire("run-42", { home: h });
   assert.equal(r.ok, true);
   assert.equal(r.recovered, true);

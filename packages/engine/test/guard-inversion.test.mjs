@@ -36,7 +36,7 @@ function conTarea(allowedCommands = ["npm", "node"]) {
   return home;
 }
 
-// --------------------------------------------- las 12 grafias que pasaban
+// --------------------------------------------- las grafias que pasaban
 
 // Cada una de estas sorteo la version anterior. Son la razon de ser del archivo.
 const SORTEABAN = [
