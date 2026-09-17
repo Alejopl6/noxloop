@@ -181,11 +181,41 @@ contrato fijo y donde hoy se paga prosa para pasar datos entre ellos. `pipeline`
 y `parallel` con `schema` devuelven objetos validados en vez de texto que hay
 que interpretar.
 
-**A verificar antes de apostar**: `Workflow` es una herramienta de sesión de
-Claude Code. Que una sesión del SDK pueda invocarla **no está confirmado**. Por
-eso la decisión la acota al plugin: en el camino headless, el mismo fan-out se
-arma en JavaScript con varias `query()` concurrentes, que sí está confirmado. El
-motor no puede depender de una capacidad sin verificar.
+**MEDIDO (2026-09-17). Se puede, y conviene NO usarlo.**
+
+Una sesión del SDK **sí** puede invocar `Workflow`: la tool viene en la lista de
+26 por defecto y solo hace falta permiso (`allowedTools: ["Workflow"]`, o
+`canUseTool`, o `bypassPermissions` — las tres medidas). Los hooks **sí** corren
+dentro de los subagentes del workflow, con el deny sosteniéndose, así que el
+límite de autonomía no se perdería por esa vía. La tool es **asíncrona**: el
+`tool_result` es un marcador y el valor de retorno llega por
+`system/task_notification`.
+
+Y entonces se midió lo que importa. Fan-out de 4, mismo trabajo por worker, dos
+repeticiones:
+
+| Mecanismo | Reloj (mediana) | Costo |
+|---|---|---|
+| `Workflow` con `parallel([4])` | **55,65 s** | $1,46 |
+| Cuatro `query()` concurrentes | **18,12 s** | $0,52 |
+
+**Tres veces más lento y dos y media más caro**, con ±2 s de varianza. Y no es
+serialización: los cuatro agentes arrancaron dentro de 4 ms y el span fue 45,7 s
+contra 137,4 s de suma de duraciones — corrieron concurrentes de verdad. La
+penalidad es la latencia por subagente (25-46 s contra 7-18 s con el trabajo
+idéntico), su prompt de sistema de ~27k tokens, y ~7 s del turno del orquestador
+que decide llamar la tool.
+
+**Conclusión: para el reloj, varias `query()` concurrentes desde JavaScript es el
+camino, y es el que el motor ya usa.** `Workflow` queda para el camino
+interactivo, donde lo que se compra es la orquestación declarativa y no la
+velocidad.
+
+Lo que NO se midió, y por eso la conclusión tiene alcance: N=4 con dos
+repeticiones en una sola máquina, un solo modelo y una sola forma de trabajo.
+No se midió el punto de cruce con N grande (10-50, donde el cap de concurrencia
+compartido del workflow podría darlo vuelta frente a 50 procesos), ni con
+`pipeline()` multi-etapa, que es donde ese DSL promete su mejor caso.
 
 ---
 
@@ -247,6 +277,121 @@ chequeo de tipos en CI sin introducir ese modo de fallo.
 - *Sin tipos*: es el estado anterior, con 4.000 líneas y ningún chequeo.
 
 ---
+
+## D11 — Agent Teams: no aplica al motor, y la razón no es el rendimiento
+
+**Decision**: el motor NO usa Agent Teams. El camino sigue siendo varias
+`query()` concurrentes.
+
+**Rationale**: la documentación lo cierra sin necesidad de medir nada:
+
+> *Spawning teammates also requires an interactive session. In non-interactive
+> mode with the `-p` flag, **including Agent SDK sessions**, Claude doesn't spawn
+> teammates, and a subagent that Claude names runs as an ordinary subagent even
+> with agent teams enabled.*
+
+El motor de noxloop es headless por diseño —corre como proceso aparte para que
+un recorrido de horas sobreviva a que se cierre la terminal— así que ahí los
+teammates no existen. No es que rindan mal: no se pueden crear.
+
+Y aunque se pudieran, hay cuatro cosas de su diseño que choocan con este motor:
+
+1. **Las aprobaciones de permiso de un teammate suben a la sesión líder**, para
+   que una persona las apruebe ahí. Todo el punto de noxloop es que no haya
+   nadie mirando.
+2. **No hay reanudación con teammates in-process**: `/resume` no los restaura, y
+   el líder queda mandándole mensajes a teammates que ya no existen. El motor se
+   apoya en retomar (US4, SC-010).
+3. **"El estado de las tareas se atrasa": los teammates a veces no marcan sus
+   tareas como completadas** y bloquean a las dependientes. Es exactamente el
+   fallo que la cola de integración y el scheduler existen para no tener.
+4. La propia doc dice que para **trabajo secuencial, ediciones al mismo archivo
+   o con muchas dependencias**, una sesión sola o los subagentes rinden más. El
+   ciclo de una tarea —RED → GREEN → GATE → REVIEW— es secuencial por
+   construcción y toca los mismos archivos.
+
+**Dónde SÍ sirve, y conviene no confundirlo**: en el camino interactivo, para
+investigación y revisión con hipótesis en competencia. La doc describe el patrón
+que mejor funcionó construyendo este proyecto — *"que hablen entre ellos para
+intentar refutar las teorías del otro, como un debate científico"*—, y es el
+mismo que produjo los hallazgos más valiosos acá: los escépticos encontraron más
+que los implementadores. Pero eso es para una persona orquestando, no para el
+motor.
+
+**Alternatives considered**:
+- *Teams para el abanico de revisión*: lo mismo se logra con cuatro `query()`
+  concurrentes, que sí funcionan headless, cuestan menos y están medidos (ver
+  D7). Y los teammates son experimentales, detrás de una variable de entorno.
+- *`SendMessage` entre subagentes nombrados*, que funciona incluso con teams
+  apagados: sigue siendo del camino interactivo. El motor invoca `query()`, no
+  la tool `Agent`.
+
+**Un detalle que sí conviene recordar**: el caché de prompt de un teammate
+in-process cae fuera del bucket de TTL de la conversación principal, o sea cinco
+minutos por defecto. Es el mismo fallo que D2 documenta para las fases del
+motor, y otra razón por la que el fan-out largo conviene armarlo a mano.
+
+## D12 — Mensajería entre sesiones: sí funciona headless, y el uso bueno no es el obvio
+
+**Decision**: el motor NO la usa para coordinar sus fases entre sí. Se reserva
+para **un canal de una persona hacia un recorrido que está corriendo**, que hoy
+no existe y es una carencia real.
+
+**Lo que la separa de D7 y D11**: es la única de las tres que **funciona en
+headless**. La documentación es explícita:
+
+> *Claude Code binds an inbox socket for a `claude -p` session like an
+> interactive one, so a long-running `-p` worker can receive messages and
+> appears in the listing.*
+
+Y para que un worker desatendido las acepte: `crossSessionInbound: "accept"` en
+su `--settings`. Las sesiones del motor corren en `acceptEdits`, que "cuenta como
+que pide permisos", así que por el default los mensajes **se entregan** en vez de
+quedar en espera de aprobación.
+
+**Por qué NO para coordinar las fases entre sí.** Choca de frente con el
+principio III: *"la conversación no es la fuente de verdad; el archivo sí"*. Dos
+tareas en paralelo coordinándose por mensajes es exactamente lo que el archivo de
+estado existe para no necesitar — y hay una razón más fuerte todavía: dos tareas
+paralelas **no deben** verse entre sí. Cada una vive en su worktree justamente
+para que el gate de una no mida el código de la otra. Un canal directo entre
+ellas devolvería ese acoplamiento por la puerta de atrás, y la propia doc lo
+confirma al decir que un mensaje viaja sin la historia ni los archivos del
+emisor: no reemplaza al estado, lo duplica peor.
+
+**Para qué SÍ sirve, y es una carencia de verdad.** Hoy, si ves que un recorrido
+va para el lado equivocado, tus únicas opciones son matarlo o esperar. No hay
+forma de decirle algo a una fase que está corriendo. Con esto habría un
+`noxloop steer <item> "no toques el esquema"`, y es legítimo porque el que habla
+es **una persona**, no otra sesión — que es la distinción que el principio III
+protege.
+
+Dos propiedades del mecanismo lo hacen seguro para eso, y las dos están
+documentadas: un mensaje **no puede aprobar nada** (nunca cuenta como consentimiento
+para un prompt de permiso) y **no puede cambiar configuración**. O sea que no
+abre un camino alrededor de los hooks.
+
+**Lo que hay que verificar antes de construirlo**, y por eso esto queda como
+decisión y no como tarea hecha:
+
+1. El motor ya guarda el `sessionId` de cada tarea (`state.mjs`, y el driver lo
+   usa para retomar entre fases), pero **el `sessionId` no es la dirección**: se
+   direcciona por nombre de sesión. Hay que confirmar si `query()` deja nombrar
+   la sesión que abre, o si hay que descubrirla por el listado.
+2. El SDK corre el CLI como proceso hijo, así que el socket lo bindea el hijo y
+   su ruta (`CLAUDE_CODE_MESSAGING_SOCKET`) **no llega al padre**. Hay que ver si
+   el motor puede obtenerla, o si le conviene postear por el socket con el token
+   (`CLAUDE_CODE_MESSAGING_TOKEN`), que es el camino documentado para que un
+   script entre a una sesión.
+3. El aviso de "cuando esa sesión quede libre" (`notify_when_idle`) **no aplica**:
+   la doc dice que solo la conversación principal puede suscribirse, y solo a
+   sesiones de la misma máquina.
+
+**Alternatives considered**: los canales (`channels`), que la doc señala para
+empujar eventos externos —resultados de CI, mensajes de chat— hacia una sesión.
+Para noxloop eso es lo que ya hacen el gestor de tickets y la bandeja, y sumar un
+segundo camino de entrada al mismo trabajo es cómo se termina con dos fuentes de
+verdad.
 
 ## Preguntas que quedan abiertas, y no bloquean
 

@@ -113,7 +113,19 @@ export async function runItem(itemId, deps) {
         // EL PUNTO DE PARALELISMO. `allSettled` y no `all`: una tarea que falla
         // no puede abortar a las demas, y el estado de cada una ya quedo en
         // disco antes de que esta promesa resuelva.
-        await Promise.allSettled(rs.ready.map((id) => pipelineDeTarea(itemId, id, deps, budgets)));
+        const resueltas = await Promise.allSettled(rs.ready.map((id) => pipelineDeTarea(itemId, id, deps, budgets)));
+
+        // PERO SE REPORTA. `allSettled` se traga el error, y un pipeline que
+        // lanza deja su tarea parada sin que nada lo diga: el recorrido da dos
+        // vueltas sin avanzar y corta por estancado, culpando al estado en vez
+        // de al error. Paso de verdad, y costo una hora de buscar en el lugar
+        // equivocado.
+        resueltas.forEach((res, i) => {
+          if (res.status === "rejected") {
+            const causa = res.reason?.stack || res.reason?.message || String(res.reason);
+            log.error(`la tarea ${rs.ready[i]} lanzo y quedo parada: ${causa}`);
+          }
+        });
       }
 
       // La cola corre despues de cada vuelta, no al final: es lo que libera las
@@ -314,6 +326,36 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
       }
 
       case "gated": {
+        if (politica.fanout && politica.review) {
+          const r = await revisionEnAbanico(run, taskId, politica, deps);
+          run = loadRun(itemId, { home });
+          const b = bump(run, taskId, "review", { home, budgets });
+          if (await cortoPorPresupuesto(r, itemId, taskId, deps)) return;
+
+          if (r.findings === "blocking") {
+            if (b.exhausted) {
+              transition(run, taskId, "blocked", {
+                home, failure: `el abanico sigue encontrando hallazgos bloqueantes despues de ${b.count} vueltas`,
+              });
+              return;
+            }
+            transition(run, taskId, "green", { home, failure: `hallazgo bloqueante de la sintesis: ${r.text || "sin detalle"}` });
+            bitacora.warn("el abanico encontro algo bloqueante: vuelve a green");
+          } else if (r.findings === null) {
+            // No saber NO es aprobar. Una sintesis que no produjo veredicto es
+            // una revision que no ocurrio.
+            const b2 = bump(run, taskId, "review", { home, budgets });
+            if (b2.exhausted) {
+              transition(run, taskId, "blocked", { home, failure: `la sintesis del abanico no produjo veredicto: ${r.text || "(nada)"}` });
+              return;
+            }
+            bitacora.warn("la sintesis no produjo veredicto; se reintenta");
+          } else {
+            transition(run, taskId, "reviewed", { home });
+          }
+          break;
+        }
+
         if (!politica.review) {
           // Renuncia EXPLICITA y declarada en configuracion. Queda registrada en
           // la tarea y se reporta en el PR.
@@ -390,6 +432,98 @@ async function abrirTarea(run, taskId, deps) {
     allowedCommands: comandosPermitidos(config.repos?.[t.repo]),
   });
   transition(loadRun(run.item.id, { home }), taskId, "in_progress", { home });
+}
+
+/**
+ * Las cuatro lentes del abanico. Corren a la vez, asi que el orden importa poco.
+ *
+ * Son LENTES y no agentes con nombre a proposito: un agente externo que puede no
+ * estar instalado convierte el abanico en una dependencia silenciosa — si falta,
+ * la revision se degrada y nadie se entera.
+ */
+const LENTES = ["correccion", "seguridad", "estilo", "alcance"];
+
+/**
+ * La revision de una tarea grande, repartida en cuatro miradas.
+ *
+ * POR QUE EXISTE, con la aritmetica delante. Una sola pasada con cuatro
+ * criterios en la cabeza pierde el hallazgo que quedo tapado por los otros
+ * tres. Cuatro pasadas con un criterio cada una no lo pierden, y el reloj pasa
+ * de una latencia de invocacion a **max(las cuatro) + la sintesis**: dos, no
+ * cinco. Cuesta cinco invocaciones y tarda dos.
+ *
+ * SOLO EN TIER `large`. En los otros tres es gasto sin retorno, y ese es el
+ * gasto del que este proyecto viene: hay un antecedente medido de un hito que le
+ * dio el pipeline completo a 59 tareas.
+ *
+ * ESTABA DECLARADO Y NO LO LEIA NADIE. `fanout` vivia en la politica de tiers y
+ * en la configuracion de ejemplo —`large` lo tiene en `true`— y ningun camino
+ * del motor lo consultaba: la revision de una tarea grande era una sola
+ * invocacion, con la configuracion afirmando lo contrario.
+ *
+ * POR QUE NO SE USA LA TOOL `Workflow` PARA ESTO, y esta medido: el mismo
+ * fan-out de cuatro por esa via tardo 55,6s contra 18,1s con `query()`
+ * concurrentes, y costo 2,5 veces mas. No es serializacion —los cuatro
+ * arrancaban dentro de 4 ms— sino la latencia por subagente y su prompt de
+ * sistema de ~27k tokens. Para el reloj, varias `query()` concurrentes es el
+ * camino.
+ */
+async function revisionEnAbanico(run, taskId, politica, deps) {
+  const t = tareaDe(run, taskId);
+  const log = deps.log || consolaMuda();
+
+  // CADA LENTE ABRE SU PROPIA SESION, sin retomar la de la tarea ni la de otra
+  // lente. La independencia es el punto: una lente que ve los hallazgos de otra
+  // deja de ser una mirada independiente, y el abanico se vuelve una sola
+  // pasada larga con mas pasos.
+  const informes = await Promise.all(
+    LENTES.map((lente) =>
+      deps.runPhase({
+        phase: "REVIEW",
+        lens: lente,
+        taskId,
+        task: t,
+        item: run.item,
+        cwd: t.worktree,
+        resume: null,
+        model: politica.model,
+        effort: politica.effort,
+        tier: t.tier,
+        prompt: `/noxloop-task ${run.item.id} ${taskId} --phase REVIEW --lens ${lente}`,
+      }).then((r) => ({ lente, r: r || { ok: false, text: "la lente no devolvio nada", findings: null } })),
+    ),
+  );
+
+  const cortada = informes.find((x) => x.r.budgetExhausted);
+  if (cortada) return cortada.r;
+
+  for (const { lente, r } of informes) {
+    log.info(`lente ${lente}: ${r.findings || "sin veredicto"}`);
+  }
+
+  // UN SOLO JUEZ, con los cuatro informes delante. Cuatro veredictos sin
+  // jerarquia producen hallazgos contradictorios y nadie con autoridad para
+  // resolverlos — y el motor lee UN marcador, asi que cual gana dependeria de
+  // cual texto se leyo primero.
+  const resumen = informes
+    .map(({ lente, r }) => `### lente: ${lente}\nveredicto: ${r.findings || "sin veredicto"}\n\n${String(r.text || "").slice(0, 4000)}`)
+    .join("\n\n");
+
+  return deps.runPhase({
+    phase: "REVIEW-SINTESIS",
+    taskId,
+    task: t,
+    item: run.item,
+    cwd: t.worktree,
+    resume: null,
+    model: politica.model,
+    effort: politica.effort,
+    tier: t.tier,
+    prompt:
+      `/noxloop-task ${run.item.id} ${taskId} --phase REVIEW --sintesis\n\n` +
+      `Cuatro lentes miraron este diff por separado. Decidi vos, con los cuatro ` +
+      `informes delante, y escribi el marcador solo si de verdad corresponde.\n\n${resumen}`,
+  });
 }
 
 async function fase(nombre, run, taskId, politica, deps, opts = {}) {
