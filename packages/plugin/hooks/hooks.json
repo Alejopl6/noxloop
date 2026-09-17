@@ -1,0 +1,54 @@
+{
+  "description": "Los hooks de noxloop. Inactivos mientras no haya una tarea activa: si el orquestador no esta corriendo, permiten todo. Ante la duda, permitir — un hook que bloquea por un error propio deja a una persona sin poder trabajar, que es peor que el problema que evitaba.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/tdd-order-guard.mjs\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/task-scope-guard.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/no-prod-writes.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/state-checkpoint.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/state-checkpoint.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -163,6 +163,53 @@ export function createRun(plan, opts) {
   return saveRun(run, opts);
 }
 
+// ------------------------------------------------- lectura-modificacion-escritura
+
+/**
+ * Aplica una mutacion sobre el estado FRESCO del disco, no sobre la copia que
+ * trajo el llamador.
+ *
+ * EL FALLO QUE EVITA, y es del paralelismo. Cada tarea que corre en paralelo
+ * sostiene su propia referencia al recorrido entre `await`s. Sin esto, la
+ * ultima en guardar borra lo que escribio la otra: se observo a una tarea
+ * perder su worktree, volver a "pending", intentar crear el worktree de nuevo y
+ * morir — con el error apareciendo en el lugar equivocado.
+ *
+ * Es seguro sin locks porque estas funciones son SINCRONAS: dentro de una
+ * funcion sincrona no hay interleaving posible en Node, asi que leer, mutar y
+ * escribir es atomico frente a cualquier otra tarea del mismo proceso. La
+ * carrera venia de sostener el objeto ENTRE awaits, no de la escritura.
+ *
+ * Sin `home` no persiste nada y opera en memoria: es el modo que usan los tests
+ * unitarios.
+ */
+function conEstadoFresco(run, opts, fn) {
+  if (!opts || !opts.home) return fn(run);
+
+  let fresco = null;
+  try {
+    fresco = loadRun(run.item.id, opts);
+  } catch {
+    fresco = null; // estado corrupto: se opera sobre lo que trajo el llamador
+  }
+  if (!fresco) fresco = run;
+
+  // La mutacion va PRIMERO: si una guarda lanza, no se escribe nada.
+  const resultado = fn(fresco);
+  saveRun(fresco, opts);
+
+  if (fresco !== run) {
+    // El objeto del llamador queda al dia, incluida la parte que escribio otra
+    // tarea mientras tanto.
+    run.item = fresco.item;
+    run.tasks = fresco.tasks;
+    run.spent = fresco.spent;
+    run.updatedAt = fresco.updatedAt;
+    run.milestoneId = fresco.milestoneId;
+  }
+  return resultado;
+}
+
 // ---------------------------------------------------------- transiciones
 
 function tareaDe(run, taskId) {
@@ -175,9 +222,14 @@ function tareaDe(run, taskId) {
  * @param {object} run
  * @param {string} taskId
  * @param {string} next
- * @param {{home: string, evidence?: object, redVerified?: object, failure?: string, actor?: string}} opts
+ * @param {{home: string, evidence?: object, redVerified?: object, failure?: string, actor?: string, reviewWaived?: string}} opts
  */
 export function transition(run, taskId, next, opts) {
+  conEstadoFresco(run, opts, (fresco) => transicionar(fresco, taskId, next, opts));
+  return run;
+}
+
+function transicionar(run, taskId, next, opts) {
   const t = tareaDe(run, taskId);
   if (!STATUSES.includes(next)) throw new GuardError(`"${next}" no es un estado conocido`);
   const actual = t.status;
@@ -190,7 +242,7 @@ export function transition(run, taskId, next, opts) {
     if (!causa) throw new GuardError(`${taskId}: bloquear exige la causa real del fallo`);
     t.status = "blocked";
     t.lastFailure = causa;
-    return saveRun(run, opts);
+    return;
   }
 
   if (next === "green" && VUELVEN_A_GREEN.includes(actual)) {
@@ -203,7 +255,7 @@ export function transition(run, taskId, next, opts) {
     t.gateEvidence = null;
     // redVerified NO se pierde: el test sigue existiendo y sigue habiendo
     // fallado alguna vez contra el codigo viejo.
-    return saveRun(run, opts);
+    return;
   }
 
   if (!(ADELANTE[actual] || []).includes(next)) {
@@ -238,7 +290,16 @@ export function transition(run, taskId, next, opts) {
     // El contador ES la constancia de que la revision ocurrio. Dejarlo en cero
     // equivale a no haberla hecho, y ya paso: tareas que cerraron con los
     // cuatro contadores en cero y su codigo entro al PR sin filtro.
-    throw new GuardError(`${taskId}: no se puede encolar sin revision (attempts.review esta en 0)`);
+    //
+    // La UNICA salida es una renuncia explicita, que queda registrada y se
+    // reporta en el PR. Un tier que declara `review: false` esta saltando la
+    // revision en configuracion y a la vista — eso no es un salto silencioso,
+    // que es lo que esta guarda existe para impedir.
+    const renuncia = (opts.reviewWaived || "").trim();
+    if (!renuncia) {
+      throw new GuardError(`${taskId}: no se puede encolar sin revision (attempts.review esta en 0)`);
+    }
+    t.reviewWaived = renuncia;
   }
 
   if (next === "integrated" && opts.actor !== "merge-queue") {
@@ -247,7 +308,6 @@ export function transition(run, taskId, next, opts) {
 
   t.status = next;
   if (next === "integrated") t.integratedAt = new Date().toISOString();
-  return saveRun(run, opts);
 }
 
 /**
@@ -258,31 +318,51 @@ export function transition(run, taskId, next, opts) {
  * @returns {{count: number, exhausted: boolean, budget: number}}
  */
 export function bump(run, taskId, loop, opts) {
-  const t = tareaDe(run, taskId);
   if (!LOOPS.includes(loop)) throw new Error(`"${loop}" no es un bucle conocido (${LOOPS.join(", ")})`);
   const budgets = { ...BUDGETS_DEFAULT, ...(opts.budgets || {}) };
-  t.attempts[loop] = (t.attempts[loop] || 0) + 1;
-  const home = opts.home;
-  if (home) saveRun(run, { home });
-  return {
-    count: t.attempts[loop],
-    budget: budgets[loop],
-    exhausted: t.attempts[loop] >= budgets[loop],
-  };
+  return conEstadoFresco(run, opts, (fresco) => {
+    const t = tareaDe(fresco, taskId);
+    t.attempts[loop] = (t.attempts[loop] || 0) + 1;
+    return {
+      count: t.attempts[loop],
+      budget: budgets[loop],
+      exhausted: t.attempts[loop] >= budgets[loop],
+    };
+  });
 }
 
 /**
  * Amplia el alcance de una tarea, con su motivo. Ampliar no esta prohibido; que
  * ocurra en silencio, si. El motivo se reporta en el PR.
  */
-export function addTarget(run, taskId, path, why) {
-  const t = tareaDe(run, taskId);
+export function addTarget(run, taskId, path, why, opts = {}) {
   if (!why || !why.trim()) throw new GuardError(`ampliar el alcance con ${path} exige un motivo`);
-  if (!t.addedTargets.some((a) => a.path === path)) {
-    t.addedTargets.push({ path, why: why.trim() });
-  }
-  if (!t.targetFiles.includes(path)) t.targetFiles.push(path);
-  return t;
+  return conEstadoFresco(run, opts, (fresco) => {
+    const t = tareaDe(fresco, taskId);
+    if (!t.addedTargets.some((a) => a.path === path)) {
+      t.addedTargets.push({ path, why: why.trim() });
+    }
+    if (!t.targetFiles.includes(path)) t.targetFiles.push(path);
+    return t;
+  });
+}
+
+/**
+ * Limpia el fallo pendiente de una tarea, una vez que alguien lo atendio.
+ *
+ * `lastFailure` cumple dos papeles: es el diagnostico final de una tarea
+ * bloqueada, y es la SENIA de que hay algo que arreglar cuando una tarea vuelve
+ * a green —por un hallazgo del revisor o por un conflicto al rebasar—. El
+ * segundo papel exige poder consumirlo: sin esto, el driver corre el gate, lo
+ * ve pasar, y vuelve a chocar con el mismo hallazgo sin haber cambiado nada.
+ */
+export function clearLastFailure(run, taskId, opts = {}) {
+  return conEstadoFresco(run, opts, (fresco) => {
+    const t = tareaDe(fresco, taskId);
+    const previo = t.lastFailure;
+    t.lastFailure = null;
+    return previo;
+  });
 }
 
 const CAMPOS_ITEM = ["branch", "baseBranch", "prTarget", "pr", "providerStateWritten", "boardFields"];
@@ -298,65 +378,128 @@ export function setItemFields(run, fields, opts = {}) {
       throw new GuardError(`"${k}" no es un campo escribible del item (permitidos: ${CAMPOS_ITEM.join(", ")})`);
     }
   }
-  Object.assign(run.item, fields);
-  const home = opts.home;
-  if (home) saveRun(run, { home });
+  conEstadoFresco(run, opts, (fresco) => Object.assign(fresco.item, fields));
   return run;
 }
 
 export function setTaskFields(run, taskId, fields, opts = {}) {
   const PERMITIDOS = ["worktree", "branch", "sessionId", "providerItemId", "tier"];
-  const t = tareaDe(run, taskId);
   for (const k of Object.keys(fields)) {
     if (!PERMITIDOS.includes(k)) {
       throw new GuardError(`"${k}" no se puede escribir en una tarea desde afuera (permitidos: ${PERMITIDOS.join(", ")})`);
     }
   }
-  Object.assign(t, fields);
-  const home = opts.home;
-  if (home) saveRun(run, { home });
-  return t;
+  return conEstadoFresco(run, opts, (fresco) => Object.assign(tareaDe(fresco, taskId), fields));
 }
 
 // --------------------------------------------------------- tarea activa
 
-/**
- * El puntero que leen los hooks. Es lo que les permite saber, desde dentro de
- * cualquier repositorio, cual es la tarea en curso y que puede tocar.
- */
+// EL PUNTERO ES UNO POR WORKTREE, Y NO UNO GLOBAL.
+//
+// Es un requisito del paralelismo, no una comodidad: con N tareas corriendo a
+// la vez, un puntero unico haria que el guardian de alcance de una bloquee los
+// archivos de la otra, y que el guardian de orden mida el rojo de la tarea
+// equivocada. El hook resuelve cual le toca por el worktree de donde viene la
+// operacion.
+//
+// SE SIGUE ACEPTANDO un puntero sin worktree, para un recorrido serial: queda
+// como entrada "_global" y se usa cuando es la unica activa.
+
+const activeDir = (home) => join(home, "active-tasks");
+
+function slugDeWorktree(worktree) {
+  if (!worktree) return "_global";
+  return worktree.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(-120) || "_raiz";
+}
+
+/** @param {{home: string, worktree?: string}} opts */
 export function setActiveTask(itemId, taskId, opts) {
-  mkdirSync(opts.home, { recursive: true });
-  escribirAtomico(activeFile(opts.home), { itemId, taskId, since: new Date().toISOString() });
+  mkdirSync(activeDir(opts.home), { recursive: true });
+  escribirAtomico(join(activeDir(opts.home), `${slugDeWorktree(opts.worktree)}.json`), {
+    itemId,
+    taskId,
+    worktree: opts.worktree || null,
+    since: new Date().toISOString(),
+  });
 }
 
-export function getActiveTask(opts) {
-  const f = activeFile(opts.home);
-  if (!existsSync(f)) return null;
-  try {
-    return JSON.parse(readFileSync(f, "utf8"));
-  } catch {
-    // Ante la duda, los hooks permiten. Un puntero ilegible no puede dejar a
-    // una persona sin poder trabajar.
-    return null;
+/** @param {{home: string}} opts */
+export function listActiveTasks(opts) {
+  const dir = activeDir(opts.home);
+  if (!existsSync(dir)) return [];
+  const salida = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      salida.push(JSON.parse(readFileSync(join(dir, f), "utf8")));
+    } catch {
+      // Un puntero ilegible se ignora. Ante la duda, los hooks permiten: un
+      // archivo corrupto no puede dejar a una persona sin poder trabajar.
+    }
   }
+  return salida;
 }
 
+/** @param {{home: string, worktree?: string}} opts */
 export function clearActiveTask(opts) {
-  const f = activeFile(opts.home);
+  const f = join(activeDir(opts.home), `${slugDeWorktree(opts.worktree)}.json`);
   if (existsSync(f)) unlinkSync(f);
 }
 
-/** La tarea activa ya resuelta contra su recorrido, o null. */
+/** Dentro de, o igual a. Por segmento, para que `/wt` no matchee `/wtotro`. */
+function dentroDe(ruta, base) {
+  if (!ruta || !base) return false;
+  return ruta === base || ruta.startsWith(base.endsWith("/") ? base : `${base}/`);
+}
+
+/**
+ * La tarea activa que corresponde a esta operacion, ya resuelta contra su
+ * recorrido.
+ *
+ * @param {{home: string, cwd?: string, filePath?: string}} opts
+ * @returns {{run: object, task: object, entry: object} | null}
+ */
 export function activeTaskFull(opts) {
-  const puntero = getActiveTask(opts);
-  if (!puntero) return null;
+  const entradas = listActiveTasks(opts);
+  if (entradas.length === 0) return null;
+
+  const conPista = entradas
+    .filter((e) => e.worktree && (dentroDe(opts.filePath, e.worktree) || dentroDe(opts.cwd, e.worktree)))
+    // El worktree mas especifico gana: con uno anidado dentro de otro, el
+    // externo tambien matchea y elegirlo seria elegir la tarea equivocada.
+    .sort((a, b) => b.worktree.length - a.worktree.length);
+
+  // El respaldo a "la unica activa" aplica en dos casos, y no en un tercero:
+  //
+  //   SI  la unica activa no tiene worktree — es un recorrido serial, y el
+  //       puntero vale para toda la sesion.
+  //   SI  no vino ninguna pista — el evento del hook no trae cwd ni ruta, y
+  //       negarse dejaria la guarda sin aplicar.
+  //   NO  si vino una pista que NO cae dentro de su worktree. Eso significa que
+  //       la operacion viene de otro lado —probablemente la sesion de una
+  //       persona— y resolverla contra esta tarea haria que su guardian de
+  //       alcance policie archivos ajenos. Sobre-resolver es sobre-bloquear.
+  const hubopista = Boolean(opts.filePath || opts.cwd);
+  const unica = entradas.length === 1 ? entradas[0] : null;
+  const respaldo = unica && (!unica.worktree || !hubopista) ? unica : null;
+
+  const elegida = conPista[0] || respaldo;
+  // Con varias activas y sin pista de cual es, NO se adivina.
+  if (!elegida) return null;
+
   let run;
   try {
-    run = loadRun(puntero.itemId, opts);
+    run = loadRun(elegida.itemId, opts);
   } catch {
     return null;
   }
   if (!run) return null;
-  const task = run.tasks.find((t) => t.id === puntero.taskId);
-  return task ? { run, task } : null;
+  const task = run.tasks.find((t) => t.id === elegida.taskId);
+  return task ? { run, task, entry: elegida } : null;
+}
+
+/** El puntero crudo, sin resolver el recorrido. */
+export function getActiveTask(opts) {
+  const resuelta = activeTaskFull(opts);
+  return resuelta ? resuelta.entry : null;
 }

@@ -14,6 +14,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { tareaActiva, resolveHome, leerEntrada, responder } from "./_shared.mjs";
+import { listActiveTasks, activeTaskFull } from "../state.mjs";
 
 const marcador = (home) => join(home, "checkpoint-notified");
 
@@ -37,7 +38,13 @@ function hayTrabajoSinCommitear(cwd) {
  */
 export function decide(input, opts = {}) {
   const home = resolveHome(opts);
-  const activa = tareaActiva(opts);
+  // Con paralelismo hay varias activas a la vez: se avisa por la primera que
+  // tenga trabajo sin registrar. Quedarse en la "unica" activa dejaria el punto
+  // ciego justo cuando hay mas tareas en vuelo.
+  const activa = tareaActiva(opts, input)
+    || listActiveTasks({ home })
+      .map((e) => activeTaskFull({ home, cwd: e.worktree }))
+      .find((a) => a && (opts.dirty !== undefined ? opts.dirty : a.task.worktree && hayTrabajoSinCommitear(a.task.worktree)));
   if (!activa) return { notify: false };
 
   const { run, task } = activa;

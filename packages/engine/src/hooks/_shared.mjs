@@ -21,10 +21,24 @@ export function resolveHome(opts = {}) {
   return opts.home || process.env.NOXLOOP_HOME || join(homedir(), ".noxloop");
 }
 
-/** La tarea activa, o null. Nunca lanza: un estado ilegible permite. */
-export function tareaActiva(opts) {
+/**
+ * La tarea activa que corresponde a ESTA operacion, o null. Nunca lanza: un
+ * estado ilegible permite.
+ *
+ * La pista —el cwd de la sesion y la ruta del archivo— es lo que permite
+ * resolver cual de varias tareas paralelas le toca a este hook. Sin pista y con
+ * varias activas devuelve null, y el hook permite.
+ *
+ * @param {{home?: string, cwd?: string}} opts
+ * @param {object} [input] el payload del hook, de donde se saca la pista
+ */
+export function tareaActiva(opts, input) {
   try {
-    return activeTaskFull({ home: resolveHome(opts) });
+    return activeTaskFull({
+      home: resolveHome(opts),
+      cwd: input?.cwd || opts?.cwd,
+      filePath: input?.tool_input?.file_path,
+    });
   } catch {
     return null;
   }

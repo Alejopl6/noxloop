@@ -26,7 +26,7 @@ export function decide(input, opts = {}) {
   const ruta = input?.tool_input?.file_path;
   if (!ruta) return ALLOW; // no se entiende: permitir
 
-  const activa = tareaActiva(opts);
+  const activa = tareaActiva(opts, input);
   if (!activa) return ALLOW; // noxloop no esta corriendo: no es asunto del hook
 
   const { task } = activa;

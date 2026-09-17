@@ -74,7 +74,9 @@ test("reviewed -> queued exige que el contador de review no sea cero", () => {
   let run = avanzarHasta("gated", h);
   run = transition(run, "T001", "reviewed", { home: h });
   assert.throws(() => transition(run, "T001", "queued", { home: h }), GuardError);
-  bump(run, "T001", "review", {});
+  // Con `home`: el contador tiene que quedar EN DISCO para que la guarda lo
+  // vea. Un bump en memoria no es constancia de nada para las demas tareas.
+  bump(run, "T001", "review", { home: h });
   run = transition(run, "T001", "queued", { home: h });
   assert.equal(run.tasks[0].status, "queued");
 });
@@ -201,7 +203,7 @@ function avanzarHasta(estado, h) {
     const opciones = { home: h };
     if (paso === "red") opciones.redVerified = EVIDENCIA_MAL;
     if (paso === "gated") opciones.evidence = EVIDENCIA_OK;
-    if (paso === "queued") bump(run, "T001", "review", {});
+    if (paso === "queued") bump(run, "T001", "review", { home: h });
     if (paso === "integrated") opciones.actor = "merge-queue";
     run = transition(run, "T001", paso, opciones);
     if (paso === estado) return run;

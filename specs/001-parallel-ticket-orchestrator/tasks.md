@@ -88,23 +88,23 @@ US3.
 
 ### Tests (OBLIGATORIO — TDD) ⚠️
 
-- [ ] T030 [P] [US1] Test del runner en `packages/engine/test/runner.test.mjs`: retoma la sesión entre fases de una tarea (mismo `sessionId`), abre sesión nueva entre tareas, detecta el corte por presupuesto como corte y **nunca** como `ok`, y degrada al CLI cuando el SDK no está
-- [ ] T031 [P] [US1] Test del forge en `packages/engine/test/forge.test.mjs`: el cuerpo del PR se arma desde el estado —criterios, `gateEvidence` textual, `gaps`, `addedTargets`, tareas bloqueadas— y no de prosa del modelo
-- [ ] T032 [P] [US1] Test de idempotencia del gestor en `packages/engine/test/provider-writes.test.mjs`: relanzar no mueve el ticket dos veces ni duplica comentarios (`providerStateWritten`)
-- [ ] T033 [US1] Test de integración de la historia en `packages/engine/test/us1-ticket-to-pr.test.mjs`: proveedor falso + repositorio git desechable, recorrido completo hasta rama lista, verificando el orden test→implementación en el historial de commits
-- [ ] T034 [P] [US1] Test de ticket sin criterios verificables en `packages/engine/test/us1-no-acceptance.test.mjs`: no se escribe código y el ticket queda bloqueado con la pregunta concreta
-- [ ] T035 [P] [US1] Test de autonomía en `packages/engine/test/autonomy.test.mjs`: merge a rama protegida, force push y deploy interceptados; más recorrido del fuente del motor buscando esas operaciones
+- [X] T030 [P] [US1] Test del runner en `packages/engine/test/runner.test.mjs`: retoma la sesión entre fases de una tarea (mismo `sessionId`), abre sesión nueva entre tareas, detecta el corte por presupuesto como corte y **nunca** como `ok`, y degrada al CLI cuando el SDK no está
+- [X] T031 [P] [US1] Test del forge en `packages/engine/test/forge.test.mjs`: el cuerpo del PR se arma desde el estado —criterios, `gateEvidence` textual, `gaps`, `addedTargets`, tareas bloqueadas— y no de prosa del modelo
+- [X] T032 [P] [US1] Test de idempotencia del gestor en `packages/engine/test/provider-writes.test.mjs`: relanzar no mueve el ticket dos veces ni duplica comentarios (`providerStateWritten`)
+- [X] T033 [US1] Test de integración de la historia en `packages/engine/test/us1-ticket-to-pr.test.mjs`: proveedor falso + repositorio git desechable, recorrido completo hasta rama lista, verificando el orden test→implementación en el historial de commits
+- [X] T034 [P] [US1] Test de ticket sin criterios verificables en `packages/engine/test/us1-no-acceptance.test.mjs`: no se escribe código y el ticket queda bloqueado con la pregunta concreta
+- [X] T035 [P] [US1] Test de autonomía en `packages/engine/test/autonomy.test.mjs`: merge a rama protegida, force push y deploy interceptados; más recorrido del fuente del motor buscando esas operaciones
 
 ### Implementación
 
-- [ ] T036 [US1] Implementar `packages/engine/src/runner.mjs`: una fase = una sesión del SDK con `resume` dentro de la tarea, stream de progreso, `budgetExhausted` como campo propio, y degradación al CLI
-- [ ] T037 [P] [US1] Implementar `packages/engine/src/forge.mjs`: envoltorio determinista del CLI del forge, armado del cuerpo del PR desde el estado, e idempotencia si el PR ya existe
-- [ ] T038 [US1] Implementar `packages/engine/src/driver.mjs`: el bucle de un item — abrir, RED, GREEN, GATE, REVIEW, cerrar — decidiendo por código de salida y estado, nunca por la prosa del modelo
-- [ ] T039 [US1] Implementar la detección de revisión ausente en `driver.mjs`: una tarea que llega a terminal con `attempts.review === 0` recibe la revisión que falta antes del PR, con dos oportunidades
-- [ ] T040 [P] [US1] Implementar `packages/engine/src/dispatch.mjs`: resuelve el nivel del ticket con el proveedor y delega; `plan` para `story`/`task`, `milestone` para `epic`/`feature`
-- [ ] T041 [P] [US1] Escribir los comandos del plugin `packages/plugin/commands/noxloop-plan.md` y `noxloop-run.md`
-- [ ] T042 [P] [US1] Escribir los agentes del plugin en `packages/plugin/agents/`: `analyst.md`, `planner.md`, `implementer.md`, `verifier.md`, `reviewer.md`, `scribe.md`
-- [ ] T043 [P] [US1] Escribir `packages/plugin/hooks/hooks.json` apuntando a los hooks del motor, y la skill `packages/plugin/skills/tdd/SKILL.md`
+- [X] T036 [US1] Implementar `packages/engine/src/runner.mjs`: una fase = una sesión del SDK con `resume` dentro de la tarea, stream de progreso, `budgetExhausted` como campo propio, y degradación al CLI
+- [X] T037 [P] [US1] Implementar `packages/engine/src/forge.mjs`: envoltorio determinista del CLI del forge, armado del cuerpo del PR desde el estado, e idempotencia si el PR ya existe
+- [X] T038 [US1] Implementar `packages/engine/src/driver.mjs`: el bucle de un item — abrir, RED, GREEN, GATE, REVIEW, cerrar — decidiendo por código de salida y estado, nunca por la prosa del modelo
+- [X] T039 [US1] Implementar la detección de revisión ausente en `driver.mjs`: una tarea que llega a terminal con `attempts.review === 0` recibe la revisión que falta antes del PR, con dos oportunidades
+- [X] T040 [P] [US1] Implementar `packages/engine/src/dispatch.mjs`: resuelve el nivel del ticket con el proveedor y delega; `plan` para `story`/`task`, `milestone` para `epic`/`feature`
+- [X] T041 [P] [US1] Escribir los comandos del plugin `packages/plugin/commands/noxloop-plan.md` y `noxloop-run.md`
+- [X] T042 [P] [US1] Escribir los agentes del plugin en `packages/plugin/agents/`: `planner.md`, `implementer.md`, `verifier.md`, `reviewer.md`. **`analyst` y `scribe` no se escribieron, y no por falta de tiempo**: el análisis del ticket es inseparable de armar el DAG y quedó dentro de `planner`, y el trabajo del escriba lo hace el motor llamando al proveedor — un agente que escriba en el gestor es un agente que puede escribir de memoria un nombre de estado
+- [X] T043 [P] [US1] Escribir `packages/plugin/hooks/hooks.json` apuntando a los hooks del motor, y la skill `packages/plugin/skills/tdd/SKILL.md`
 
 **Checkpoint**: US1 entregable. El producto ya sirve para un ticket a la vez.
 
@@ -137,7 +137,7 @@ US3.
 - [X] T049 [US2] Implementar `packages/engine/src/scheduler.mjs`: orden topológico, dependencias duras contra `integrated`, recorte por ancho, y cálculo de `unreachable`
 - [X] T050 [US2] Implementar `packages/engine/src/merge-queue.mjs`: cola serial, rebase sobre la punta, re-verificación con el gate rápido, e integración o rechazo con la causa
 - [ ] T051 [US2] Implementar `packages/engine/src/milestone.mjs`: rama del hito, orden de items, exclusiones declaradas antes de arrancar, notas como canal de vuelta, y contabilidad de gasto
-- [ ] T052 [US2] Extender `driver.mjs` a ejecución concurrente: lanzar el ReadySet, esperar la primera que termine, recalcular desde disco, y respetar `maxParallelItems`
+- [X] T052 [US2] Extender `driver.mjs` a ejecución concurrente: lanzar el ReadySet, esperar la primera que termine, recalcular desde disco, y respetar `maxParallelItems`
 - [ ] T053 [P] [US2] Escribir `packages/plugin/workflows/planning-fanout.mjs`: `pipeline` analista → planificador → materialización con salida validada por esquema
 - [ ] T054 [P] [US2] Escribir `packages/plugin/workflows/review-fanout.mjs` y `packages/plugin/agents/review-fanout.md`: revisores en paralelo con una lente cada uno, solo en tier `large`
 - [ ] T055 [P] [US2] Escribir `packages/plugin/commands/noxloop-milestone.md`
@@ -227,6 +227,20 @@ US3.
 - [ ] T084 Verificar los ocho escenarios de `quickstart.md` de punta a punta y registrar el resultado real de cada uno
 
 ---
+
+## Tareas descubiertas durante la ejecución
+
+El plan no las previó y aparecieron al implementar. Se registran acá y no se
+disimulan: cada una es un hueco que el plan tenía.
+
+- [X] T085 Implementar `packages/engine/src/planner.mjs` con `packages/engine/test/planner.test.mjs`. **El plan daba por hecho que el plan de una historia existía**; nadie lo producía. Es la fase que lee el ticket, verifica que tenga criterios antes de gastar una invocación, valida lo que el modelo devuelve y materializa los tickets hijos
+- [X] T086 Puntero de tarea activa **por worktree** en `state.mjs`, con `packages/engine/test/active-tasks.test.mjs`. El puntero era único, y con N tareas a la vez los hooks no podían saber cuál les tocaba: el guardián de alcance de una bloqueaba los archivos de otra. Lo destapó el paralelismo, no un test
+- [X] T087 Lectura-modificación-escritura en toda mutación de estado, con `packages/engine/test/state-concurrencia.test.mjs`. **Bug de pérdida de actualización**: dos tareas concurrentes sostenían su propia copia del recorrido entre `await`s y la última en guardar borraba lo de la otra. El síntoma observado fue una tarea que perdía su worktree, volvía a `pending` y moría intentando crearlo de nuevo
+- [X] T088 `packages/engine/src/vcs.mjs` con `packages/engine/test/vcs.test.mjs`: **dos commits por tarea**, el del test antes del de la implementación. El driver no commiteaba nada, y la cola rebasaba ramas sin contenido — los tests pasaban porque solo miraban estados. Sin esto, SC-003 no se puede verificar en el historial del PR
+- [X] T089 `packages/engine/src/comandos.mjs` y `wiring.mjs`: la capa entre el CLI y el motor. El plan ponía el cableado en `bin/`, donde no se puede probar
+- [X] T090 Renuncia explícita a la revisión (`reviewWaived`) en `state.mjs`. Un tier con `review: false` no podía encolar nunca, porque la guarda exige el contador en más de cero. La salida no es debilitar la guarda: es que la renuncia quede registrada y se reporte en el PR
+- [X] T091 Marca de agua del estado del gestor en `driver.mjs`: relanzar un recorrido terminado movía el ticket **hacia atrás**, de "en revisión" a "en curso". Lo cachó el test de idempotencia, no una revisión
+- [X] T092 Mover el archivo de handoff del plan a `NOXLOOP_HOME`. Estaba dentro del worktree del usuario, y lo atrapó la guarda de constitución del principio III: el estado y sus artefactos intermedios no se escriben dentro de un repositorio de trabajo
 
 ## Dependencies
 
