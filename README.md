@@ -175,8 +175,13 @@ contratos y 84 tareas en 8 fases.
 | 6. US4 — retomar | reanudación, worktrees huérfanos, destrabar | ✅ 7/7 |
 | 7. US5 — adoptabilidad | ADOPTING, PARALLELISM, AUTONOMY, MIGRATING | ✅ 7/7 |
 | 5. US3 — proveedores | Azure DevOps, GitHub, Linear | 9 tareas |
-| 8. Pulido | daemon, disparo por asignación y mención | ✅ 5/6 |
+| 8. Pulido | daemon, disparo por asignación y mención | ✅ 6/6 |
 | Descubiertas | 32 huecos que el plan no había previsto | ✅ 29 cerrados, 3 declarados |
+
+Los ocho escenarios de `quickstart.md` están corridos y su resultado registrado
+al pie de ese archivo. Los escenarios 4, 5 y 8 quedaron verificados en su mitad
+offline: cerrarlos del todo necesita una credencial de un gestor real, no más
+código.
 
 **T035 y T080 están cerradas**, y cómo se cerraron dice más que el hecho de que
 lo estén: una revisión adversarial rompió la promesa del límite de autonomía. De

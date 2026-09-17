@@ -188,7 +188,7 @@ US3.
 - [X] T068 [US4] Implementar `resume` en `bin/noxloop.mjs` y la recuperación de tareas a medias en `driver.mjs`: decidir antes de seguir, nunca pisar
 - [X] T069 [P] [US4] Implementar la limpieza de worktrees huérfanos en `worktree.mjs`
 - [X] T070 [P] [US4] Implementar `unstick` en `bin/noxloop.mjs` y `state.mjs`
-- [ ] T071 [P] [US4] Escribir `packages/plugin/commands/noxloop-status.md` y la skill `packages/plugin/skills/orchestration/SKILL.md`
+- [X] T071 [P] [US4] Escribir `packages/plugin/commands/noxloop-status.md` y la skill `packages/plugin/skills/orchestration/SKILL.md`
 
 **Checkpoint**: US4 entregable.
 
@@ -224,7 +224,7 @@ US3.
 - [X] T081 [P] Dejar `npm run typecheck` (`tsc --checkJs`) en verde sobre todo el motor y los proveedores. **Adelantada**: corrio contra el codigo de la fase 2 y encontro 17 errores reales (acumuladores inferidos como `never`, `home` opcional pasado a una firma que lo exige, el `code` de un error de spawn sin tipar). Arreglarlos despues habria sido arqueologia
 - [X] T082 [P] Escribir `CHANGELOG.md` y `CONTRIBUTING.md`
 - [X] T083 [P] Agregar al CI en `.github/workflows/ci.yml` la guarda de nombres propios y la validación de los ejemplos
-- [ ] T084 Verificar los ocho escenarios de `quickstart.md` de punta a punta y registrar el resultado real de cada uno
+- [~] T084 Verificar los ocho escenarios de `quickstart.md` de punta a punta y registrar el resultado real de cada uno. **Los ocho corridos y registrados al pie de `quickstart.md`**; los escenarios 4, 5 y 8 quedaron verificados solo en su mitad offline y ahí está dicho por qué. Lo que falta no es código: una credencial de un gestor real y un ticket de prueba
 
 ---
 

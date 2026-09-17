@@ -178,3 +178,43 @@ mapear— y no inventa ningún valor por defecto que pueda escribir en el lugar
 equivocado.
 
 **Prueba**: US5, FR-032 a FR-035, SC-008.
+
+---
+
+## Resultado de la verificación (T084)
+
+Corrida el 2026-09-17 en macOS 25.5, Node 26, git 2.51. **Lo que sigue es lo
+que se midió, no lo que se esperaba.**
+
+| Escenario | Qué prueba | Resultado |
+|---|---|---|
+| 1 | La suite completa, sin red | ✅ **650 tests**, 0 fallos |
+| 2 | El paralelismo es real, y el DAG lo gobierna | ✅ 13/13 en `scheduler.test.mjs` |
+| 3 | La cola de integración, con conflicto de verdad | ✅ 6/6 en `merge-queue.test.mjs` |
+| 4 | Un ticket entra, un PR sale | ✅ 5/5 en `e2e-asignar-a-pr.test.mjs` |
+| 5 | Un hito, con historias en paralelo | ✅ 7/7 en `parallel.test.mjs` |
+| 6 | El límite de autonomía, a propósito | ✅ 16/16 en `autonomy.test.mjs` |
+| 7 | Retomar | ✅ 22/22 en `resume.test.mjs` |
+| 8 | Adoptabilidad | ✅ 12/12 en `adopcion.test.mjs` |
+
+**Los escenarios 4, 5 y 8 se verificaron solo en su mitad offline**, y eso hay
+que decirlo con precisión:
+
+- El **4** corre el recorrido completo contra el proveedor falso y un
+  repositorio git real, inyectando únicamente el modelo y el forge. Lo que NO
+  está verificado es contra un gestor de tickets real con credenciales: eso
+  exige una cuenta, y un test que necesita una cuenta no lo puede correr quien
+  adopte el proyecto.
+- El **5** mide el paralelismo con un reloj inyectado y no con el reloj de
+  pared. Comparar milisegundos reales contra el umbral del 60% de SC-002 es un
+  test intermitente en cuanto la máquina se carga, y un test intermitente
+  enseña a ignorar el rojo.
+- El **8** verifica que el ejemplo valide, que cada clave que declara esté
+  descrita en el esquema, que no traiga credenciales y que `doctor` enumere
+  cada carencia por separado. La parte de *máquina limpia siguiendo solo la
+  documentación* la revisó un agente que no escribió el proyecto —encontró once
+  afirmaciones sin respaldo y las corrigió— pero **una persona ajena todavía no
+  lo hizo**, y eso es lo único que puede cerrar SC-008 de verdad.
+
+Lo que falta para cerrar T084 por completo es una credencial de GitHub, Linear
+o Azure DevOps y un ticket de prueba. No es trabajo de código.
