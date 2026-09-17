@@ -15,12 +15,11 @@ dejar pull requests abiertos. No mergea. No despliega. Ahí termina, a propósit
                                                             └─ T3 ─┘   (rebase, verifica, integra)
 ```
 
-> **Estado: usable.** 453 tests, typecheck y validación de esquemas en verde. El
-> recorrido completo funciona, los tres proveedores están implementados con su
-> suite de contrato, y el límite de autonomía está verificado dentro de una
-> sesión real —incluidos subagentes y sesiones retomadas— con el plugin sin
-> instalar. Falta el modo daemon y el recorrido de un hito completo: ver
-> [el plan de trabajo](#el-plan-de-trabajo).
+> **Estado: completo para el flujo que promete.** 650 tests, typecheck y
+> validación de esquemas en verde. Asignar un ticket —o mencionarlo— en GitHub
+> Issues, Linear o Azure DevOps es todo lo que hay que hacer: hay un test de
+> punta a punta que recorre el cableado real y solo simula el modelo y el forge.
+> Lo que queda abierto está [declarado, no escondido](#huecos-declarados).
 
 ---
 
@@ -148,7 +147,7 @@ persona no eligió.
 ## Verificación
 
 ```bash
-npm test          # 453 tests: unitarios, contrato de proveedor, integración y guardas de constitución
+npm test          # 650 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
 npm run typecheck # tsc --checkJs, sin paso de build
 npm run validate  # la configuración de ejemplo contra su esquema
 ```
@@ -171,13 +170,13 @@ contratos y 84 tareas en 8 fases.
 | 1. Setup | monorepo, CI, esquemas | ✅ 7/7 |
 | 2. Fundacional | configuración, estado con guardas, gates, hooks, worktrees, lock, contrato de proveedor, CLI | ✅ 22/22 |
 | 3. US1 — un ticket, un PR | runner con el SDK, planificador, driver del ciclo TDD, commits, PRs, plugin | ✅ 14/14 |
-| 4. US2 — paralelismo | scheduler, cola de integración, driver concurrente | ✅ 7/12 — faltan hitos y el fan-out |
+| 4. US2 — paralelismo | scheduler, cola, driver concurrente, hitos, fan-out | ✅ 12/12 |
 | 5. US3 — proveedores | Azure DevOps, GitHub, Linear, degradación, docs | ✅ 9/9 |
+| 6. US4 — retomar | reanudación, worktrees huérfanos, destrabar | ✅ 7/7 |
+| 7. US5 — adoptabilidad | ADOPTING, PARALLELISM, AUTONOMY, MIGRATING | ✅ 7/7 |
 | 5. US3 — proveedores | Azure DevOps, GitHub, Linear | 9 tareas |
-| 6. US4 — retomar | reanudación, worktrees huérfanos, destrabar | 7 tareas |
-| 7. US5 — adoptabilidad | documentación de adopción, migración | 7 tareas |
-| 8. Pulido | daemon, disparo por asignación y mención | 6 tareas |
-| Descubiertas | 15 huecos que el plan no había previsto, todos cerrados | ✅ 15/15 |
+| 8. Pulido | daemon, disparo por asignación y mención | ✅ 5/6 |
+| Descubiertas | 32 huecos que el plan no había previsto | ✅ 29 cerrados, 3 declarados |
 
 **T035 y T080 están cerradas**, y cómo se cerraron dice más que el hecho de que
 lo estén: una revisión adversarial rompió la promesa del límite de autonomía. De
@@ -196,6 +195,34 @@ Después del cambio: de 28 grafías prohibidas pasan **0**, y de 8 comandos
 legítimos se bloquean **0**.
 
 ---
+
+## Huecos declarados
+
+Tres, y ninguno es un olvido. Están en `tasks.md` como T114, T115 y T116:
+`provider.options` no se valida contra ningún esquema; `doctor` no puede probar
+su propia rama degradada porque la detección del SDK no acepta inyección; y el
+merge local en dos tiempos no lo frena el hook —deliberado: bloquear `checkout`
+es el sobre-bloqueo que ese hook ya cometió una vez, y la salida a lo compartido
+sí está cerrada—.
+
+Un hueco declarado vale más que un verde inventado. Es el principio II.
+
+## Cómo se construyó esto
+
+Vale decirlo porque cambia cómo leer el resultado: el código lo escribieron
+agentes en paralelo, y **cada tanda tenía un escéptico con instrucción de romper
+lo que los demás habían hecho**, no de confirmarlo.
+
+Los escépticos encontraron más que los implementadores. El del límite de
+autonomía demostró que la promesa central del proyecto era falsa —45 de 57
+grafías de comando prohibido la sorteaban, y una se ejecutó contra un remoto real
+moviéndole la rama principal—. El del daemon midió una carrera en el lock que
+duplicaba el trabajo en 16 de 25 arranques. El que revisó la documentación en
+frío encontró once afirmaciones que el código no respaldaba.
+
+Cada arreglo lleva su medición en el comentario, y cada test que protege un
+mecanismo se verificó rompiendo el mecanismo a propósito para ver el rojo. Un
+test que pasa con el mecanismo roto no prueba nada.
 
 ## La constitución
 

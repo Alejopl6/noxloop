@@ -202,16 +202,16 @@ US3.
 
 ### Tests (OBLIGATORIO — TDD) ⚠️
 
-- [ ] T072 [P] [US5] Test de la configuración de ejemplo: `examples/noxloop.config.json` valida contra el esquema y `doctor` la acepta
-- [ ] T073 [P] [US5] Test de `doctor`: enumera cada carencia por separado y no inventa ningún valor por defecto que pueda escribir en el lugar equivocado
+- [X] T072 [P] [US5] Test de la configuración de ejemplo: `examples/noxloop.config.json` valida contra el esquema y `doctor` la acepta
+- [X] T073 [P] [US5] Test de `doctor`: enumera cada carencia por separado y no inventa ningún valor por defecto que pueda escribir en el lugar equivocado
 
 ### Implementación
 
 - [X] T074 [P] [US5] Escribir `examples/noxloop.config.json` (+ `examples/README.md`), comentado y listo para copiar. **Adelantada desde la fase 7**: `npm run validate` la necesita para poder correr en CI desde el primer commit. `gates.example.json` no hizo falta: los gates viven dentro de la configuracion, no en un archivo aparte
-- [ ] T075 [P] [US5] Escribir `README.md`: qué es, el argumento, instalación, y el primer ticket en cinco comandos
-- [ ] T076 [P] [US5] Escribir `docs/ADOPTING.md`: instalación en una organización nueva, paso por paso
-- [ ] T077 [P] [US5] Escribir `docs/PARALLELISM.md` y `docs/AUTONOMY.md`: el DAG, la cola y dónde termina la autonomía, cada uno con el fallo que evita
-- [ ] T078 [P] [US5] Escribir `docs/MIGRATING.md`: cómo mover un harness existente atado a un gestor a esta estructura
+- [X] T075 [P] [US5] Escribir `README.md`: qué es, el argumento, instalación, y el primer ticket en cinco comandos
+- [X] T076 [P] [US5] Escribir `docs/ADOPTING.md`: instalación en una organización nueva, paso por paso
+- [X] T077 [P] [US5] Escribir `docs/PARALLELISM.md` y `docs/AUTONOMY.md`: el DAG, la cola y dónde termina la autonomía, cada uno con el fallo que evita
+- [X] T078 [P] [US5] Escribir `docs/MIGRATING.md`: cómo mover un harness existente atado a un gestor a esta estructura
 
 **Checkpoint**: US5 entregable. El proyecto es publicable.
 
@@ -222,8 +222,8 @@ US3.
 - [X] T079 [P] Implementar `inbox` y `daemon` en `bin/noxloop.mjs`: consulta periódica con deduplicación por ticket, instancia única por lock
 - [X] T080 Resolver la pregunta abierta 3 de `research.md` con un test: pedir un merge desde una sesión headless lanzada por el motor y verificar que lo intercepta. **Cerrado y medido**: `--settings` (CLI) y `options.settings` / `options.hooks` (SDK) funcionan, verificado en una sesión real, dentro de un subagente y en una sesión retomada, con el plugin **sin instalar**. Lo implementa `session-settings.mjs`, y `runner.mjs` se niega a lanzar una sesión sin guardas
 - [X] T081 [P] Dejar `npm run typecheck` (`tsc --checkJs`) en verde sobre todo el motor y los proveedores. **Adelantada**: corrio contra el codigo de la fase 2 y encontro 17 errores reales (acumuladores inferidos como `never`, `home` opcional pasado a una firma que lo exige, el `code` de un error de spawn sin tipar). Arreglarlos despues habria sido arqueologia
-- [ ] T082 [P] Escribir `CHANGELOG.md` y `CONTRIBUTING.md`
-- [ ] T083 [P] Agregar al CI en `.github/workflows/ci.yml` la guarda de nombres propios y la validación de los ejemplos
+- [X] T082 [P] Escribir `CHANGELOG.md` y `CONTRIBUTING.md`
+- [X] T083 [P] Agregar al CI en `.github/workflows/ci.yml` la guarda de nombres propios y la validación de los ejemplos
 - [ ] T084 Verificar los ocho escenarios de `quickstart.md` de punta a punta y registrar el resultado real de cada uno
 
 ---
@@ -271,6 +271,68 @@ Los cuatro escepticos rompieron algo.
 - [X] T106 **El test de punta a punta del cableado** (`packages/engine/test/e2e-asignar-a-pr.test.mjs`), que es el hueco que el esceptico del daemon marco con estas palabras: "nada de esto prueba el cableado; `despachar` esta inyectado en todos los tests". Setenta tests afirmaban sobre el bucle y cero sobre el recorrido. Ahora se inyecta **solo** lo que no puede existir sin cuenta —el modelo y el forge— y corre de verdad la bandeja, la deduplicacion, el despacho por nivel, el planificador, el estado con sus guardas, el scheduler, los worktrees, el gate, los dos commits y la cola
 - [X] T107 El cableado al CLI de todo lo anterior: `inbox`, `daemon`, `milestone`, `diagnose`, `resume`, `unstick` y `prune`, mas el despachador real que la bandeja y el daemon usan, y las inyecciones que hacen probable ese camino
 - [X] T108 `--dry-run` creaba el worktree de la tarea. Lo cacho el test de punta a punta
+
+### Cuarta ronda: lo que encontro la revision en frio
+
+Un agente que no escribio nada del proyecto siguio la documentacion corriendo
+cada comando y contrastando cada afirmacion contra el codigo. Encontro **once
+afirmaciones que el codigo no respaldaba** —las corrigio en la doc— y estos
+fallos reales, que arregle yo:
+
+- [X] T109 **La causa real del fallo al abrir el PR se tiraba.** `createPR`
+  devuelve el stderr del forge y el resumen retornaba `pr: null` sin motivo, asi
+  que el reporte decia "sin PR: no se llego a abrir" y la causa —la rama sin
+  empujar, permisos, un PR que ya existe— se perdia. Es el mismo fallo que el
+  motor prohibe en una tarea: nunca resumir un error a "falla el build"
+- [X] T110 **`syncItemBranch` era codigo muerto en el camino de `run`.** Existia
+  en la cola y solo la importaba el recorrido de un hito, asi que un
+  `noxloop run` nunca ponia la rama del item al dia con su base: con el worktree
+  del item venido de un recorrido anterior, cada tarea rebasaba contra algo que
+  ya cambio y el conflicto aparecia **al integrar** en vez de al empezar — que es
+  exactamente lo que la cola existe para evitar
+- [X] T111 `requiredEnv` se iteraba sin comprobar que fuera una lista: un
+  proveedor que lo exportara como string hacia que `doctor` lo recorriera
+  caracter por caracter y reportara un problema por cada letra, en el comando
+  cuyo valor es que la lista de carencias sea legible
+- [X] T112 Cuatro textos que habian dejado de ser ciertos: `dispatch` decia que
+  `milestone` no estaba implementado, `session-settings.mjs` seguia listando como
+  sin confirmar lo que T080 confirmo y midio, el encabezado de
+  `guard-inversion.test.mjs` decia 12 grafias y la lista tiene 18, y el
+  comentario de `log.mjs` decia stdout cuando escribe en stderr
+- [X] T113 `.specify/memory/.constitution-template.json` seguia versionado: es
+  metadata de plantilla de spec-kit, la misma atribucion de terceros que el
+  commit `dd5db29` vino a limpiar, y entro porque el `.gitignore` des-ignoraba
+  `/.specify/memory/` entero
+
+### Huecos declarados, abiertos a proposito
+
+Ninguno es un olvido. Se declaran porque un hueco dicho vale mas que un verde
+inventado.
+
+- [ ] T114 **`provider.options` no se valida.** En `config.schema.json` es
+  `{"type": "object"}` sin `properties` ni `additionalProperties`, asi que nada
+  de lo que un proveedor real necesita ahi se describe ni se comprueba, y un
+  proveedor no tiene forma de declarar el esquema de sus opciones. Una opcion
+  mal escrita (`organization` por `organizacion`) pasa la validacion y falla a
+  mitad de un recorrido — la clase de fallo que la decision D9 de `research.md`
+  dice que validar vino a matar. El ejemplo lo esquiva porque no declara
+  `options`, asi que el hueco no se ve desde la puerta de entrada. El arreglo
+  natural es un `optionsSchema` opcional en el contrato de proveedor; no lo
+  construi porque ninguno de los tres lo usaria todavia, y media solucion aca es
+  peor que el hueco declarado
+- [ ] T115 **`doctor` no puede probar su propia rama degradada.**
+  `sdkDisponible()` resuelve el paquete con `createRequire` y no acepta
+  inyeccion, y como el SDK es `optionalDependency` un `npm ci` normal lo
+  instala. O sea: el camino que el README promete —"si falta, se degrada a
+  invocar el CLI y lo dice"— casi nunca se recorre en los tests. El test que
+  existe es una bicondicional (ausente ⇔ hay aviso, y en ningun caso un
+  problema), que es lo mas que se puede afirmar sin un subproceso con un
+  `node_modules` falso
+- [ ] T116 **El merge local en dos tiempos** (`git checkout main` y despues
+  `git merge task/x`) no lo frena el hook. No se cerro porque bloquear
+  `checkout` es el sobre-bloqueo que este hook ya cometio una vez, y la salida a
+  lo compartido si esta cerrada: publicarlo exige un `git push origin main`, que
+  esta probado bloqueado
 
 ## Dependencies
 

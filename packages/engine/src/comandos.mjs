@@ -263,7 +263,7 @@ async function despachar(itemId, config, opts) {
       `${item.key || itemId} — ${item.title}`,
       `nivel: ${item.level} → ${plan.accion}  (${plan.porque})`,
       plan.accion === "milestone"
-        ? `todavia no implementado: noxloop milestone (T051)`
+        ? `corre: noxloop milestone ${itemId}   (prepara y para; con --go lo lanza)`
         : `corre: noxloop plan ${itemId}  y despues  noxloop run ${itemId}`,
     ],
   };
@@ -332,7 +332,7 @@ async function ejecutar(itemId, config, opts) {
   }
 
   const deps = await buildDeps(run.item, config, { ...opts, inject: opts.inject });
-  const r = await runItem(itemId, { ...deps, dryRun: opts.dryRun });
+  const r = /** @type {any} */ (await runItem(itemId, { ...deps, dryRun: opts.dryRun }));
 
   const humano = [];
   if (r.dryRun) {

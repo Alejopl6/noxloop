@@ -13,12 +13,12 @@ entrada: es una preferencia.
 La versión **0.1.0 todavía no se publicó**, así que todo lo de abajo es la
 primera versión y no un delta contra nada instalado.
 
-Lo que **no** entra en esta versión lo declara el propio CLI, que para cada
-subcomando ausente dice qué tarea lo trae: el recorrido de un hito completo
-(`milestone`), la bandeja y el disparo automático (`inbox`, `daemon`) y el
-destrabado por comando (`unstick`). `noxloop help` es la lista vigente.
+`noxloop help` es la lista vigente de lo que hay, y a esta altura no le falta
+ningún subcomando: el recorrido de un hito (`milestone`), la bandeja y el
+disparo automático (`inbox`, `daemon`), el destrabado con su nota (`unstick`),
+`diagnose` y `prune` entraron todos.
 
-Y tres bordes que sí están dentro del recorrido y **no** están cerrados. Se
+Lo que **no** entra son tres bordes del recorrido, que **no** están cerrados. Se
 listan acá y no en la documentación de cada tema porque quien evalúa si corre
 esto necesita verlos juntos, antes de apuntarlo a un remoto de verdad:
 
@@ -30,11 +30,16 @@ esto necesita verlos juntos, antes de apuntarlo a un remoto de verdad:
   recorrido reporta `sin PR: no se llego a abrir` y descarta lo que dijo `gh`.
   La causa real hay que buscarla corriendo `gh pr create` a mano.
 - **`noxloop run` no pone la rama del ítem al día con su base.** La función que
-  lo hace (`syncItemBranch`) existe y está probada, pero por ahora solo la usa
-  el recorrido de hito, que no está enganchado al CLI. Sobre un ítem cuyo
-  worktree quedó de un recorrido anterior, las tareas rebasan sobre una base
-  vieja — que es justo el fallo que la cola de integración existe para evitar.
-  El remedio manual está en `docs/PARALLELISM.md`.
+  lo hace (`syncItemBranch`) existe y está probada, pero la llama solo
+  `milestone.mjs`: un recorrido que entra por `noxloop milestone` la aprovecha y
+  uno que entra por `noxloop run <historia>` no. Sobre un ítem cuyo worktree
+  quedó de un recorrido anterior, las tareas rebasan sobre una base vieja — que
+  es justo el fallo que la cola de integración existe para evitar. El remedio
+  manual está en `docs/PARALLELISM.md`.
+- **`noxloop dispatch` sobre una épica manda a un comando que ya existe.**
+  Cierra con `todavia no implementado: noxloop milestone (T051)`, un mensaje que
+  quedó en el despachador cuando `milestone` entró. `noxloop milestone <id>`
+  funciona; la línea miente.
 
 ### Añadido
 
@@ -82,12 +87,26 @@ esto necesita verlos juntos, antes de apuntarlo a un remoto de verdad:
   `options.settings` en el SDK), así que **funcionan con el plugin sin
   instalar** —verificado en una sesión real, dentro de un subagente y en una
   sesión retomada—. El motor se niega a lanzar una sesión si no puede armarlas.
+- **El recorrido de un hito, la bandeja y el disparo automático.** `milestone`
+  prepara el recorrido de una épica o feature y **para** —el orden de las
+  historias, las exclusiones, la rama del hito— y solo lo lanza con `--go`;
+  `inbox` dice qué tickets hay asignados o mencionados sin ejecutar nada, y
+  `daemon` es el bucle que los despacha. El hito integra cada historia a su rama
+  sin esperar revisión humana, y lo declara al pedir la aprobación: un error
+  temprano viaja a las siguientes, y es el precio de no detenerse.
+- **Retomar, destrabar y limpiar, cada uno con su decisión registrada.**
+  `diagnose` dice qué quedó a medias y qué decisión hace falta, sin tocar nada;
+  `resume` la ejecuta; `unstick <id> --task <t> --nota "..."` devuelve una tarea
+  bloqueada al bucle **exigiendo la nota**, porque una tarea que vuelve sin que
+  nadie diga por qué es un presupuesto regalado en silencio; y `prune` limpia
+  worktrees huérfanos sin descartar trabajo sin commitear salvo con `--force`.
 - **Resto de la superficie del CLI**: `validate` (un problema por campo, con su
   ruta), `status` (solo lectura, sin tocar el gestor: corre con la red caída),
   `dispatch` (resuelve el nivel del ticket con el mapa de tipos y delega),
   `add-target` (amplía el alcance de una tarea con su motivo, que queda
   registrado y se reporta en el PR) y `run --dry-run`, que no escribe nada.
-- **El plugin de Claude Code**: cuatro comandos, cuatro agentes y dos skills.
+- **El plugin de Claude Code**: cinco comandos, cinco agentes, dos skills y dos
+  workflows (el fan-out de planificación y el de revisión).
 - **Configuración validada contra JSON Schema**, con `${VAR:-default}`. Es el
   único lugar donde viven nombres propios; un test busca nombres propios en el
   motor y falla si encuentra alguno.

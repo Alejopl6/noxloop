@@ -149,7 +149,7 @@ de un recorrido — pero conviene saber que vienen.
 | `provider.stateMap` | Estado canónico → estado nativo, para los cinco canónicos. | Total y obligatorio en sus cinco claves. `null` es una respuesta válida y significa "este proyecto no tiene ese estado, no lo escribas". |
 | `provider.levelMap` | Tipo nativo → nivel canónico (`epic`, `feature`, `story`, `task`), con `default` **obligatorio**. | El nivel nunca se deduce comparando el nombre del tipo: un gestor llama "Product Backlog Item" a lo que otro llama "User Story", y comparar nombres funciona en un proyecto y calla en otro. |
 | `forge.kind` / `.cli` | Dónde viven el código y los PRs (`github`, `azure-repos`, `gitlab`) y con qué binario se hablan. | Puede ser distinto del gestor de tickets, y es lo normal. |
-| `identity.assignee` / `.mention` | Cómo se reconoce a noxloop en el gestor, para el disparo automático. | Lo consume el recorrido de bandeja. Mientras ese subcomando no esté, estos campos no cambian nada. |
+| `identity.assignee` / `.mention` | Cómo se reconoce a noxloop en el gestor, para el disparo automático. | Los consumen `noxloop inbox` y `noxloop daemon`. Si tu proveedor no declara `searchAssigned` ni `searchMentioned`, la bandeja no va a encontrar nada y `doctor` lo avisa: los tickets se lanzan a mano. |
 | `repos.<clave>` | Un repositorio de trabajo. La clave es como lo nombran las tareas del plan, **y también como se lo busca en disco** si no declarás `path` (§4). | `path` (checkout local; si falta se prueba `<dir de --search>/<clave>` y **siempre** se verifica contra el remote), `remote`, `baseBranch`, `gate`, `fastGate`, `runners`, `env`, `gaps`, `timeoutMs`. |
 | `limits` | El ancho y los cortes: `maxParallelTasks`, `stallRounds`, `phaseTimeoutMin`, y los que consumen los recorridos de hito y de bandeja. | No hay techo por invocación, a propósito: el techo por invocación se midió como amputación —13 de 71 invocaciones aterrizaron entre $7,50 y $7,99 contra un techo de $8, se registraron como `exit 0`, y el trabajo cortado volvió como reintento más caro que lo ahorrado. |
 | `budgets` | Intentos por bucle y por tarea: `red`, `green`, `gate`, `review`. | Son **por bucle**: agotar GREEN no consume GATE. Agotado cualquiera, la tarea se bloquea. Retomar no los devuelve. |
@@ -603,11 +603,14 @@ Según lo que diga `lastFailure`:
   noxloop add-target <id> <tarea> <ruta> "por qué"
   ```
 - **`presupuesto agotado`** en cualquiera de los cuatro bucles → la tarea no
-  vuelve sola, y eso es deliberado: retomar no regala presupuesto. El comando
-  para destrabar registrando la decisión (`unstick`) todavía no está
-  implementado —el CLI lo dice y nombra la tarea que lo trae—, así que hoy la
-  salida es arreglar la causa y relanzar el recorrido, aceptando que esa tarea
-  queda fuera de este PR.
+  vuelve sola, y eso es deliberado: retomar no regala presupuesto. Devolverla al
+  bucle exige **registrar la decisión**, que es todo el punto del comando:
+  ```bash
+  noxloop unstick <id> --task <tarea> --nota "qué se decidió"
+  ```
+  La nota no es opcional: sin ella el comando solo imprime su uso. Una tarea que
+  vuelve al bucle sin que nadie diga por qué es un presupuesto regalado en
+  silencio.
 - **`el estado dejo de avanzar; corto el recorrido`** en la bitácora → el motor
   cortó tras `limits.stallRounds` vueltas sin cambios. Es un corte, no un
   resultado: `status` dice en qué estado quedó cada tarea.
@@ -619,12 +622,19 @@ tarea. `status` muestra quién lo tiene; un lock de un proceso que ya murió se
 recupera solo.
 
 ```bash
+noxloop diagnose <id>    # qué quedó a medias, y qué decisión hace falta
 noxloop resume <id>      # retoma desde el disco lo que quedó en vuelo
+noxloop prune            # worktrees huérfanos; sin --force no descarta trabajo
 ```
 
-Retomar es gratis porque el estado vive en disco y el motor no tiene ningún
-"dónde iba" en memoria: no repite ninguna tarea integrada, y las que quedaron a
-medias conservan sus intentos consumidos.
+Ese es el orden y no es casual. `diagnose` es solo lectura y dice qué decisión
+hace falta; `resume` la ejecuta. Retomar es gratis porque el estado vive en
+disco y el motor no tiene ningún "dónde iba" en memoria: no repite ninguna tarea
+integrada, y las que quedaron a medias conservan sus intentos consumidos.
+
+`prune` limpia lo que quedó tirado de un recorrido que murió. **Sin `--force` no
+descarta nada**: un worktree con cambios sin commitear puede ser la única copia
+de un trabajo, y borrarlo por prolijidad es el peor intercambio posible.
 
 ---
 
@@ -637,16 +647,22 @@ existen dicen **qué tarea los trae** en vez de fallar raro.
 noxloop help
 ```
 
-Al momento de escribir esto, eso incluye el recorrido de un hito completo
-(`milestone`), la bandeja y el disparo automático (`inbox`, `daemon`) y el
-destrabado por comando (`unstick`). Un comando que existe a medias y falla raro
-es peor que uno que todavía no está.
+Al momento de escribir esto **no queda ningún subcomando ausente**: el recorrido
+de un hito (`milestone`), la bandeja y el disparo automático (`inbox`, `daemon`)
+y el destrabado por comando (`unstick`) están los cuatro, junto con `diagnose` y
+`prune`. Lo que sigue valiendo es la regla que produjo esa lista: un comando que
+existe a medias y falla raro es peor que uno que todavía no está.
 
-Los cuatro salen con exit 2 y nombran la tarea que los trae. Pero el mensaje
-cierra con `Lo que ya funciona: doctor, validate, status, add-target`, y **esa
-lista está incompleta**: `plan`, `run`, `resume` y `dispatch` también funcionan,
-y son el recorrido entero. No leas esa línea como el inventario; leé
-`noxloop help`, que sí lo es.
+Lo que queda abierto no son comandos, son los tres bordes del recorrido —nada
+publica la rama del ítem, el error del forge se pierde, y `run` no pone la rama
+del ítem al día con su base—. Están en §6, en
+[`docs/PARALLELISM.md`](PARALLELISM.md) y en el `CHANGELOG.md`, que los lista
+juntos.
+
+> **Un desfase que vas a encontrar.** `noxloop dispatch <id>` sobre una épica o
+> una feature todavía cierra con `todavia no implementado: noxloop milestone
+> (T051)`. Es un mensaje viejo que quedó en el despachador: `noxloop milestone
+> <id>` funciona. Hacele caso a `noxloop help`, no a esa línea.
 
 El plan de trabajo completo está en
 [`specs/001-parallel-ticket-orchestrator/tasks.md`](../specs/001-parallel-ticket-orchestrator/tasks.md):

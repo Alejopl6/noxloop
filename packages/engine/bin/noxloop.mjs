@@ -21,6 +21,10 @@ const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.u
 
 const PENDIENTES = {};
 
+/** Los subcomandos que llevan un item, y los que no. */
+const CON_ITEM = ["plan", "run", "resume", "dispatch", "milestone", "diagnose", "unstick"];
+const SIN_ITEM = ["inbox", "daemon", "prune"];
+
 const AYUDA = `noxloop ${VERSION} — un ticket entra, un pull request sale.
 
   noxloop doctor                    que esta declarado, que falta, que credencial no esta
@@ -119,7 +123,7 @@ async function main() {
     aviso(
       `\`noxloop ${comando}\` todavia no esta implementado.\n` +
         `Lo trae ${PENDIENTES[comando]}.\n` +
-        `Lo que ya funciona: doctor, validate, status, add-target.`,
+        `Lo que ya funciona: ${[...CON_ITEM, ...SIN_ITEM, "doctor", "validate", "status", "add-target"].join(", ")}.`,
     );
     process.exit(2);
   }
@@ -158,9 +162,6 @@ async function main() {
     if (!r.ready) process.exit(1);
     return;
   }
-
-  const CON_ITEM = ["plan", "run", "resume", "dispatch", "milestone", "diagnose", "unstick"];
-  const SIN_ITEM = ["inbox", "daemon", "prune"];
 
   if (CON_ITEM.includes(comando) || SIN_ITEM.includes(comando)) {
     const itemId = args._[1];

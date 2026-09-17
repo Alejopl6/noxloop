@@ -37,19 +37,15 @@
 // ruta declarada existe es lo unico que convierte ese silencio en un error, y
 // por eso quien no puede armar las guardas no lanza la sesion.
 //
-// LO QUE FALTA CONFIRMAR, y no se puede confirmar sin una sesion real:
-//   - Que los hooks de tipo `command` de esta via corran tambien dentro de cada
-//     subagente. La doc de hooks lo afirma para "hooks from settings files",
-//     pero la cobertura de subagentes solo se midio con la forma de callbacks
-//     en proceso (`options.hooks`). El principio IV exige justamente eso ("el
-//     hook corre dentro de cada subproceso"), asi que es el primer agujero que
-//     el test de interceptacion tiene que cerrar.
-//   - Que una sesion RETOMADA (`resume`) vuelva a aplicar las guardas de la
-//     invocacion que la retoma. El driver retoma entre fases RED -> GREEN ->
-//     GATE -> REVIEW, y una guarda que existe en RED y desaparece en GATE es el
-//     peor caso posible. No esta descartado.
-//   - Que el binario que usa cada camino se comporte igual: el `claude` del PATH
-//     y el que trae el SDK no son la misma version.
+// LO QUE SE CONFIRMO, y con que medicion (T080, 2026-09-17). La interceptacion
+// ocurre por esta via en una sesion real, DENTRO DE UN SUBAGENTE, y en una
+// sesion retomada con `--resume` —que es lo que hace el driver entre RED y
+// GREEN—, todo con el plugin SIN instalar (control: un grep de "noxloop" sobre
+// ~/.claude/plugins vuelve vacio).
+//
+// LO QUE SIGUE SIN MEDIR, y el motor no depende de ninguna de las dos: la via
+// `plugins`/`--plugin-dir`, y `pluginDelivery: "initialize"`, que exige una
+// version del CLI mas nueva que la del PATH.
 //
 // Hasta que ese test —pedir un merge desde una sesion del motor y esperar el
 // bloqueo, como lo redacta research.md— pase, el modo daemon no se publica.

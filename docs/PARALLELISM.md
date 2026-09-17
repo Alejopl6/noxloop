@@ -100,11 +100,13 @@ una base vieja significa que cada tarea va a rebasar contra algo que ya cambió,
 el conflicto aparece al integrar —cuando ya hay catorce ramas— en vez de al
 empezar, cuando no hay ninguna.
 
-**Hoy `noxloop run` no la llama.** El único importador es el recorrido de hito,
-que todavía no está enganchado al CLI. Lo que hace `run` es crear el worktree del
-ítem desde la base **la primera vez** (`makeResolve`, en `wiring.mjs`) y nada
-más: si ese worktree ya existe de un recorrido anterior, la rama del ítem se
-queda donde quedó, y las tareas de hoy rebasan sobre la base de entonces.
+**Hoy `noxloop run` no la llama.** El único importador es `milestone.mjs`, así
+que la rama se pone al día cuando el recorrido entra por `noxloop milestone` y
+**no** cuando entra por `noxloop run <historia>`. Lo que hace `run` es crear el
+worktree del ítem desde la base **la primera vez** (`makeResolve`, en
+`wiring.mjs`) y nada más: si ese worktree ya existe de un recorrido anterior, la
+rama del ítem se queda donde quedó, y las tareas de hoy rebasan sobre la base de
+entonces.
 
 Se declara porque es exactamente el fallo que la función existe para evitar, y
 porque el borde tiene una forma concreta de evitarse a mano: antes de un `run`
@@ -343,6 +345,7 @@ node --test packages/engine/test/scheduler.test.mjs        # la regla y el repor
 node --test packages/engine/test/merge-queue.test.mjs      # la cola, con conflicto real
 node --test packages/engine/test/active-tasks.test.mjs     # el puntero por worktree
 node --test packages/engine/test/state-concurrencia.test.mjs  # la carrera
+node --test packages/engine/test/parallel.test.mjs         # N tareas a la vez, un repositorio
 ```
 
 El test del scheduler recorre la tabla del escenario 2 de
@@ -357,27 +360,34 @@ punta nueva, el rebase falla, la tarea vuelve a `green` con el conflicto
 textual, y la rama base queda intacta. Es el fallo de las catorce ramas
 reproducido en miniatura, y verificado.
 
-Ninguno de los cuatro necesita red, credenciales ni modelo.
+Y `parallel.test.mjs` es el único cuyo objeto es la concurrencia misma: N tareas
+a la vez sobre **el mismo** repositorio. Los otros cuatro prueban el paralelismo
+por sus piezas —el scheduler decide bien, la cola integra en serie, el estado
+tiene guardas—, y eso deja afuera justo lo que salió caro: que dos cosas
+corriendo a la vez no se arruinen entre ellas.
+
+Ninguno de los cinco necesita red, credenciales ni modelo.
 
 ---
 
 ## Lo que este documento no promete
 
 - **Todo lo de arriba es el ancho de un ítem: tareas de una misma historia.**
-  El esquema declara un segundo ancho, el de **historias de un hito**
-  (`limits.maxParallelItems`, 2 por defecto), pero **hoy no lo aplica ningún
-  camino del CLI**: los únicos que lo leen son el recorrido de hito y el daemon,
-  y los dos salen con `todavia no esta implementado`. Declararlo en la
-  configuración no cambia nada por ahora. Cuando entre, la regla que va a
-  obedecer es la misma extendida: **si el gestor de tickets no soporta
-  dependencias entre tickets, ese ancho es 1**, porque un ancho mayor sobre un
-  orden que nadie afirma es el paralelismo por optimismo que prohíbe el
-  principio V.
+  Hay un segundo ancho, el de **historias de un hito**
+  (`limits.maxParallelItems`, 2 por defecto), y no lo aplica nada de lo que se
+  explica acá: lo leen `milestone.mjs` y el daemon, y solo entra en juego cuando
+  el recorrido arranca por `noxloop milestone` o por el disparo automático. Un
+  `noxloop run <historia>` no lo mira nunca. Obedece la misma regla extendida:
+  **si el gestor de tickets no soporta dependencias entre tickets, ese ancho es
+  1**, porque un ancho mayor sobre un orden que nadie afirma es el paralelismo
+  por optimismo que prohíbe el principio V.
 - **SC-002 —un hito de tres historias en menos del 60% de la suma— es un
   objetivo, no una medición.** Lo que está medido es el punto de partida serial:
   14,5 min y $5,59 de media por invocación, sobre 133 invocaciones. La ganancia
   real del paralelismo se mide con un hito real, y ese número todavía no existe.
-- **El test de concurrencia con N tareas sobre el mismo repositorio (T047) está
-  pendiente.** Lo que hoy prueba el aislamiento es el worktree por tarea y la
-  carrera de estado, por separado — las dos mitades, nunca las dos a la vez
-  contra un repositorio de verdad.
+- **La ganancia del paralelismo tampoco está medida por tarea.** Que el
+  aislamiento sea correcto está probado, incluso con N tareas a la vez sobre el
+  mismo repositorio (`parallel.test.mjs`); que el recorrido termine antes es
+  otra afirmación, y la única forma de sostenerla es un hito real contra un
+  recorrido serial del mismo plan. Hasta que eso exista, lo que este documento
+  promete es que el paralelismo no rompe nada — no cuánto ahorra.

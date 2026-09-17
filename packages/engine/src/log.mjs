@@ -2,8 +2,9 @@
 // adelante, porque con varias tareas en paralelo una bitacora sin contexto es
 // ruido: no se puede saber de quien era el fallo.
 //
-// A stdout va lo que una persona lee mientras mira; al archivo va todo. Nunca
-// al reves: un recorrido de horas no se sigue en scroll.
+// A stderr va lo que una persona lee mientras mira; al archivo va todo. A
+// stderr y no a stdout porque stdout es del contrato del CLI: ahi va el JSON que
+// consume una maquina, y mezclarlos rompe cualquier `| jq`.
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
