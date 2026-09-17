@@ -283,3 +283,61 @@ chequeo de tipos en CI sin introducir ese modo de fallo.
    Lo que quedó sin medir: la vía `plugins` / `--plugin-dir`, y
    `pluginDelivery: "initialize"` (que exige una versión del CLI más nueva que la
    del PATH). El motor no depende de ninguna de las dos.
+
+## D13 — El tablero de control: por qué es una página local y no agent view
+
+**La pregunta.** Hacía falta una vista 360: qué hay, qué corre, qué pide una
+respuesta, en kanban, alimentada por lo que va llegando. Tres candidatos —
+`claude agents` (agent view), una CLI aparte, o una página servida en local.
+
+**Agent view queda afuera, y no por calidad.** Su documentación es explícita en
+dos cosas que lo deciden: gestiona *sesiones de Claude Code en background* y **no
+funciona con sesiones del Agent SDK** ni con `-p`. El motor usa exactamente esas
+— es lo medido en D9 —, así que un recorrido en vuelo no produce ni una fila. Y
+aunque las produjera, mostraría **sesiones**, no tickets: sus estados son
+`working|blocked|done|failed|stopped`, no `red|green|gated|reviewed|queued`. La
+pregunta "¿en qué tarea del ticket 83 se trabó el gate?" no tiene respuesta en
+esa pantalla. Su estado en `~/.claude/jobs/` está además declarado como *"not a
+stable interface"*, así que tampoco sirve como fuente para leer desde afuera.
+
+**Una CLI aparte queda afuera por duplicación.** `noxloop status`, `inbox` y
+`milestone` con `--json` ya son esa CLI. Una segunda partiría la verdad en dos.
+
+**Lo que se hizo: un lector.** El dato que decidió todo es que el estado del
+motor ya está entero en disco como JSON, y sus estados ya son las columnas. El
+tablero no necesitaba modelo de datos nuevo: necesitaba *leer un directorio*.
+De ahí las tres restricciones que tiene código y test:
+
+1. **No escribe.** `state.mjs` es el único escritor del estado de una tarea, y
+   es lo que hace que las transiciones guardadas sirvan. Un tablero con permiso
+   de escritura sería un segundo escritor y devolvería por la puerta de atrás la
+   carrera que cerró `conEstadoFresco`. El test mide el disco antes y después de
+   construir el tablero; todo método que no sea GET muere en la puerta con 405.
+2. **Solo loopback.** Muestra títulos de tickets, texto de fallos y rutas de
+   worktrees. Escuchar en `0.0.0.0` publicaría eso en la red local sin que nadie
+   lo pida.
+3. **Sin dependencias y sin red.** `node:http` y una página autocontenida. Se lo
+   mira cuando algo se rompió, y eso incluye "no hay internet"; un test falla si
+   aparece una URL que no sea loopback.
+
+**Lo que se aprendió construyéndolo, y es el hallazgo que importa.** Al armar la
+vista quedó claro que el motor **no tiene ningún campo que diga "necesito que
+alguien me conteste"** para un recorrido suelto: `esperandoRespuesta` existe a
+nivel de item de hito, y las preguntas del planificador terminan en el motivo de
+la bandeja o impresas en una terminal. La tentación era agregar el campo. Se
+resolvió **derivándolo**, porque un campo que nadie escribe es peor que no
+tenerlo — el tablero mostraría cero y se vería igual que "todo en orden". Es el
+mismo cable cortado que ya apareció una vez en este proyecto con un `findings`
+que ningún productor llenaba. El tablero deriva de tres fuentes que sí se
+escriben: `esperandoRespuesta` del hito, los rechazos de clase `permanente` de
+la bandeja, y los recorridos que agotaron todo sin integrar nada. Las
+exclusiones también son deliberadas y tienen test: con algo integrado hay
+trabajo que sirve, con algo pendiente no se agotó nada, y con el PR abierto ya
+está en manos de alguien.
+
+**Lo que queda afuera a propósito.** El webhook. D8 eligió sondeo, y meter un
+webhook como *segunda* puerta de entrada daría dos fuentes de verdad sobre qué
+tickets existen. Si algún día hace falta inmediatez, el webhook tiene que
+escribir en la bandeja que ya existe, no saltearla — y el tablero lo vería sin
+cambiar una línea, porque ya lee la bandeja.
+

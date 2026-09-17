@@ -23,7 +23,7 @@ const PENDIENTES = {};
 
 /** Los subcomandos que llevan un item, y los que no. */
 const CON_ITEM = ["plan", "run", "resume", "dispatch", "milestone", "diagnose", "unstick"];
-const SIN_ITEM = ["inbox", "daemon", "prune"];
+const SIN_ITEM = ["inbox", "daemon", "prune", "board"];
 
 const AYUDA = `noxloop ${VERSION} — un ticket entra, un pull request sale.
 
@@ -45,6 +45,8 @@ const AYUDA = `noxloop ${VERSION} — un ticket entra, un pull request sale.
   noxloop unstick <item> --task <t> --nota "<que se decidio>"
                                     devuelve una tarea bloqueada al bucle
   noxloop prune [--force]           limpia worktrees huerfanos (sin --force no descarta trabajo)
+  noxloop board [--port N] [--open] el tablero 360 en el navegador: que hay, que corre,
+                                    que te necesita. Solo lectura, solo 127.0.0.1
   noxloop add-target <item> <tarea> <ruta> "<motivo>"
                                     amplia el alcance de una tarea, con su motivo
 
@@ -175,10 +177,12 @@ async function main() {
     // El daemon corre hasta que se lo interrumpe, y tiene que soltar el lock al
     // salir: si no, el proximo arranque lo encuentra tomado por un pid muerto.
     const ac = new AbortController();
-    if (comando === "daemon") {
+    if (comando === "daemon" || comando === "board") {
       for (const senial of ["SIGINT", "SIGTERM"]) {
         process.on(senial, () => {
-          aviso(`\nrecibi ${senial}: termino la vuelta y suelto el lock...`);
+          aviso(comando === "board"
+            ? `\nrecibi ${senial}: cierro el board...`
+            : `\nrecibi ${senial}: termino la vuelta y suelto el lock...`);
           ac.abort();
         });
       }
@@ -198,6 +202,8 @@ async function main() {
       repo: args.flags.repo ? String(args.flags.repo) : undefined,
       task: args.flags.task ? String(args.flags.task) : undefined,
       nota: args.flags.nota ? String(args.flags.nota) : undefined,
+      port: args.flags.port ? Number(args.flags.port) : undefined,
+      open: Boolean(args.flags.open),
       volverA: args.flags["volver-a"] ? String(args.flags["volver-a"]) : undefined,
       signal: ac.signal,
     }));

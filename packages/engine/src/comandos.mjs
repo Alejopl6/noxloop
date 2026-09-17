@@ -41,6 +41,7 @@ export async function ejecutarComando(comando, itemId, config, opts = {}) {
   if (comando === "diagnose") return diagnostico(itemId, config, { ...opts, log });
   if (comando === "unstick") return destrabarTarea(itemId, config, { ...opts, log });
   if (comando === "prune") return podar(config, { ...opts, log });
+  if (comando === "board") return tablero(config, { ...opts, log });
   throw new Error(`comando desconocido: ${comando}`);
 }
 
@@ -83,6 +84,48 @@ function hacerDespachador(config, opts) {
       pr: corrida.pr || null,
     };
   };
+}
+
+/**
+ * Levanta el board de control y se queda sirviendo hasta que lo interrumpan.
+ *
+ * POR QUE VIVE ACA Y NO EN EL BIN. Es el mismo motivo por el que `hacerDespachador`
+ * vive aca: lo que corre en produccion tiene que ser lo que los tests ejercitan.
+ * El bin solo traduce banderas.
+ *
+ * NO ESCRIBE NADA. Ver board.mjs — este proceso lee el estado, y que no pueda
+ * escribirlo es lo que deja intacto el unico-escritor del motor.
+ */
+async function tablero(config, opts) {
+  const { levantarBoard } = await import("./board-server.mjs");
+  const { srv, url } = await levantarBoard({ home: config.home, port: opts.port });
+
+  opts.log?.info(`board en ${url} — lee ${config.home}, no escribe nada`);
+  if (opts.open) await abrirEnNavegador(url, opts.log);
+
+  // Sin señal el board se queda vivo mientras viva el proceso: es un servidor,
+  // y terminar solo lo volveria inutil. Con señal cierra y devuelve.
+  if (opts.signal) {
+    await new Promise((res) => {
+      if (opts.signal.aborted) return res(undefined);
+      opts.signal.addEventListener("abort", () => res(undefined), { once: true });
+    });
+    await new Promise((res) => srv.close(() => res(undefined)));
+    return { ok: true, url, cerrado: true };
+  }
+
+  return { ok: true, url, srv };
+}
+
+/** Abrir el navegador es una comodidad: si no se puede, se dice y se sigue. */
+async function abrirEnNavegador(url, log) {
+  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    const { spawn } = await import("node:child_process");
+    spawn(cmd, [url], { stdio: "ignore", detached: true }).unref();
+  } catch (e) {
+    log?.warn(`no pude abrir el navegador con ${cmd}: ${e.message}. La URL es ${url}`);
+  }
 }
 
 async function bandeja(config, opts) {
