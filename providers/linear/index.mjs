@@ -71,6 +71,21 @@ export function capabilities() {
 }
 
 /**
+ * Lo que este proveedor acepta en `provider.options`. Ver T114 y el
+ * `optionsSchema` de los otros dos: una clave mal escrita tiene que fallar al
+ * cargar, no a mitad de un recorrido.
+ */
+export const optionsSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    teamId: { type: "string", description: "El UUID del equipo donde se crean las hijas." },
+    teamKey: { type: "string", description: "La clave corta del equipo (ENG), para resolver identificadores humanos." },
+    acceptanceHeading: { type: "string", description: "El encabezado de la descripcion donde viven los criterios." },
+  },
+};
+
+/**
  * El mapa de tipos nativos a niveles canonicos, con `default` EXPLICITO.
  *
  * EL FALLO QUE EVITA. Linear no tiene tipos de issue: `type Issue` no expone

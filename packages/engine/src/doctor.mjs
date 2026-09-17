@@ -44,7 +44,7 @@ export async function doctor(config, opts = {}) {
     git: versionDeGit(),
     forgeCli: config.forge?.cli || "gh",
     forgeCliPresente: tieneBinario(config.forge?.cli || "gh"),
-    sdkPresente: await sdkDisponible(),
+    sdkPresente: await sdkDisponible(opts.sdkDisponible),
   };
   if (!entorno.git) problemas.push("git no esta disponible en el PATH, y el motor no puede funcionar sin el");
   if (!entorno.forgeCliPresente) {
@@ -140,7 +140,29 @@ export async function doctor(config, opts = {}) {
   };
 }
 
-async function sdkDisponible() {
+/**
+ * Si el Agent SDK esta instalado.
+ *
+ * ACEPTA UN DETECTOR INYECTADO (T115), con el de produccion como default. El
+ * SDK es una `optionalDependency`, asi que un `npm ci` normal lo instala y el
+ * camino degradado —el que el README promete: "si falta, se invoca el CLI y se
+ * dice"— casi nunca se recorria en los tests. Lo unico afirmable era una
+ * bicondicional que no prueba ni el mensaje ni que sea aviso y no problema.
+ *
+ * Un detector que revienta cuenta como AUSENTE. `doctor` existe para decir que
+ * falta: caerse al averiguarlo lo dejaria sin decir nada, que es peor que
+ * reportar de menos.
+ *
+ * @param {(() => Promise<boolean>)} [detector]
+ */
+async function sdkDisponible(detector) {
+  if (detector) {
+    try {
+      return Boolean(await detector());
+    } catch {
+      return false;
+    }
+  }
   try {
     const { createRequire } = await import("node:module");
     createRequire(import.meta.url).resolve("@anthropic-ai/claude-agent-sdk");

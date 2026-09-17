@@ -89,6 +89,32 @@ export function capabilities() {
   };
 }
 
+/**
+ * Lo que este proveedor acepta en `provider.options`.
+ *
+ * `organization`, `project` y `team` son `required` porque el codigo ya los
+ * EXIGE con `exigir()` a mitad de la primera llamada: declararlos aca mueve ese
+ * error al arranque, que es lo que pide T114.
+ */
+export const optionsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["organization", "project"],
+  properties: {
+    organization: { type: "string", description: "La organizacion de Azure DevOps." },
+    project: { type: "string", description: "El proyecto donde viven los work items." },
+    team: { type: "string", description: "El equipo, para las consultas que lo necesitan." },
+    baseUrl: { type: "string", description: "Para instalaciones on-premise. Por omision, dev.azure.com." },
+    childType: { type: "string", description: "El tipo de work item que se crea como hija." },
+    wiql: {
+      type: "object",
+      additionalProperties: false,
+      description: "Consultas WIQL propias, que ganan sobre las que arma el proveedor.",
+      properties: { assigned: { type: "string" }, mentioned: { type: "string" } },
+    },
+  },
+};
+
 // ------------------------------------------------------------------ mapas
 
 /**
