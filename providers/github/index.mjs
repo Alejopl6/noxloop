@@ -612,16 +612,47 @@ export async function createChild(parentId, spec, ctx) {
  * no son el configurado, y por eso el id canonico se califica.
  */
 export async function searchInbox(ctx) {
+  const owner = ctx.options?.owner;
+  const repo = ctx.options?.repo;
+
+  /**
+   * DEL REPOSITORIO DECLARADO, Y NADA MAS.
+   *
+   * `/issues?filter=assigned` devuelve los issues asignados al dueño del token
+   * en TODOS los repositorios que puede ver. Con un token personal eso son los
+   * issues de trabajo de esa persona, de otras organizaciones enteras — y el
+   * daemon gastaba una invocacion de planificacion en cada uno antes de que
+   * `validatePlan` los rechazara por tocar un repositorio no declarado.
+   *
+   * La configuracion declara sobre que repositorio trabaja noxloop. Lo de afuera
+   * no es asunto suyo. Sin `owner`/`repo` declarados no hay con que filtrar, y
+   * ahi se devuelve lo que hay: filtrar todo dejaria la bandeja muda.
+   */
+  const delRepo = (crudo) => {
+    if (!owner || !repo) return true;
+    const url = String(crudo?.repository_url || crudo?.html_url || "");
+    return url.toLowerCase().includes(`/${String(owner).toLowerCase()}/${String(repo).toLowerCase()}`);
+  };
+
   const traer = async (filtro) => {
     const lote = await paginar(ctx, "/issues", `filter=${filtro}&state=open`);
     // La REST API de GitHub considera issue a TODO pull request. Sin este
     // filtro el daemon dispara un recorrido sobre una revision y el motor busca
     // criterios de aceptacion en un diff. La clave `pull_request` es la marca
     // documentada.
-    return soloIssues(lote, ctx, `/issues?filter=${filtro}`)
-      .filter((c) => !c?.pull_request)
-      .map((c) => aItem(c, ctx));
+    const propios = soloIssues(lote, ctx, `/issues?filter=${filtro}`)
+      .filter((c) => !c?.pull_request);
+
+    const dentro = propios.filter(delRepo);
+    const afuera = propios.length - dentro.length;
+    if (afuera > 0) {
+      ctx?.log?.info?.(
+        `github: ${afuera} issue(s) asignado(s) fuera de ${owner}/${repo} quedaron fuera de la bandeja`,
+      );
+    }
+    return dentro.map((c) => aItem(c, ctx));
   };
+
   return { assigned: await traer("assigned"), mentioned: await traer("mentioned") };
 }
 

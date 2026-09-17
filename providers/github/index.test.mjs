@@ -672,7 +672,9 @@ test("searchInbox separa asignados de mencionados en dos consultas al core", asy
     "/issues?filter=mentioned&state=open&per_page=100&page=1",
   ]);
   assert.deepEqual(mentioned.map((i) => i.id), ["43"]);
-  assert.deepEqual(assigned.map((i) => i.id), ["42", "otra-org/otro#12"]);
+  // Sin filtro declarado se devuelven los dos; con `owner`/`repo` puestos, el
+  // ajeno no entra (su propio test lo fija).
+  assert.deepEqual(assigned.map((i) => i.id), ["42"]);
 });
 
 test("searchInbox descarta los pull requests que GitHub cuenta como issues", async () => {
@@ -681,10 +683,45 @@ test("searchInbox descarta los pull requests que GitHub cuenta como issues", asy
   assert.ok(!assigned.some((i) => i.id === "88"), "un PR en la bandeja dispararia un recorrido sobre una revision");
 });
 
-test("searchInbox califica los items de otros repositorios", async () => {
-  const { ctx } = hacerCtx();
+test("searchInbox NO ofrece issues de repositorios que la configuracion no declara", async () => {
+  // EL FALLO QUE EVITA, y es un bloqueante para usarlo con un token personal:
+  // `/issues?filter=assigned` devuelve los issues asignados al dueño del token
+  // en TODOS los repositorios que puede ver. Con un PAT personal, el daemon
+  // levantaba los issues de trabajo de esa persona —de otras organizaciones
+  // enteras— y gastaba una invocacion de planificacion en cada uno antes de que
+  // `validatePlan` los rechazara por tocar un repositorio no declarado.
+  //
+  // La configuracion declara sobre que repositorio trabaja noxloop. Lo de afuera
+  // no es asunto suyo, y omitirlo se DICE en vez de callarse.
+  const { ctx, pedidos } = hacerCtx();
   const { assigned } = await github.searchInbox(ctx);
-  const ajeno = assigned.find((i) => i.id.includes("#"));
+
+  assert.deepEqual(
+    assigned.map((i) => i.id),
+    ["42"],
+    "un issue de otra organizacion no puede entrar a la bandeja",
+  );
+  // La consulta sigue siendo una sola por senial: filtrar del lado del cliente
+  // es mas barato que una consulta por repositorio, y el endpoint del core no
+  // acepta acotarla por repositorio.
+  assert.equal(pedidos.filter((x) => x.ruta.includes("filter=assigned")).length, 1);
+});
+
+test("searchInbox deja pasar lo de otro repositorio si la configuracion no dice cual", async () => {
+  // Sin `owner`/`repo` declarados no hay con que filtrar, y filtrar todo seria
+  // dejar la bandeja muda sin decir por que. Se devuelve lo que hay.
+  const { ctx } = hacerCtx({ owner: undefined, repo: undefined });
+  const { assigned } = await github.searchInbox(ctx);
+  assert.ok(assigned.length >= 2, "sin configuracion de repositorio no se filtra");
+});
+
+test("searchInbox califica los items de otros repositorios", async () => {
+  // Con el filtro apagado, para poder verificar la calificacion del id.
+  const { ctx } = hacerCtx({ owner: undefined, repo: undefined });
+  const { assigned } = await github.searchInbox(ctx);
+  // Se elige por su URL y no por "tiene #": sin repositorio configurado, `aItem`
+  // califica TODOS los ids, asi que buscar el "#" agarra cualquiera.
+  const ajeno = assigned.find((i) => i.url.includes("otra-org"));
   assert.equal(ajeno.id, "otra-org/otro#12", "dos repos pueden tener el issue 12: un numero pelado despacharia el equivocado");
   assert.equal(ajeno.url, "https://github.com/otra-org/otro/issues/12");
 });
