@@ -365,6 +365,39 @@ export function clearLastFailure(run, taskId, opts = {}) {
   });
 }
 
+/**
+ * Anota el gasto de una invocacion en el recorrido.
+ *
+ * POR QUE HACE FALTA, y es un hueco que destapo el recorrido de un hito: el
+ * techo de gasto por hito lee `run.spent.usd` para decidir si se detiene, y
+ * NADA del motor lo escribia. El techo existia en la configuracion, en el
+ * esquema y en el codigo que lo consulta, y no podia dispararse nunca — la peor
+ * clase de limite, porque se lee como si estuviera puesto.
+ *
+ * Una invocacion que no informa costo cuenta igual como invocacion: un contador
+ * que se queda en cero no es un contador, y el numero de invocaciones sigue
+ * siendo un limite util cuando el costo no viene.
+ *
+ * @param {{usd?: number|null, calls?: number}} gasto
+ * @param {{home?: string}} [opts]
+ */
+export function addSpend(run, gasto, opts = {}) {
+  const usd = gasto.usd == null ? 0 : Number(gasto.usd);
+  const calls = gasto.calls == null ? 0 : Number(gasto.calls);
+  if (!Number.isFinite(usd) || usd < 0) {
+    throw new GuardError(`el gasto no puede ser negativo ni no-numerico (llego ${gasto.usd}): el gasto solo sube`);
+  }
+  if (!Number.isFinite(calls) || calls < 0) {
+    throw new GuardError(`las invocaciones no pueden ser negativas (llego ${gasto.calls})`);
+  }
+  return conEstadoFresco(run, opts, (fresco) => {
+    fresco.spent = fresco.spent || { usd: 0, calls: 0 };
+    fresco.spent.usd = Math.round((fresco.spent.usd + usd) * 1e6) / 1e6;
+    fresco.spent.calls += calls;
+    return fresco.spent;
+  });
+}
+
 const CAMPOS_ITEM = ["branch", "baseBranch", "prTarget", "pr", "providerStateWritten", "boardFields"];
 
 /**

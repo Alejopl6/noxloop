@@ -301,6 +301,24 @@ test("el historial de la rama deja el test ANTES de la implementacion", async ()
   assert.match(enItem, /feat\(/);
 });
 
+test("cada invocacion queda anotada en el gasto del recorrido", async () => {
+  const esc = escenario([tarea("T1"), tarea("T2")]);
+  const registro = [];
+  const r = await runItem("1", depsBase(esc, registro, {
+    runPhase: async (o) => {
+      const base = await modeloQueCumple(registro)(o);
+      // Dos de las fases informan costo y una no: el contador de invocaciones
+      // tiene que contar las tres igual.
+      return { ...base, usd: o.phase === "REVIEW" ? null : 1.5 };
+    },
+  }));
+
+  const run = loadRun("1", { home: esc.home });
+  assert.equal(run.spent.calls, registro.length, "una invocacion sin anotar es una invocacion que no existio");
+  assert.ok(run.spent.usd > 0, "el costo informado no llego al recorrido");
+  assert.equal(r.spent.calls, run.spent.calls, "el resumen tiene que traer lo mismo que el disco");
+});
+
 test("exige que exista un plan: no replanifica solo", async () => {
   const esc = escenario();
   const home = join(esc.raiz, "home-vacio");

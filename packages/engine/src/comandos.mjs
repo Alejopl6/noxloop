@@ -11,6 +11,10 @@ import { loadRun } from "./state.mjs";
 import { resumable } from "./scheduler.mjs";
 import { buildDeps, loadProvider, itemBranchName, reposDeclarados } from "./wiring.mjs";
 import { createLogger } from "./log.mjs";
+import { revisarBandeja } from "./inbox.mjs";
+import { correrDaemon, unaVuelta } from "./daemon.mjs";
+import { prepararHito, correrHito, reporteDeHito } from "./milestone.mjs";
+import { diagnosticar, prepararReanudacion, destrabar, limpiarHuerfanos } from "./recovery.mjs";
 
 /** Que hace falta correr para cada nivel de ticket. */
 const POR_NIVEL = {
@@ -21,7 +25,7 @@ const POR_NIVEL = {
 };
 
 /**
- * @param {"plan"|"run"|"resume"|"dispatch"} comando
+ * @param {"plan"|"run"|"resume"|"dispatch"|"inbox"|"daemon"|"milestone"|"diagnose"|"unstick"|"prune"} comando
  * @param {string} itemId
  * @param {object} config
  */
@@ -31,7 +35,191 @@ export async function ejecutarComando(comando, itemId, config, opts = {}) {
   if (comando === "dispatch") return despachar(itemId, config, { ...opts, log });
   if (comando === "plan") return planificar(itemId, config, { ...opts, log });
   if (comando === "run" || comando === "resume") return ejecutar(itemId, config, { ...opts, log, comando });
+  if (comando === "inbox") return bandeja(config, { ...opts, log });
+  if (comando === "daemon") return daemon(config, { ...opts, log });
+  if (comando === "milestone") return hito(itemId, config, { ...opts, log });
+  if (comando === "diagnose") return diagnostico(itemId, config, { ...opts, log });
+  if (comando === "unstick") return destrabarTarea(itemId, config, { ...opts, log });
+  if (comando === "prune") return podar(config, { ...opts, log });
   throw new Error(`comando desconocido: ${comando}`);
+}
+
+/**
+ * El despachador que usan la bandeja y el daemon: un ticket entra, se resuelve
+ * su nivel, y se lo lleva al camino que le toca.
+ *
+ * ES EL CABLEADO DE VERDAD, y por eso vive aca y no dentro del daemon: el
+ * daemon recibe `despachar` inyectado para poder probar su bucle sin modelo, y
+ * si esta funcion viviera adentro, lo que corre en produccion no seria lo que
+ * los tests ejercitan. Hay un test de punta a punta que la recorre entera.
+ */
+function hacerDespachador(config, opts) {
+  return async (item) => {
+    const nivel = item.level;
+
+    if (nivel === "epic" || nivel === "feature") {
+      const r = /** @type {any} */ (await hito(String(item.id), config, { ...opts, go: true }));
+      return { ok: r.ok !== false, porque: r.reason, clase: "transitorio" };
+    }
+
+    const plan = /** @type {any} */ (await planificar(String(item.id), config, opts));
+    if (!plan.ok) {
+      // Un ticket sin criterios verificables no se arregla esperando: es un
+      // rechazo PERMANENTE, y reintentarlo cada dos minutos paga el modelo para
+      // llegar al mismo lugar. Un fallo del gestor o de la red, en cambio, es
+      // transitorio y hay que reintentarlo.
+      return {
+        ok: false,
+        porque: plan.question ? `${plan.reason} — ${plan.question}` : plan.reason,
+        clase: plan.question || /criterio/i.test(String(plan.reason)) ? "permanente" : "transitorio",
+      };
+    }
+
+    const corrida = /** @type {any} */ (await ejecutar(String(item.id), config, { ...opts, comando: "run" }));
+    return {
+      ok: Boolean(corrida.pr),
+      porque: corrida.pr ? undefined : (corrida.reason || corrida.humano?.join(" ")),
+      clase: "transitorio",
+      pr: corrida.pr || null,
+    };
+  };
+}
+
+async function bandeja(config, opts) {
+  const { mod: provider, ctx } = await cargarProveedor(config, opts);
+  const r = await revisarBandeja(config, { provider, providerCtx: ctx, home: config.home, log: opts.log });
+
+  const humano = [];
+  if (r.nuevos.length) {
+    humano.push(`${r.nuevos.length} ticket(s) para despachar:`);
+    for (const i of r.nuevos) humano.push(`  ${i.key || i.id}  [${i.level}]  ${i.title}  (${i.disparos.join(", ")})`);
+  } else {
+    humano.push("no hay tickets nuevos");
+  }
+  for (const v of r.vistos) humano.push(`  · ${v.item?.key || v.item?.id || v.id}: ya tiene recorrido (${v.estado})`);
+  for (const o of r.omitidos) humano.push(`  ✗ ${o.item?.key || o.item?.id}: ${o.porque}`);
+  for (const d of r.degradaciones) humano.push(`  ! ${d}`);
+  humano.push("", "`inbox` no ejecuta nada. Para despachar: noxloop daemon, o noxloop plan <item>.");
+
+  return { ...r, humano };
+}
+
+async function daemon(config, opts) {
+  const { mod: provider, ctx } = await cargarProveedor(config, opts);
+  const despachar = opts.inject?.despachar || hacerDespachador(config, opts);
+
+  const r = await correrDaemon(config, {
+    provider, providerCtx: ctx, home: config.home, log: opts.log,
+    despachar,
+    ...(opts.inject?.dormir ? { dormir: opts.inject.dormir } : {}),
+    ...(opts.inject?.ahora ? { ahora: opts.inject.ahora } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.vueltas ? { vueltas: opts.vueltas } : {}),
+  });
+  return { ...r, humano: [`daemon terminado: ${r.motivo || "senial de terminacion"}`] };
+}
+
+async function hito(itemId, config, opts) {
+  const { mod: provider, ctx } = await cargarProveedor(config, opts);
+  const item = await provider.getItem(itemId, ctx);
+  if (!item) return { ok: false, humano: [`el hito ${itemId} no existe`] };
+
+  const deps = await buildDeps(item, config, { ...opts, provider, providerCtx: ctx, inject: opts.inject });
+  const comunes = {
+    ...deps,
+    provider, providerCtx: ctx,
+    planItem: (id, d) => planItem(id, d),
+    runItem: (id, d) => runItem(id, d),
+    skip: opts.skip, only: opts.only, repo: opts.repo,
+    maxItems: opts.maxItems, maxCostUsd: opts.maxCostUsd,
+  };
+
+  if (!opts.go) {
+    const r = await prepararHito(itemId, comunes);
+    return {
+      ...r,
+      humano: [
+        `hito ${item.key || itemId} — ${item.title}`,
+        "",
+        ...lineasDeHito(r),
+        "",
+        "Esto es el UNICO punto de aprobacion humana del hito entero.",
+        "El hito integra cada historia a su rama SIN esperar revision humana, asi que",
+        "un error temprano viaja hacia las siguientes. Es el precio de no detenerse.",
+        `Si el recorrido te sirve: noxloop milestone ${itemId} --go --max-items 1`,
+      ],
+    };
+  }
+
+  const r = await correrHito(itemId, comunes);
+  return { ...r, humano: lineasDeHito(r) };
+}
+
+/** El reporte para una persona. Distingue bloqueada de inalcanzable, que es lo
+ * unico que hace util el resumen final: una fallo, la otra nunca pudo
+ * intentarse. */
+function lineasDeHito(r) {
+  const l = [];
+  if (r.ok === false) return [`no se pudo: ${r.reason || r.porque || "sin motivo"}`];
+
+  l.push(`rama del hito: ${r.branch} (sobre ${r.baseBranch}) en ${r.repo}`);
+  if (r.ordenSegun) l.push(`orden: ${r.orden?.join(" → ") || "-"}  [${r.ordenSegun}]`);
+  if (r.integrated?.length) l.push(`integradas: ${r.integrated.join(", ")}`);
+  if (r.prOpen?.length) l.push(`con PR sin integrar: ${r.prOpen.join(", ")}`);
+  if (r.pending?.length) l.push(`pendientes: ${r.pending.join(", ")}`);
+  for (const b of r.blocked || []) {
+    l.push(`  ✗ ${b.id || b}: ${String(b.porque || b.reason || "sin causa").split("\n")[0]}`);
+  }
+  for (const u of r.unreachable || []) {
+    l.push(`  · ${u.id || u}: inalcanzable — depende de ${(u.porque || []).join(", ")} (no fallo: nunca pudo intentarse)`);
+  }
+  for (const s_ of r.skipped || []) l.push(`  — ${s_.id || s_}: excluida (${s_.why || s_.porque || ""})`);
+  if (r.spent) l.push(`gasto: ${r.spent.calls || 0} invocacion(es)${r.spent.usd ? `, ${r.spent.usd} USD` : ""}`);
+  if (r.stoppedBy) l.push(`se detuvo por: ${r.stoppedBy}`);
+  if (r.prs?.length) l.push("", "pull requests:", ...r.prs.map((p) => `  ${p.item || p.id}: ${p.pr || p.url}`));
+  l.push("", "Ninguno se mergeo: el merge del hito a su base sigue siendo humano.");
+  return l;
+}
+
+function diagnostico(itemId, config, opts) {
+  const r = diagnosticar(itemId, { home: config.home, config });
+  const humano = [];
+  if (!r.existe) return { ...r, humano: [`no hay recorrido para ${itemId}`] };
+  humano.push(`recorrido ${itemId}: ${(r.integradas || []).length} integradas, ${(r.bloqueadas || []).length} bloqueadas, ${(r.enVuelo || []).length} en vuelo`);
+  for (const t of r.enVuelo || []) {
+    humano.push(`  ${t.id} [${t.status}] ${t.sucio ? "worktree SUCIO" : "limpio"} — decision: ${(t.decisiones || []).join(" | ")}`);
+  }
+  for (const h of r.huerfanos || []) humano.push(`  huerfano: ${h.path || h}`);
+  return { ...r, humano };
+}
+
+function destrabarTarea(itemId, config, opts) {
+  if (!opts.task) return { ok: false, humano: ["uso: noxloop unstick <item> --task <tarea> --nota \"<que se decidio>\""] };
+  const r = destrabar(itemId, opts.task, { home: config.home, nota: opts.nota, volverA: opts.volverA });
+  return {
+    ...r,
+    humano: r.ok === false
+      ? [`no se pudo destrabar ${opts.task}: ${r.porque || r.reason}`]
+      : [`${opts.task} vuelve al bucle. La decision quedo registrada.`,
+         "Ojo: registrarla solo aca es un atajo — la fuente de verdad es el ticket."],
+  };
+}
+
+function podar(config, opts) {
+  const r = limpiarHuerfanos({ home: config.home, config, force: Boolean(opts.force) });
+  const humano = [];
+  for (const q of r.quitados || []) humano.push(`quitado: ${q}`);
+  for (const c of r.conservados || []) humano.push(`CONSERVADO: ${c.path || c} — ${c.motivo || ""}`);
+  if (!humano.length) humano.push("no hay nada huerfano");
+  return { ...r, humano };
+}
+
+/** El proveedor, inyectable para poder probar el cableado sin red. */
+async function cargarProveedor(config, opts) {
+  if (opts.inject?.provider) {
+    return { mod: opts.inject.provider, ctx: opts.inject.providerCtx || {} };
+  }
+  return loadProvider(config, { log: opts.log });
 }
 
 /**
@@ -91,7 +279,7 @@ async function planificar(itemId, config, opts) {
   // de trabajo de una persona y no llegaria ni a la rama ni al PR — es un fallo
   // observado, no una hipotesis.
   const repoPrincipal = reposDeclarados(config)[0];
-  const deps = await buildDeps(item, config, { ...opts, provider, providerCtx: ctx });
+  const deps = await buildDeps(item, config, { ...opts, provider, providerCtx: ctx, inject: opts.inject });
   const { integrationPath } = deps.resolve(repoPrincipal);
 
   const r = await planItem(itemId, {
@@ -143,7 +331,7 @@ async function ejecutar(itemId, config, opts) {
     }
   }
 
-  const deps = await buildDeps(run.item, config, opts);
+  const deps = await buildDeps(run.item, config, { ...opts, inject: opts.inject });
   const r = await runItem(itemId, { ...deps, dryRun: opts.dryRun });
 
   const humano = [];

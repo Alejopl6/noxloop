@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import {
   loadRun, saveRun, transition, bump, setTaskFields, setItemFields,
-  setActiveTask, clearActiveTask, clearLastFailure, BUDGETS_DEFAULT,
+  setActiveTask, clearActiveTask, clearLastFailure, addSpend, BUDGETS_DEFAULT,
 } from "./state.mjs";
 import { readySet } from "./scheduler.mjs";
 import { drain } from "./merge-queue.mjs";
@@ -163,6 +163,8 @@ export async function runItem(itemId, deps) {
       integrated: integradas,
       blocked: bloqueadas,
       prAlreadyExisted: Boolean(pr?.alreadyExisted),
+      // El hito lo consume para su techo de gasto.
+      spent: loadRun(itemId, { home })?.spent || { usd: 0, calls: 0 },
     };
   } finally {
     for (const t of (loadRun(itemId, { home })?.tasks || [])) {
@@ -385,6 +387,18 @@ async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   if (r?.sessionId && r.sessionId !== t.sessionId) {
     setTaskFields(loadRun(run.item.id, { home: deps.home }), taskId, { sessionId: r.sessionId }, { home: deps.home });
   }
+
+  // TODA invocacion se anota, con costo o sin el. El techo de gasto de un hito
+  // lee esto para decidir si se detiene, y hasta ahora nadie lo escribia: el
+  // techo existia en la configuracion y en el codigo que lo consulta, y no podia
+  // dispararse nunca. Un limite que se lee como puesto y no lo esta es peor que
+  // no tenerlo.
+  try {
+    addSpend(loadRun(run.item.id, { home: deps.home }), { usd: r?.usd ?? null, calls: 1 }, { home: deps.home });
+  } catch (e) {
+    (deps.log || consolaMuda()).warn(`no se pudo anotar el gasto de la fase: ${e.message}`);
+  }
+
   return r || { ok: false, budgetExhausted: false, text: "la fase no devolvio nada" };
 }
 

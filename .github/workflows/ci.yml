@@ -24,3 +24,179 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run validate
+
+      # Las guardas de constitucion ya corren dentro de `npm test`. Este paso
+      # las corre OTRA VEZ, solas y con nombre: cuando el motor adquiere un
+      # nombre propio de organizacion, de repositorio o de host, el fallo tiene
+      # que leerse como lo que es —la genericidad se rompio, y es lo unico que
+      # hace que el proyecto lo pueda instalar alguien mas (SC-009)— y no como
+      # una linea mas en el resumen de la suite completa.
+      - name: guarda de genericidad — cero nombres propios en el motor
+        run: npm run guard
+
+      # Toda configuracion de ejemplo valida contra el esquema.
+      #
+      # `npm run validate` (arriba) valida `examples/noxloop.config.json` por su
+      # nombre, porque es el comando que prometen el README y CONTRIBUTING.md y
+      # tiene que seguir funcionando tal cual. Este paso cubre el hueco de esa
+      # forma: un ejemplo agregado despues, que nadie cablee en el script, no lo
+      # valida nadie — y un ejemplo que no valida es la peor forma de
+      # documentacion, porque quien lo copia no entiende por que se le rechaza
+      # la copia.
+      - name: todo ejemplo valida contra su esquema
+        shell: bash
+        run: |
+          shopt -s nullglob
+          ejemplos=(examples/*.config.json)
+          if [ ${#ejemplos[@]} -eq 0 ]; then
+            echo "::error::no hay ninguna configuracion de ejemplo en examples/"
+            exit 1
+          fi
+          for e in "${ejemplos[@]}"; do
+            echo "--- $e"
+            node packages/engine/bin/noxloop.mjs validate "$e" >/dev/null
+          done
+
+      # Los esquemas viven en dos lugares y son el MISMO contrato: los de
+      # `packages/engine/schemas/` son los que el motor valida en tiempo de
+      # ejecucion, y los de `contracts/` son el contrato publicado que alguien
+      # lee para escribir su configuracion o su proveedor. Hoy son identicos
+      # byte a byte porque los primeros se copiaron de los segundos (T007).
+      #
+      # Que se separen en silencio es un fallo esperando: el motor rechazando un
+      # campo que el contrato documenta, o aceptando uno que el contrato no
+      # nombra. Ninguna de las dos cosas se nota hasta que le pasa a quien
+      # adopta el proyecto.
+      - name: los esquemas del motor y los del contrato no divergieron
+        shell: bash
+        run: |
+          contrato=specs/001-parallel-ticket-orchestrator/contracts
+          motor=packages/engine/schemas
+          # Primero el inventario: un esquema que existe en un solo lado tambien
+          # es divergencia, y un diff archivo por archivo no lo veria.
+          if ! diff <(cd "$contrato" && ls *.schema.json) <(cd "$motor" && ls *.schema.json); then
+            echo "::error::hay un esquema en $contrato o en $motor que no existe en el otro"
+            exit 1
+          fi
+          for f in "$motor"/*.schema.json; do
+            n=$(basename "$f")
+            if ! diff -u "$contrato/$n" "$f"; then
+              echo "::error file=$motor/$n::$n divergio de $contrato/$n: son el mismo contrato en dos lugares"
+              exit 1
+            fi
+          done
+
+      # El primer recorrido que manda `docs/ADOPTING.md`, corrido tal cual.
+      #
+      # EL FALLO QUE ESTO EVITA, y ya ocurrio: la doc prometia que `doctor`
+      # decia "listo para usar" despues de copiar el ejemplo, y no llegaba —
+      # el ejemplo apunta `repos.app.path` a `~/proyects/app`, que en una
+      # maquina limpia no existe. Nadie lo noto porque ningun test corre la
+      # secuencia que la doc manda: los tests prueban `doctor`, no el
+      # documento. Quien adoptaba el proyecto se quedaba en el paso 2 del
+      # primer recorrido, y la unica salida era leer el motor.
+      #
+      # Por eso este paso es la receta del documento y no una variante mas
+      # comoda: si la receta deja de funcionar, falla aca y no en la maquina
+      # de otra persona.
+      - name: el primer recorrido de ADOPTING.md llega a `listo para usar`
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          noxloop version > /dev/null
+
+          # El checkout de trabajo que el ejemplo declara y que ninguna maquina
+          # limpia tiene. `doctor` compara el remote, asi que tiene que
+          # coincidir con el declarado: es justo la comprobacion que se prueba.
+          demo="$(mktemp -d)/app"
+          mkdir -p "$demo"
+          git init -q -b main "$demo"
+          git -C "$demo" remote add origin git@github.com:mi-org/app.git
+          : > "$demo/a.txt"
+          git -C "$demo" add a.txt
+          git -C "$demo" commit -qm "checkout de prueba"
+
+          cp examples/noxloop.config.json ./noxloop.config.json
+          node - "$demo" <<'JS'
+          const fs = require("node:fs");
+          const c = JSON.parse(fs.readFileSync("noxloop.config.json", "utf8"));
+          // Las dos rutas relativas al archivo de configuracion, reescritas
+          // para la raiz del clon. Es el paso que ADOPTING.md pone primero.
+          c.$schema = "./packages/engine/schemas/config.schema.json";
+          c.provider.module = "./providers/fake/index.mjs";
+          c.repos.app.path = process.argv[2];
+          c.repos.app.gaps = ["sin tests de integracion"];
+          fs.writeFileSync("noxloop.config.json", JSON.stringify(c, null, 2));
+          JS
+
+          noxloop validate ./noxloop.config.json > /dev/null
+
+          if ! noxloop doctor > doctor.json; then
+            echo '::error::doctor no llego a `listo para usar` con la receta de docs/ADOPTING.md §2'
+            cat doctor.json
+            rm -f ./noxloop.config.json doctor.json
+            exit 1
+          fi
+          node -e '
+            const r = JSON.parse(require("node:fs").readFileSync("doctor.json", "utf8"));
+            if (r.ready !== true) {
+              console.error("::error::doctor devolvio ready:false con la receta documentada");
+              process.exit(1);
+            }
+          '
+
+          # `dispatch` es el comando mas barato que habla con el gestor, y
+          # ADOPTING.md transcribe su salida. Si cambia, el documento miente.
+          noxloop dispatch 2 | node -e '
+            let s = "";
+            process.stdin.on("data", (d) => (s += d)).on("end", () => {
+              const r = JSON.parse(s);
+              const mal = [];
+              if (r.level !== "story") mal.push(`level=${r.level}, esperaba story`);
+              if (r.accion !== "plan+run") mal.push(`accion=${r.accion}, esperaba plan+run`);
+              if (r.branch !== "feature/2-la-primera-historia") mal.push(`branch=${r.branch}`);
+              if (mal.length) {
+                console.error(`::error::dispatch 2 no dice lo que transcribe docs/ADOPTING.md §5.1: ${mal.join("; ")}`);
+                process.exit(1);
+              }
+            });
+          '
+          rm -f ./noxloop.config.json doctor.json
+
+      # Todo comando de verificacion que la documentacion manda correr, corrido.
+      #
+      # POR QUE NO ALCANZA `npm test`. `npm test` corre todos los tests; este
+      # paso comprueba algo distinto — que los comandos ESCRITOS en los
+      # bloques "Como se verifica" sigan existiendo. Renombrar un archivo de
+      # test deja la suite en verde y el documento roto, y el documento es lo
+      # unico que tiene quien no escribio esto. El antecedente es concreto: la
+      # doc del contrato mandaba `node --test providers/<nuevo>/`, que falla
+      # con MODULE_NOT_FOUND desde Node 22 porque el runner ya no expande
+      # directorios (T099).
+      - name: los comandos que la documentacion manda correr existen y pasan
+        shell: bash
+        run: |
+          set -uo pipefail
+          grep -horE 'node --test packages/engine/test/[A-Za-z0-9_.-]+\.test\.mjs' \
+            docs/*.md README.md CONTRIBUTING.md | sort -u > comandos-doc.txt
+          if [ ! -s comandos-doc.txt ]; then
+            echo '::error::ninguna doc dice como verificar nada: los bloques "Como se verifica" desaparecieron'
+            exit 1
+          fi
+          falla=0
+          while IFS= read -r c; do
+            archivo="${c##* }"
+            echo "--- $c"
+            if [ ! -f "$archivo" ]; then
+              echo "::error file=$archivo::la documentacion manda correr \`$c\` y ese archivo no existe"
+              falla=1
+              continue
+            fi
+            if ! node --test "$archivo" > /dev/null; then
+              echo "::error file=$archivo::\`$c\` falla, y es un comando que la documentacion manda correr"
+              falla=1
+            fi
+          done < comandos-doc.txt
+          rm -f comandos-doc.txt
+          exit "$falla"

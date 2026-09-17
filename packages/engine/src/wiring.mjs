@@ -102,22 +102,39 @@ export function makeResolve(config, opts) {
   const { home, item } = opts;
   const cache = new Map();
 
-  return (repo) => {
-    if (cache.has(repo)) return cache.get(repo);
-
+  /**
+   * @param {string} repo
+   * @param {{item?: object, itemBranch?: string, baseBranch?: string}} [over]
+   *   El recorrido de un hito pasa rama y base EXPLICITAS: la rama del hito, y
+   *   una rama por historia que nace de ella.
+   */
+  return (repo, over = {}) => {
     const declarado = config.repos?.[repo];
     if (!declarado) throw new Error(`el repositorio "${repo}" no esta declarado en la configuracion`);
+
+    const elItem = over.item || item;
+    const baseBranch = over.baseBranch || opts.baseBranch || declarado.baseBranch;
+    const itemBranch = over.itemBranch || opts.itemBranch || itemBranchName(elItem);
+
+    // LA CLAVE DEL CACHE INCLUYE LA RAMA, y el fallo que evita lo destapo el
+    // recorrido de un hito: ahi se resuelven VARIAS ramas del mismo repositorio
+    // —la del hito y una por historia—, y un cache indexado solo por
+    // repositorio devolvia la primera para todas. La segunda historia habria
+    // trabajado en el worktree de la primera, y su gate habria medido el codigo
+    // ajeno.
+    const clave = `${repo}::${itemBranch}`;
+    if (cache.has(clave)) return cache.get(clave);
+
     const repoPath = repoRoot(repo, config, { search: opts.search });
-    const baseBranch = opts.baseBranch || declarado.baseBranch;
-    const itemBranch = opts.itemBranch || itemBranchName(item);
-    const integrationPath = join(home, "worktrees", repo, `item-${item.id}`);
+    // El nombre del worktree sale de la rama y no del id del item, por lo mismo.
+    const integrationPath = join(home, "worktrees", repo, slug(itemBranch, 60) || `item-${elItem.id}`);
 
     if (!existsSync(integrationPath)) {
       worktree.add(repoPath, { branch: itemBranch, base: baseBranch, dest: integrationPath });
     }
 
     const resuelto = { repoPath, integrationPath, itemBranch, baseBranch };
-    cache.set(repo, resuelto);
+    cache.set(clave, resuelto);
     return resuelto;
   };
 }
@@ -131,13 +148,21 @@ export function makeResolve(config, opts) {
 export async function buildDeps(item, config, opts = {}) {
   const home = config.home;
   const log = opts.log || createLogger({ home });
-  const { mod: provider, ctx: providerCtx } = opts.provider
-    ? { mod: opts.provider, ctx: opts.providerCtx || {} }
+  const inyectado = opts.provider || opts.inject?.provider;
+  const { mod: provider, ctx: providerCtx } = inyectado
+    ? { mod: inyectado, ctx: opts.providerCtx || opts.inject?.providerCtx || {} }
     : await loadProvider(config, { log });
 
   const resolve = makeResolve(config, {
     home, item, search: opts.search, itemBranch: opts.itemBranch, baseBranch: opts.baseBranch,
   });
+
+  // LAS INYECCIONES VAN AL FINAL, y existen para una sola cosa: que el camino
+  // completo se pueda probar sin red, sin credenciales y sin modelo. Lo que se
+  // reemplaza es unicamente lo que no puede existir offline —el modelo y el
+  // forge—; todo lo demas corre de verdad, porque si se inyectara tambien el
+  // test dejaria de probar el cableado.
+  const overrides = opts.inject || {};
 
   return {
     home,
@@ -169,6 +194,7 @@ export async function buildDeps(item, config, opts = {}) {
           }
         },
       }),
+    ...overrides,
   };
 }
 
