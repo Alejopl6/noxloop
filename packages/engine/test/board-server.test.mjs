@@ -119,3 +119,72 @@ test("un home corrupto se sirve igual, con el aviso adentro", async () => {
     assert.ok(b.avisos.some((a) => /T-4/.test(a.mensaje)));
   });
 });
+
+// --------------------------------------------- el board arranca sin config
+//
+// EL FALLO QUE EVITA, y se encontro usandolo: `noxloop board` exigia una
+// configuracion completa —proveedor, al menos un repo— para levantar un lector
+// que no usa ninguna de las dos cosas. Justo el escenario para el que existe el
+// board (mirar que quedo cuando el gestor esta caido, o cuando estas en otra
+// maquina sin los checkouts) era el que no podia abrirlo.
+
+import { resolverHomeDelBoard } from "../src/board-server.mjs";
+
+test("--home gana sobre todo: es la ruta mas corta a mirar el estado", () => {
+  const h = resolverHomeDelBoard({ home: "/un/home" }, { NOXLOOP_HOME: "/otro" }, () => ({ home: "/del/archivo" }));
+  assert.equal(h.home, "/un/home");
+  assert.equal(h.de, "--home");
+});
+
+test("sin --home manda NOXLOOP_HOME, que es la misma precedencia del motor", () => {
+  const h = resolverHomeDelBoard({}, { NOXLOOP_HOME: "/del/entorno" }, () => ({ home: "/del/archivo" }));
+  assert.equal(h.home, "/del/entorno");
+  assert.equal(h.de, "NOXLOOP_HOME");
+});
+
+test("sin ninguno de los dos se usa la configuracion, como cualquier comando", () => {
+  const h = resolverHomeDelBoard({}, {}, () => ({ home: "/del/archivo" }));
+  assert.equal(h.home, "/del/archivo");
+  assert.equal(h.de, "la configuracion");
+});
+
+test("una configuracion invalida NO impide mirar el estado si hay donde mirarlo", () => {
+  const h = resolverHomeDelBoard({ home: "/un/home" }, {}, () => { throw new Error("no valida"); });
+  assert.equal(h.home, "/un/home", "el board es un lector: la config no es su dependencia");
+});
+
+test("sin config valida y sin donde mirar, lo dice en vez de abrir un board vacio", () => {
+  const h = resolverHomeDelBoard({}, {}, () => { throw new Error("falta provider") });
+  assert.equal(h.home, null);
+  assert.match(h.problema, /falta provider/, "se nombra la causa real, no un 'algo fallo'");
+  assert.match(h.problema, /--home|NOXLOOP_HOME/, "y se dice como seguir sin arreglarla");
+});
+
+// ------------------------------------------------- la pagina tiene que parsear
+//
+// EL FALLO QUE EVITA. El JS de la pagina viaja como texto dentro de un modulo:
+// nada lo compila, y un parentesis de menos no rompe ningun test. El board
+// quedaria en blanco, el servidor seguiria devolviendo 200 y la suite entera
+// verde. Aca se lo pasa por el parser de verdad.
+
+import { PAGINA } from "../src/board-page.mjs";
+
+test("el script de la pagina parsea: un board en blanco no puede dar verde", () => {
+  const bloques = [...PAGINA.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.ok(bloques.length > 0, "la pagina tiene que traer su script");
+
+  for (const js of bloques) {
+    // `new Function` compila sin ejecutar: alcanza para el parser y no toca
+    // nada del entorno del test.
+    assert.doesNotThrow(() => new Function(js), "el script de la pagina no parsea");
+  }
+});
+
+test("la pagina trae los anclajes que su script busca por id", () => {
+  const js = [...PAGINA.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join("\n");
+  const pedidos = new Set([...js.matchAll(/getElementById\("([^"]+)"\)/g)].map((m) => m[1]));
+  assert.ok(pedidos.size > 5, "se esperaban varios ids en juego");
+
+  const faltan = [...pedidos].filter((id) => !PAGINA.includes(`id="${id}"`));
+  assert.deepEqual(faltan, [], `el script busca ids que el HTML no tiene: ${faltan.join(", ")}`);
+});

@@ -132,3 +132,37 @@ export function levantarBoard(opts) {
     });
   });
 }
+
+/**
+ * De donde sale el `home` que el board va a leer.
+ *
+ * POR QUE NO USA `loadConfig` DIRECTO. El board es un lector de un directorio:
+ * no necesita proveedor ni repos. Exigirle una configuracion valida rompia el
+ * escenario para el que existe — mirar que quedo cuando el gestor esta caido, o
+ * desde otra maquina sin los checkouts. La precedencia es la MISMA del motor
+ * (`NOXLOOP_HOME` gana sobre el archivo), mas `--home` arriba de todo para no
+ * necesitar archivo en absoluto.
+ *
+ * @param {{home?: string}} flags
+ * @param {Record<string, string|undefined>} env
+ * @param {() => {home: string}} cargarConfig se invoca SOLO si hace falta
+ * @returns {{home: string|null, de: string, problema?: string}}
+ */
+export function resolverHomeDelBoard(flags, env, cargarConfig) {
+  if (flags && flags.home) return { home: String(flags.home), de: "--home" };
+  if (env && env.NOXLOOP_HOME) return { home: env.NOXLOOP_HOME, de: "NOXLOOP_HOME" };
+  try {
+    const cfg = cargarConfig();
+    return { home: cfg.home, de: "la configuracion" };
+  } catch (e) {
+    // La causa real, textual. Un "no pude arrancar" sin el motivo manda a
+    // adivinar, y encima el board se puede abrir igual: hay que decir como.
+    return {
+      home: null,
+      de: "ninguna",
+      problema:
+        `no pude leer la configuracion (${e.message}) y el board necesita saber que directorio mirar. ` +
+        `Pasa \`--home <ruta>\` o exporta NOXLOOP_HOME.`,
+    };
+  }
+}

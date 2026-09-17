@@ -401,6 +401,12 @@ escribe una sola cosa**, así que podés abrirlo con un recorrido corriendo sin
 tocarlo. Escucha solo en loopback a propósito: lo que muestra son títulos de
 tickets y texto de fallos de gate, o sea tu trabajo interno.
 
+`board` es el único comando que **no necesita configuración**: con `--home
+<ruta>` mira un directorio de estado y listo. Es a propósito — el escenario para
+el que existe incluye "estoy en otra máquina sin los checkouts" y "el gestor
+está caído", y exigirle un proveedor y un repo declarado lo habría dejado
+inservible justo ahí.
+
 ### 5.4 Y después con el gestor real
 
 Cambian tres cosas y ninguna es el motor:
