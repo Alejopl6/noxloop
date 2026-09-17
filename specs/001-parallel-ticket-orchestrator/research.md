@@ -331,6 +331,68 @@ in-process cae fuera del bucket de TTL de la conversación principal, o sea cinc
 minutos por defecto. Es el mismo fallo que D2 documenta para las fases del
 motor, y otra razón por la que el fan-out largo conviene armarlo a mano.
 
+## D12 — Mensajería entre sesiones: sí funciona headless, y el uso bueno no es el obvio
+
+**Decision**: el motor NO la usa para coordinar sus fases entre sí. Se reserva
+para **un canal de una persona hacia un recorrido que está corriendo**, que hoy
+no existe y es una carencia real.
+
+**Lo que la separa de D7 y D11**: es la única de las tres que **funciona en
+headless**. La documentación es explícita:
+
+> *Claude Code binds an inbox socket for a `claude -p` session like an
+> interactive one, so a long-running `-p` worker can receive messages and
+> appears in the listing.*
+
+Y para que un worker desatendido las acepte: `crossSessionInbound: "accept"` en
+su `--settings`. Las sesiones del motor corren en `acceptEdits`, que "cuenta como
+que pide permisos", así que por el default los mensajes **se entregan** en vez de
+quedar en espera de aprobación.
+
+**Por qué NO para coordinar las fases entre sí.** Choca de frente con el
+principio III: *"la conversación no es la fuente de verdad; el archivo sí"*. Dos
+tareas en paralelo coordinándose por mensajes es exactamente lo que el archivo de
+estado existe para no necesitar — y hay una razón más fuerte todavía: dos tareas
+paralelas **no deben** verse entre sí. Cada una vive en su worktree justamente
+para que el gate de una no mida el código de la otra. Un canal directo entre
+ellas devolvería ese acoplamiento por la puerta de atrás, y la propia doc lo
+confirma al decir que un mensaje viaja sin la historia ni los archivos del
+emisor: no reemplaza al estado, lo duplica peor.
+
+**Para qué SÍ sirve, y es una carencia de verdad.** Hoy, si ves que un recorrido
+va para el lado equivocado, tus únicas opciones son matarlo o esperar. No hay
+forma de decirle algo a una fase que está corriendo. Con esto habría un
+`noxloop steer <item> "no toques el esquema"`, y es legítimo porque el que habla
+es **una persona**, no otra sesión — que es la distinción que el principio III
+protege.
+
+Dos propiedades del mecanismo lo hacen seguro para eso, y las dos están
+documentadas: un mensaje **no puede aprobar nada** (nunca cuenta como consentimiento
+para un prompt de permiso) y **no puede cambiar configuración**. O sea que no
+abre un camino alrededor de los hooks.
+
+**Lo que hay que verificar antes de construirlo**, y por eso esto queda como
+decisión y no como tarea hecha:
+
+1. El motor ya guarda el `sessionId` de cada tarea (`state.mjs`, y el driver lo
+   usa para retomar entre fases), pero **el `sessionId` no es la dirección**: se
+   direcciona por nombre de sesión. Hay que confirmar si `query()` deja nombrar
+   la sesión que abre, o si hay que descubrirla por el listado.
+2. El SDK corre el CLI como proceso hijo, así que el socket lo bindea el hijo y
+   su ruta (`CLAUDE_CODE_MESSAGING_SOCKET`) **no llega al padre**. Hay que ver si
+   el motor puede obtenerla, o si le conviene postear por el socket con el token
+   (`CLAUDE_CODE_MESSAGING_TOKEN`), que es el camino documentado para que un
+   script entre a una sesión.
+3. El aviso de "cuando esa sesión quede libre" (`notify_when_idle`) **no aplica**:
+   la doc dice que solo la conversación principal puede suscribirse, y solo a
+   sesiones de la misma máquina.
+
+**Alternatives considered**: los canales (`channels`), que la doc señala para
+empujar eventos externos —resultados de CI, mensajes de chat— hacia una sesión.
+Para noxloop eso es lo que ya hacen el gestor de tickets y la bandeja, y sumar un
+segundo camino de entrada al mismo trabajo es cómo se termina con dos fuentes de
+verdad.
+
 ## Preguntas que quedan abiertas, y no bloquean
 
 1. **¿Puede una sesión del SDK invocar `Workflow`?** Acotado por D7: el motor no
