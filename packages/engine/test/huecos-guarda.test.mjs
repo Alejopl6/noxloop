@@ -2,7 +2,7 @@
 // medicion. Ninguno se encontro leyendo codigo: los cuatro se ejecutaron.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRun, setActiveTask, activeTaskFull } from "../src/state.mjs";
@@ -19,32 +19,43 @@ const tarea = (id, over = {}) => ({
 // ------------------------------------------------------------------- H2
 
 test("H2 — el worktree se resuelve por ruta REAL, no por la grafia del string", () => {
-  // La medicion: con el home bajo /var/folders (cuya ruta real es
+  // La medicion original: con el home bajo /var/folders (cuya ruta real es
   // /private/var/folders en macOS) y DOS tareas activas, activeTaskFull
   // devolvia null y la guarda permitia TODO. No hay respaldo de "la unica
   // activa" cuando hay dos, asi que el hook se apartaba teniendo que actuar.
+  //
+  // El escenario se CONSTRUYE con un enlace simbolico propio en vez de
+  // apoyarse en que el temporal del sistema sea uno. La primera version de este
+  // test se apoyaba en eso y pasaba en macOS y fallaba en Linux, donde /tmp no
+  // es un enlace: probaba el sistema operativo, no el codigo.
   const home = mkdtempSync(join(tmpdir(), "noxloop-h2-"));
-  const wtA = mkdtempSync(join(tmpdir(), "noxloop-h2-wtA-"));
+  const base = mkdtempSync(join(tmpdir(), "noxloop-h2-base-"));
+  const realA = join(base, "real-A");
+  const enlaceA = join(base, "enlace-A");
+  mkdirSync(join(realA, "src"), { recursive: true });
+  symlinkSync(realA, enlaceA);
   const wtB = mkdtempSync(join(tmpdir(), "noxloop-h2-wtB-"));
 
   createRun({
     item: { id: "1", title: "h", level: "story", url: "u", provider: "fake" },
     repoScope: ["app"], tasks: [tarea("T1"), tarea("T2")],
   }, { home });
-  setActiveTask("1", "T1", { home, worktree: wtA });
+  // El puntero guarda la GRAFIA con el enlace...
+  setActiveTask("1", "T1", { home, worktree: enlaceA });
   setActiveTask("1", "T2", { home, worktree: wtB });
 
-  const real = realpathSync(wtA);
-  assert.notEqual(real, wtA, "el escenario exige que la ruta real difiera de la grafia");
+  assert.notEqual(realpathSync(enlaceA), enlaceA, "el escenario exige que las dos rutas difieran");
 
-  // La sesion reporta la ruta REAL; el puntero guardo la que le dieron.
-  const porRealpath = activeTaskFull({ home, cwd: real });
-  assert.ok(porRealpath, "con dos tareas activas y la ruta real, no puede devolver null");
-  assert.equal(porRealpath.task.id, "T1");
+  // ...y la sesion reporta la ruta REAL. Con dos tareas activas no hay respaldo,
+  // asi que sin realpath esto devuelve null y la guarda se apaga.
+  const porReal = activeTaskFull({ home, cwd: realpathSync(realA) });
+  assert.ok(porReal, "con dos tareas activas y la ruta real, no puede devolver null");
+  assert.equal(porReal.task.id, "T1");
 
-  // Y al reves: el puntero con la ruta real, la sesion reportando la grafia.
-  assert.equal(activeTaskFull({ home, cwd: wtA }).task.id, "T1");
-  assert.equal(activeTaskFull({ home, cwd: join(real, "src") }).task.id, "T1");
+  // Y al reves, y tambien para un subdirectorio.
+  assert.equal(activeTaskFull({ home, cwd: enlaceA }).task.id, "T1");
+  assert.equal(activeTaskFull({ home, cwd: join(realA, "src") }).task.id, "T1");
+  assert.equal(activeTaskFull({ home, filePath: join(enlaceA, "src", "a.mjs") }).task.id, "T1");
 });
 
 test("H2 — una ruta que de verdad esta afuera sigue dando null", () => {
