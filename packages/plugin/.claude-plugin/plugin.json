@@ -1,0 +1,7 @@
+{
+  "name": "noxloop",
+  "version": "0.1.0",
+  "description": "Un ticket entra, un pull request sale. Comandos, agentes y hooks para operar noxloop desde Claude Code: planificar un ticket, ejecutarlo en paralelo, recorrer un hito y ver el estado de un recorrido.",
+  "author": { "name": "Alejandro Palacio" },
+  "homepage": "https://github.com/palacio/noxloop"
+}

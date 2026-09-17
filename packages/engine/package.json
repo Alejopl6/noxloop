@@ -1,0 +1,14 @@
+{
+  "name": "@noxloop/engine",
+  "version": "0.1.0",
+  "description": "El motor de noxloop: estado, scheduler, cola de integracion, gates y hooks.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": { "noxloop": "bin/noxloop.mjs" },
+  "engines": { "node": ">=20" },
+  "files": ["src", "bin", "schemas"],
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.0"
+  }
+}

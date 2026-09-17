@@ -28,13 +28,13 @@ implementar, probar y entregar por separado.
 
 **Purpose**: Estructura del monorepo y verificación automática desde el primer commit
 
-- [ ] T001 Crear `package.json` raíz con workspaces (`packages/*`), scripts `test`, `typecheck`, `validate`, y Node ≥ 20 en `engines`
-- [ ] T002 [P] Crear `packages/engine/package.json` con `bin.noxloop` → `bin/noxloop.mjs`, `type: module`, y `@anthropic-ai/claude-agent-sdk` en `optionalDependencies`
-- [ ] T003 [P] Crear `packages/plugin/.claude-plugin/plugin.json` y `.claude-plugin/marketplace.json` en la raíz
-- [ ] T004 [P] Crear `.github/workflows/ci.yml`: `npm test`, `npm run typecheck`, `npm run validate` en Node 20 y 22
-- [ ] T005 [P] Crear `tsconfig.json` con `checkJs`, `noEmit` y `strict`, incluyendo `packages/engine/src` y `providers`
-- [ ] T006 [P] Crear `.gitignore`, `LICENSE` (MIT), `.editorconfig` y `.nvmrc`
-- [ ] T007 Copiar los tres esquemas de `specs/001-parallel-ticket-orchestrator/contracts/*.schema.json` a `packages/engine/schemas/` y agregar `npm run validate` que valide `examples/noxloop.config.json` contra el suyo
+- [X] T001 Crear `package.json` raíz con workspaces (`packages/*`), scripts `test`, `typecheck`, `validate`, y Node ≥ 20 en `engines`
+- [X] T002 [P] Crear `packages/engine/package.json` con `bin.noxloop` → `bin/noxloop.mjs`, `type: module`, y `@anthropic-ai/claude-agent-sdk` en `optionalDependencies`
+- [X] T003 [P] Crear `packages/plugin/.claude-plugin/plugin.json` y `.claude-plugin/marketplace.json` en la raíz
+- [X] T004 [P] Crear `.github/workflows/ci.yml`: `npm test`, `npm run typecheck`, `npm run validate` en Node 20 y 22
+- [X] T005 [P] Crear `tsconfig.json` con `checkJs`, `noEmit` y `strict`, incluyendo `packages/engine/src` y `providers`
+- [X] T006 [P] Crear `.gitignore`, `LICENSE` (MIT), `.editorconfig` y `.nvmrc`
+- [X] T007 Copiar los tres esquemas de `specs/001-parallel-ticket-orchestrator/contracts/*.schema.json` a `packages/engine/schemas/` y agregar `npm run validate` que valide `examples/noxloop.config.json` contra el suyo
 
 ---
 
@@ -50,31 +50,31 @@ US3.
 
 > Escribí estos tests PRIMERO y verificá que FALLAN antes de implementar.
 
-- [ ] T008 [P] Test de configuración en `packages/engine/test/config.test.mjs`: carga válida, rechazo con mensaje accionable de una inválida, resolución de `${VAR:-default}`, y que un estado canónico sin mapear se reporte
-- [ ] T009 [P] Test de estado en `packages/engine/test/state.test.mjs`: cada transición con guarda del data-model, escritura atómica (corte a mitad deja el estado anterior íntegro), presupuestos por bucle independientes, y que retomar no devuelva intentos
-- [ ] T010 [P] Test de plan en `packages/engine/test/plan.test.mjs`: rechazo de ciclo **nombrando el ciclo**, `dependsOn` a un id inexistente, `repo` fuera de `repoScope`, y `testFiles` vacío sin `noTestsBecause`
-- [ ] T011 [P] Test de contrato de proveedor en `providers/contract.test.mjs`: los 8 puntos de `contracts/provider.md`, corriendo contra el proveedor falso
-- [ ] T012 [P] Test de guardas de constitución en `packages/engine/test/constitution.test.mjs`: `grep` de nombres propios en `packages/engine/src/**` devuelve vacío, y ninguna ruta puede escribir `gated` sin `gateEvidence.exitCode === 0`
-- [ ] T013 [P] Test de hooks en `packages/engine/test/hooks.test.mjs`: `tdd-order-guard` bloquea producción sin rojo en los cuatro tiers, `task-scope-guard` bloquea un archivo no declarado, `no-prod-writes` bloquea merge/deploy/force-push, y los tres **permiten todo** cuando no hay tarea activa
-- [ ] T014 [P] Test de gate en `packages/engine/test/gate.test.mjs`: devuelve el objeto con `exitCode` real, respeta el timeout marcando `timedOut`, distingue gate roto en la base de fallo de la tarea, y reporta los `gaps` declarados
-- [ ] T015 [P] Test de repositorios en `packages/engine/test/repos.test.mjs`: detecta que un checkout local no corresponde al remote declarado
-- [ ] T016 [P] Test de lock en `packages/engine/test/lock.test.mjs`: el segundo proceso no arranca e informa quién lo tiene; un lock huérfano de un proceso muerto se recupera
+- [X] T008 [P] Test de configuración en `packages/engine/test/config.test.mjs`: carga válida, rechazo con mensaje accionable de una inválida, resolución de `${VAR:-default}`, y que un estado canónico sin mapear se reporte
+- [X] T009 [P] Test de estado en `packages/engine/test/state.test.mjs`: cada transición con guarda del data-model, escritura atómica (corte a mitad deja el estado anterior íntegro), presupuestos por bucle independientes, y que retomar no devuelva intentos
+- [X] T010 [P] Test de plan en `packages/engine/test/plan.test.mjs`: rechazo de ciclo **nombrando el ciclo**, `dependsOn` a un id inexistente, `repo` fuera de `repoScope`, y `testFiles` vacío sin `noTestsBecause`
+- [X] T011 [P] Test de contrato de proveedor en `providers/contract.test.mjs`: los 8 puntos de `contracts/provider.md`, corriendo contra el proveedor falso
+- [X] T012 [P] Test de guardas de constitución en `packages/engine/test/constitution.test.mjs`: `grep` de nombres propios en `packages/engine/src/**` devuelve vacío, y ninguna ruta puede escribir `gated` sin `gateEvidence.exitCode === 0`
+- [X] T013 [P] Test de hooks en `packages/engine/test/hooks.test.mjs`: `tdd-order-guard` bloquea producción sin rojo en los cuatro tiers, `task-scope-guard` bloquea un archivo no declarado, `no-prod-writes` bloquea merge/deploy/force-push, y los tres **permiten todo** cuando no hay tarea activa
+- [X] T014 [P] Test de gate en `packages/engine/test/gate.test.mjs`: devuelve el objeto con `exitCode` real, respeta el timeout marcando `timedOut`, distingue gate roto en la base de fallo de la tarea, y reporta los `gaps` declarados
+- [X] T015 [P] Test de repositorios en `packages/engine/test/repos.test.mjs`: detecta que un checkout local no corresponde al remote declarado
+- [X] T016 [P] Test de lock en `packages/engine/test/lock.test.mjs`: el segundo proceso no arranca e informa quién lo tiene; un lock huérfano de un proceso muerto se recupera
 
 ### Implementación
 
-- [ ] T017 [P] Implementar `packages/engine/src/log.mjs`: bitácora estructurada a stdout y archivo, con el recorrido y la fase en cada línea
-- [ ] T018 [P] Implementar `packages/engine/src/config.mjs`: carga, validación con `ajv` contra `schemas/config.schema.json`, resolución de rutas y de `${VAR:-default}`
-- [ ] T019 Implementar `packages/engine/src/plan.mjs`: validación de esquema más las tres reglas que el esquema no expresa (aciclicidad, integridad referencial, alcance)
-- [ ] T020 Implementar `packages/engine/src/state.mjs`: recorridos, tareas, transiciones con guarda, presupuestos explícitos, escrituras atómicas bajo `NOXLOOP_HOME`
-- [ ] T021 [P] Implementar `providers/contract.mjs`: la interfaz, el validador que carga un proveedor y verifica capacidades contra funciones, y `runContractSuite()`
-- [ ] T022 [P] Implementar `providers/fake/index.mjs`: proveedor en memoria, que es además el ejemplo mínimo que se copia para agregar uno nuevo
-- [ ] T023 [P] Implementar `packages/engine/src/repos.mjs`: resuelve el checkout de un repo y **verifica el remote** antes de devolverlo
-- [ ] T024 [P] Implementar `packages/engine/src/lock.mjs`: lock por hito y por recorrido, con recuperación de lock huérfano
-- [ ] T025 Implementar `packages/engine/src/gate.mjs`: único productor de veredictos, con `env` del repo, timeout y salida truncada
-- [ ] T026 [P] Implementar `packages/engine/src/worktree.mjs`: crear, listar y quitar espacios aislados; sin `--force` no descarta cambios sin commitear
-- [ ] T027 Implementar los cinco hooks en `packages/engine/src/hooks/`: `_shared.mjs`, `tdd-order-guard.mjs`, `task-scope-guard.mjs`, `no-prod-writes.mjs`, `state-checkpoint.mjs` — todos permiten ante la duda
-- [ ] T028 Implementar `packages/engine/src/doctor.mjs`: qué está declarado, qué falta, qué credencial no está, y el remote de cada repo
-- [ ] T029 Implementar `packages/engine/bin/noxloop.mjs`: enrutado de subcomandos de `contracts/cli.md`, salida JSON a stdout y prosa a stderr, y `--dry-run` que no escribe nada
+- [X] T017 [P] Implementar `packages/engine/src/log.mjs`: bitácora estructurada a stdout y archivo, con el recorrido y la fase en cada línea
+- [X] T018 [P] Implementar `packages/engine/src/config.mjs`: carga, validación con `ajv` contra `schemas/config.schema.json`, resolución de rutas y de `${VAR:-default}`
+- [X] T019 Implementar `packages/engine/src/plan.mjs`: validación de esquema más las tres reglas que el esquema no expresa (aciclicidad, integridad referencial, alcance)
+- [X] T020 Implementar `packages/engine/src/state.mjs`: recorridos, tareas, transiciones con guarda, presupuestos explícitos, escrituras atómicas bajo `NOXLOOP_HOME`
+- [X] T021 [P] Implementar `providers/contract.mjs`: la interfaz, el validador que carga un proveedor y verifica capacidades contra funciones, y `runContractSuite()`
+- [X] T022 [P] Implementar `providers/fake/index.mjs`: proveedor en memoria, que es además el ejemplo mínimo que se copia para agregar uno nuevo
+- [X] T023 [P] Implementar `packages/engine/src/repos.mjs`: resuelve el checkout de un repo y **verifica el remote** antes de devolverlo
+- [X] T024 [P] Implementar `packages/engine/src/lock.mjs`: lock por hito y por recorrido, con recuperación de lock huérfano
+- [X] T025 Implementar `packages/engine/src/gate.mjs`: único productor de veredictos, con `env` del repo, timeout y salida truncada
+- [X] T026 [P] Implementar `packages/engine/src/worktree.mjs`: crear, listar y quitar espacios aislados; sin `--force` no descarta cambios sin commitear
+- [X] T027 Implementar los cinco hooks en `packages/engine/src/hooks/`: `_shared.mjs`, `tdd-order-guard.mjs`, `task-scope-guard.mjs`, `no-prod-writes.mjs`, `state-checkpoint.mjs` — todos permiten ante la duda
+- [X] T028 Implementar `packages/engine/src/doctor.mjs`: qué está declarado, qué falta, qué credencial no está, y el remote de cada repo
+- [X] T029 Implementar `packages/engine/bin/noxloop.mjs`: enrutado de subcomandos de `contracts/cli.md`, salida JSON a stdout y prosa a stderr. Los subcomandos que aun no existen declaran que tarea los trae. **`--dry-run` queda para T038/T052**: no hay todavia ningun comando que simular, y un flag que no hace nada es peor que uno ausente
 
 **Checkpoint**: El motor valida configuración, persiste estado con guardas, corre gates y bloquea lo que tiene que bloquear. Ninguna historia depende de otra para empezar.
 
@@ -199,7 +199,7 @@ US3.
 
 ### Implementación
 
-- [ ] T074 [P] [US5] Escribir `examples/noxloop.config.json` y `examples/gates.example.json`, comentados y listos para copiar
+- [X] T074 [P] [US5] Escribir `examples/noxloop.config.json` (+ `examples/README.md`), comentado y listo para copiar. **Adelantada desde la fase 7**: `npm run validate` la necesita para poder correr en CI desde el primer commit. `gates.example.json` no hizo falta: los gates viven dentro de la configuracion, no en un archivo aparte
 - [ ] T075 [P] [US5] Escribir `README.md`: qué es, el argumento, instalación, y el primer ticket en cinco comandos
 - [ ] T076 [P] [US5] Escribir `docs/ADOPTING.md`: instalación en una organización nueva, paso por paso
 - [ ] T077 [P] [US5] Escribir `docs/PARALLELISM.md` y `docs/AUTONOMY.md`: el DAG, la cola y dónde termina la autonomía, cada uno con el fallo que evita
@@ -213,7 +213,7 @@ US3.
 
 - [ ] T079 [P] Implementar `inbox` y `daemon` en `bin/noxloop.mjs`: consulta periódica con deduplicación por ticket, instancia única por lock
 - [ ] T080 Resolver la pregunta abierta 3 de `research.md` con un test: pedir un merge desde una sesión headless lanzada por el motor y verificar que lo intercepta. **El modo daemon no se publica hasta que este test pase.**
-- [ ] T081 [P] Dejar `npm run typecheck` (`tsc --checkJs`) en verde sobre todo el motor y los proveedores
+- [X] T081 [P] Dejar `npm run typecheck` (`tsc --checkJs`) en verde sobre todo el motor y los proveedores. **Adelantada**: corrio contra el codigo de la fase 2 y encontro 17 errores reales (acumuladores inferidos como `never`, `home` opcional pasado a una firma que lo exige, el `code` de un error de spawn sin tipar). Arreglarlos despues habria sido arqueologia
 - [ ] T082 [P] Escribir `CHANGELOG.md` y `CONTRIBUTING.md`
 - [ ] T083 [P] Agregar al CI en `.github/workflows/ci.yml` la guarda de nombres propios y la validación de los ejemplos
 - [ ] T084 Verificar los ocho escenarios de `quickstart.md` de punta a punta y registrar el resultado real de cada uno

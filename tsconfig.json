@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "lib": [
+      "es2023"
+    ],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": [
+      "node"
+    ],
+    "useUnknownInCatchVariables": false
+  },
+  "include": [
+    "packages/engine/src/**/*.mjs",
+    "packages/engine/bin/**/*.mjs",
+    "providers/**/*.mjs"
+  ],
+  "exclude": [
+    "**/*.test.mjs",
+    "node_modules"
+  ]
+}

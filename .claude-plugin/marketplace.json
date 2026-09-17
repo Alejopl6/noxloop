@@ -1,0 +1,11 @@
+{
+  "name": "noxloop",
+  "owner": { "name": "Alejandro Palacio" },
+  "plugins": [
+    {
+      "name": "noxloop",
+      "source": "./packages/plugin",
+      "description": "Orquestador de tickets a pull requests, agnostico del gestor (GitHub, Linear, Azure DevOps y cualquier otro en un archivo). Paralelismo gobernado por el DAG, TDD forzado por hooks del sistema de archivos, y autonomia que termina en el PR abierto."
+    }
+  ]
+}
