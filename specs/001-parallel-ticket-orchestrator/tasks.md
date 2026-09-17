@@ -93,7 +93,7 @@ US3.
 - [X] T032 [P] [US1] Test de idempotencia del gestor en `packages/engine/test/provider-writes.test.mjs`: relanzar no mueve el ticket dos veces ni duplica comentarios (`providerStateWritten`)
 - [X] T033 [US1] Test de integración de la historia en `packages/engine/test/us1-ticket-to-pr.test.mjs`: proveedor falso + repositorio git desechable, recorrido completo hasta rama lista, verificando el orden test→implementación en el historial de commits
 - [X] T034 [P] [US1] Test de ticket sin criterios verificables en `packages/engine/test/us1-no-acceptance.test.mjs`: no se escribe código y el ticket queda bloqueado con la pregunta concreta
-- [X] T035 [P] [US1] Test de autonomía en `packages/engine/test/autonomy.test.mjs`: merge a rama protegida, force push y deploy interceptados; más recorrido del fuente del motor buscando esas operaciones
+- [X] T035 [P] [US1] Test de autonomía en `packages/engine/test/autonomy.test.mjs`: 16 casos en cuatro bloques. **Al escribirlo encontró dos bugs reales del hook**: un flag global de git (`git -C /x push --force`) desarmaba la guarda entera, y un refspec (`HEAD:refs/heads/production`) la esquivaba buscando esas operaciones
 
 ### Implementación
 
@@ -154,18 +154,18 @@ US3.
 
 ### Tests (OBLIGATORIO — TDD) ⚠️
 
-- [ ] T056 [P] [US3] Test de contrato de Azure DevOps en `providers/azure-devops/index.test.mjs`, con respuestas grabadas y sin red
-- [ ] T057 [P] [US3] Test de contrato de GitHub en `providers/github/index.test.mjs`, incluyendo el camino degradado de `dependencies: false`
-- [ ] T058 [P] [US3] Test de contrato de Linear en `providers/linear/index.test.mjs`, incluyendo relaciones `blocks`/`blocked_by`
-- [ ] T059 [P] [US3] Test de degradación en `packages/engine/test/degradation.test.mjs`: una fila por capacidad de la tabla de `contracts/provider.md`
+- [X] T056 [P] [US3] Test de contrato de Azure DevOps en `providers/azure-devops/index.test.mjs`, con respuestas grabadas y sin red
+- [X] T057 [P] [US3] Test de contrato de GitHub en `providers/github/index.test.mjs`, incluyendo el camino degradado de `dependencies: false`
+- [X] T058 [P] [US3] Test de contrato de Linear en `providers/linear/index.test.mjs`, incluyendo relaciones `blocks`/`blocked_by`
+- [X] T059 [P] [US3] Test de degradación en `providers/degradation.test.mjs` (+ `degradation-fakes.mjs`): una fila por capacidad de la tabla de `contracts/provider.md`. Vive en `providers/` y no en `packages/engine/`, que es donde lo ponía el plan: lo que prueba es el contrato, no el motor
 
 ### Implementación
 
-- [ ] T060 [P] [US3] Implementar `providers/azure-devops/index.mjs`: WIQL, jerarquía, `Predecessor`/`Successor`, comentarios, `Hyperlink` para el PR, y mapa de tipos por plantilla de proceso
-- [ ] T061 [P] [US3] Implementar `providers/github/index.mjs`: issues, sub-issues, labels, y orden serializado declarado por falta de dependencias nativas — confirmando la forma de la API vigente contra su test antes de escribirlo
-- [ ] T062 [P] [US3] Implementar `providers/linear/index.mjs`: GraphQL, `parent`/sub-issues, relaciones, estados de workflow
-- [ ] T063 [P] [US3] Escribir `providers/README.md`: los cinco pasos para agregar un gestor, con Jira como ejemplo trabajado
-- [ ] T064 [P] [US3] Escribir `docs/PROVIDERS.md`: la interfaz explicada, con la tabla de degradación
+- [X] T060 [P] [US3] Implementar `providers/azure-devops/index.mjs`: WIQL, jerarquía, `Predecessor`/`Successor`, comentarios, `Hyperlink` para el PR, y mapa de tipos por plantilla de proceso
+- [X] T061 [P] [US3] Implementar `providers/github/index.mjs`: issues, sub-issues, labels, y orden serializado declarado por falta de dependencias nativas — confirmando la forma de la API vigente contra su test antes de escribirlo
+- [X] T062 [P] [US3] Implementar `providers/linear/index.mjs`: GraphQL, `parent`/sub-issues, relaciones, estados de workflow
+- [X] T063 [P] [US3] Escribir `providers/README.md`: los cinco pasos para agregar un gestor, con Jira como ejemplo trabajado
+- [X] T064 [P] [US3] Escribir `docs/PROVIDERS.md`: la interfaz explicada, con la tabla de degradación
 
 **Checkpoint**: US3 entregable. El agnosticismo está probado, no afirmado.
 
@@ -220,7 +220,7 @@ US3.
 ## Phase 8: Polish & Cross-Cutting
 
 - [ ] T079 [P] Implementar `inbox` y `daemon` en `bin/noxloop.mjs`: consulta periódica con deduplicación por ticket, instancia única por lock
-- [ ] T080 Resolver la pregunta abierta 3 de `research.md` con un test: pedir un merge desde una sesión headless lanzada por el motor y verificar que lo intercepta. **El modo daemon no se publica hasta que este test pase.**
+- [X] T080 Resolver la pregunta abierta 3 de `research.md` con un test: pedir un merge desde una sesión headless lanzada por el motor y verificar que lo intercepta. **Cerrado y medido**: `--settings` (CLI) y `options.settings` / `options.hooks` (SDK) funcionan, verificado en una sesión real, dentro de un subagente y en una sesión retomada, con el plugin **sin instalar**. Lo implementa `session-settings.mjs`, y `runner.mjs` se niega a lanzar una sesión sin guardas
 - [X] T081 [P] Dejar `npm run typecheck` (`tsc --checkJs`) en verde sobre todo el motor y los proveedores. **Adelantada**: corrio contra el codigo de la fase 2 y encontro 17 errores reales (acumuladores inferidos como `never`, `home` opcional pasado a una firma que lo exige, el `code` de un error de spawn sin tipar). Arreglarlos despues habria sido arqueologia
 - [ ] T082 [P] Escribir `CHANGELOG.md` y `CONTRIBUTING.md`
 - [ ] T083 [P] Agregar al CI en `.github/workflows/ci.yml` la guarda de nombres propios y la validación de los ejemplos
@@ -241,6 +241,21 @@ disimulan: cada una es un hueco que el plan tenía.
 - [X] T090 Renuncia explícita a la revisión (`reviewWaived`) en `state.mjs`. Un tier con `review: false` no podía encolar nunca, porque la guarda exige el contador en más de cero. La salida no es debilitar la guarda: es que la renuncia quede registrada y se reporte en el PR
 - [X] T091 Marca de agua del estado del gestor en `driver.mjs`: relanzar un recorrido terminado movía el ticket **hacia atrás**, de "en revisión" a "en curso". Lo cachó el test de idempotencia, no una revisión
 - [X] T092 Mover el archivo de handoff del plan a `NOXLOOP_HOME`. Estaba dentro del worktree del usuario, y lo atrapó la guarda de constitución del principio III: el estado y sus artefactos intermedios no se escriben dentro de un repositorio de trabajo
+
+### Segunda ronda de descubiertas
+
+Salieron de la verificación adversarial de T035/T080. Las ocho primeras las
+encontró un escéptico con instrucción de romper la promesa, y **la rompió**: de
+57 grafías de comando prohibido, 45 la sortearon, y una se ejecutó contra un
+remoto real moviéndole la rama principal.
+
+- [X] T093 **Invertir la guarda de Bash**: dentro de una tarea, denegar por defecto con una lista de permitidos derivada de la configuración del repositorio (`comandosPermitidos` en `wiring.mjs`, que viaja en el puntero de tarea activa porque el hook no tiene acceso a la configuración). Con `packages/engine/test/guard-inversion.test.mjs`, 26 casos. **Requirió enmendar la constitución a 1.1.0**: "ante la duda, permitir" queda acotado a las sesiones donde hay una persona del otro lado. Verificado por mí, aparte de los tests: de 28 grafías prohibidas pasan 0, y de 8 legítimas se bloquean 0
+- [X] T094 H2 — `dentroDe` comparaba rutas sin `realpath`. Con el home bajo `/var/folders` (ruta real `/private/var/folders`) y dos tareas activas, `activeTaskFull` devolvía `null` y la guarda permitía todo: el hook se apartaba justo cuando tenía que actuar
+- [X] T095 H3 — el motor nunca inyectaba `NOXLOOP_HOME` en la sesión que lanza. Quien declaraba `home` en el archivo en vez de exportarlo corría todas sus sesiones con los hooks mirando `~/.noxloop`: cero tareas activas, cero guarda. Ahora va en los dos transportes, junto con `NOXLOOP_GUARD_ALWAYS`
+- [X] T096 H4 — `runSingleTest` interpolaba `{file}` y corría con `shell: true`, y `file` lo escribe el planificador (un modelo) sobre un esquema que aceptaba string libre. **Era el único camino donde el motor ejecutaba algo arbitrario por su cuenta, sin pasar por ningún hook.** Ahora va por argv sin shell, y el esquema del plan exige que una ruta sea una ruta
+- [X] T097 H5 — `validateHookSettings` juntaba rutas que terminaran en `.mjs` y contaba. Decía `ok: true` con el hook de Bash apuntando a un archivo inexistente, con el nombre del evento mal escrito y con `PreToolUse` vacío. Ahora exige las cuatro guardas, cada una en su evento y su matcher, y nombra la que falta
+- [X] T098 Chequeo 7 de la suite de contrato: validaba el **fixture**, no el proveedor. Ahora le pasa un mapa de estados incompleto y exige que el proveedor no invente el nombre nativo. Los tres proveedores ya pasaban, así que no cambió ningún comportamiento — cambió lo que el chequeo puede afirmar
+- [X] T099 `contracts/provider.md` mandaba correr `node --test providers/<nuevo>/`, que **falla con `MODULE_NOT_FOUND` en Node ≥ 22** porque el runner ya no expande directorios. Quien adoptara el proyecto se comía un error ajeno a su proveedor en el paso 4 de cinco
 
 ## Dependencies
 

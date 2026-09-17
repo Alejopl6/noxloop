@@ -255,8 +255,31 @@ chequeo de tipos en CI sin introducir ese modo de fallo.
 2. **¿Cuántas sesiones concurrentes tolera la cuota antes de degradar?** Es
    configuración (`maxParallel`) y se calibra con uso real. El motor no intenta
    descubrirlo.
-3. **¿Cómo se entregan los hooks a una sesión headless lanzada por el motor?**
-   Hay dos caminos —el plugin instalado, o pasar la configuración de hooks
-   explícitamente a la sesión— y la elección se verifica con un test que pide un
-   merge desde una sesión del motor y espera que lo intercepten. Hasta que ese
-   test pase, el modo daemon no se publica.
+3. ~~**¿Cómo se entregan los hooks a una sesión headless lanzada por el
+   motor?**~~ **RESUELTA Y MEDIDA** (2026-09-17, T080).
+
+   El camino es pasar la configuración explícitamente, y funciona por dos vías:
+   `--settings <archivo-o-json>` en el CLI, y `options.settings` (el mismo JSON
+   declarativo) u `options.hooks` (callbacks en el propio proceso) en el SDK.
+   No existe ningún flag `--hooks`.
+
+   Verificado en sesiones reales, **con el plugin sin instalar** (control:
+   `grep -ril noxloop ~/.claude/plugins` vacío): la intercepción ocurre en la
+   sesión, **dentro de un subagente**, y en una **sesión retomada** con
+   `--resume`, que es lo que hace el driver entre RED y GREEN.
+
+   Tres cosas que la medición dejó, y que no estaban previstas:
+
+   - El plugin usa `${CLAUDE_PLUGIN_ROOT}`, que **solo lo expande el cargador de
+     plugins**. Por esta vía es texto literal → archivo inexistente → sesión sin
+     guarda. El motor resuelve rutas absolutas él mismo.
+   - La forma `command` + `args` spawnea el binario directo, sin shell. Es
+     preferible a meter la ruta dentro de `command`: un worktree con un `$` en la
+     ruta rompe la forma con shell que usa el plugin.
+   - En modo `-p`, **un archivo de settings que no valida se ignora en
+     silencio**. Por eso `validateHookSettings` se niega a escribir uno
+     incompleto en vez de confiar en que el cargador avise.
+
+   Lo que quedó sin medir: la vía `plugins` / `--plugin-dir`, y
+   `pluginDelivery: "initialize"` (que exige una versión del CLI más nueva que la
+   del PATH). El motor no depende de ninguna de las dos.

@@ -11,7 +11,7 @@
 // marcada como cumplida sin evidencia de que algo corrio. Aca eso no es una
 // cuestion de disciplina del llamador — es un `throw`.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, readdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, readdirSync, unlinkSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 export const LOOPS = ["red", "green", "gate", "review"];
@@ -412,13 +412,21 @@ function slugDeWorktree(worktree) {
   return worktree.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(-120) || "_raiz";
 }
 
-/** @param {{home: string, worktree?: string}} opts */
+/**
+ * @param {{home: string, worktree?: string, allowedCommands?: string[]}} opts
+ *
+ * `allowedCommands` viaja con el puntero porque el hook no tiene acceso a la
+ * configuracion: corre como proceso aparte, con NOXLOOP_HOME y nada mas. Sin
+ * esto, la guarda invertida no tendria contra que comparar y tendria que
+ * adivinar — que es como se vuelve una lista de prohibidos otra vez.
+ */
 export function setActiveTask(itemId, taskId, opts) {
   mkdirSync(activeDir(opts.home), { recursive: true });
   escribirAtomico(join(activeDir(opts.home), `${slugDeWorktree(opts.worktree)}.json`), {
     itemId,
     taskId,
     worktree: opts.worktree || null,
+    allowedCommands: opts.allowedCommands || null,
     since: new Date().toISOString(),
   });
 }
@@ -446,10 +454,31 @@ export function clearActiveTask(opts) {
   if (existsSync(f)) unlinkSync(f);
 }
 
+/**
+ * Resuelve enlaces simbolicos, sin fallar si la ruta no existe.
+ *
+ * EL FALLO QUE EVITA, medido en una sesion real: el home bajo /var/folders tiene
+ * ruta real /private/var/folders en macOS. La sesion reportaba una grafia y el
+ * puntero guardaba la otra, asi que con DOS tareas activas —donde no hay
+ * respaldo de "la unica activa"— `activeTaskFull` devolvia null y la guarda
+ * permitia todo. El hook se apartaba justo cuando tenia que actuar.
+ */
+function rutaReal(p) {
+  if (!p) return p;
+  try {
+    return realpathSync(p);
+  } catch {
+    return p; // todavia no existe: se compara la grafia, que es lo mejor que hay
+  }
+}
+
 /** Dentro de, o igual a. Por segmento, para que `/wt` no matchee `/wtotro`. */
 function dentroDe(ruta, base) {
   if (!ruta || !base) return false;
-  return ruta === base || ruta.startsWith(base.endsWith("/") ? base : `${base}/`);
+  const a = rutaReal(ruta);
+  const b = rutaReal(base);
+  const dentro = (x, y) => x === y || x.startsWith(y.endsWith("/") ? y : `${y}/`);
+  return dentro(a, b) || dentro(ruta, base);
 }
 
 /**

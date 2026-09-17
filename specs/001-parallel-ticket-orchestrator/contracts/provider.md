@@ -140,7 +140,10 @@ Cinco pasos, y ninguno toca el motor:
 2. Declarar `capabilities()` con la verdad — empezar con casi todo en `false`
    es correcto y produce un recorrido que funciona.
 3. Escribir el mapa de tipos y el mapa de estados.
-4. Correr `node --test providers/<nuevo>/` con la suite de contrato hasta verde.
+4. Correr `node --test providers/<nuevo>/*.test.mjs` con la suite de contrato hasta
+   verde. **El glob no es decorativo**: desde Node 22, `node --test <directorio>/`
+   trata el directorio como un modulo y falla con `MODULE_NOT_FOUND`, un error que
+   no tiene nada que ver con tu proveedor. `npm test` desde la raiz tambien anda.
 5. Apuntar `provider.module` en la configuración.
 
 Si hace falta un cambio en el motor para soportar un gestor, la interfaz está

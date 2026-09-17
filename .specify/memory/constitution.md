@@ -107,10 +107,26 @@ recorrido. Es la memoria del proyecto y es la parte más difícil de reconstruir
 no existe, y una tarea que no registra puede iterar sin límite. Registrar es
 parte del intento, no un reporte posterior.
 
-**Ante la duda, un hook permite.** Los hooks corren en cada operación de la
-sesión, también cuando noxloop no está activo. Un hook que bloquea por un error
-propio deja a una persona sin poder trabajar, que es peor que el problema que
-evitaba.
+**Ante la duda, un hook permite — cuando hay una persona del otro lado.** Los
+hooks corren en cada operación de la sesión, también cuando noxloop no está
+activo, y un hook que bloquea por un error propio deja a una persona sin poder
+trabajar: eso es peor que el problema que evitaba.
+
+**Dentro de una tarea que el motor lanzó, la regla se invierte: el shell es
+denegar por defecto.** Ahí no hay nadie del otro lado, así que el argumento que
+sostiene la permisividad no aplica. Lo que se permite es lo que la tarea
+necesita —los comandos de verificación que el repositorio declara, y lecturas—
+y todo lo demás se rechaza diciendo cómo pedirlo.
+
+La enmienda tiene un fallo medido detrás, y es el que la hace obligatoria: con
+una lista de comandos prohibidos, **45 de 57 grafías la sortearon**. Un prefijo
+(`env`, `bash -c`, `command`, `sudo`), una comilla (`git push origin "main"`) o
+un intérprete (`node -e`) bastaban. Una de esas formas se ejecutó contra un
+remoto real y movió su rama principal. Alargar la lista produce exactamente el
+verde inventado que prohíbe el principio II: una lista más larga que sigue
+cayendo con la grafía siguiente, y tests que ahora afirman que está completa.
+
+La lista de prohibidos se conserva como segunda capa, no como la primera.
 
 ## Development Workflow
 
@@ -141,4 +157,4 @@ enmienda: es una preferencia.
 Bajar un umbral, saltear un test, apagar un hook o recortar un gate para que una
 tarea avance no es una decisión de implementación. No está disponible.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-16 | **Last Amended**: 2026-09-16
+**Version**: 1.1.0 | **Ratified**: 2026-09-16 | **Last Amended**: 2026-09-17
