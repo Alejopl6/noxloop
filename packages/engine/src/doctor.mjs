@@ -31,7 +31,7 @@ function versionDeGit() {
 
 /**
  * @param {object} config ya cargado y validado
- * @param {{env?: Record<string,string>, search?: string[], loadProvider?: (m: string) => Promise<object>}} [opts]
+ * @param {{env?: Record<string,string>, search?: string[], loadProvider?: (m: string) => Promise<object>, sdkDisponible?: () => Promise<boolean>}} [opts]
  */
 export async function doctor(config, opts = {}) {
   const env = opts.env || process.env;
