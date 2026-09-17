@@ -82,6 +82,43 @@ export function runGate(nombre, cwd, config, opts = {}) {
 }
 
 /**
+ * Parte una plantilla de runner en argv, respetando comillas.
+ *
+ * Hace falta porque {file} NO puede pasar por un shell: la ruta la escribe el
+ * planificador, que es un modelo. Ejecutado antes de este arreglo: un plan que
+ * `validatePlan` daba por bueno, con testFiles = "x.test.mjs; echo ... > f",
+ * hacia que el motor ejecutara lo que el modelo quisiera. Es el unico camino en
+ * el que el motor hacia algo arbitrario por su cuenta, sin pasar por ningun
+ * hook — porque no pasa por la tool Bash.
+ *
+ * El `gate` del repositorio SI sigue corriendo con shell, y la diferencia es de
+ * procedencia, no de comodidad: ese comando lo escribe una persona en la
+ * configuracion; esta ruta la escribe un modelo.
+ */
+function aArgv(plantilla, file) {
+  const partes = [];
+  let actual = "";
+  let comilla = null;
+  for (const c of plantilla) {
+    if (comilla) {
+      if (c === comilla) comilla = null;
+      else actual += c;
+    } else if (c === '"' || c === "'") {
+      comilla = c;
+    } else if (/\s/.test(c)) {
+      if (actual) partes.push(actual);
+      actual = "";
+    } else {
+      actual += c;
+    }
+  }
+  if (actual) partes.push(actual);
+
+  // {file} se sustituye como UN elemento del argv, entero, sin volver a partir.
+  return partes.flatMap((p) => (p.includes("{file}") ? [p.replaceAll("{file}", file)] : [p]));
+}
+
+/**
  * Corre UN test suelto, para el bucle RED/GREEN, donde correr el gate completo
  * en cada iteracion seria inviable.
  *
@@ -97,7 +134,35 @@ export function runSingleTest(nombre, cwd, file, config, opts = {}) {
       `el repositorio "${nombre}" no declara un runner para correr un test suelto (repos.${nombre}.runners)`,
     );
   }
-  return ejecutar(plantilla.replaceAll("{file}", file), cwd, repo, opts);
+  const argv = aArgv(plantilla, file);
+  return ejecutarArgv(argv, cwd, repo, opts);
+}
+
+/** Como `ejecutar`, pero con argv y sin shell. */
+function ejecutarArgv(argv, cwd, repo, opts) {
+  const maxOutput = opts.maxOutput || SALIDA_MAXIMA;
+  const t0 = Date.now();
+  const r = spawnSync(argv[0], argv.slice(1), {
+    cwd,
+    shell: false,
+    encoding: "utf8",
+    timeout: repo.timeoutMs || opts.timeoutMs || TIMEOUT_DEFECTO,
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, ...(repo.env || {}), CI: "1" },
+  });
+  const errorDeSpawn = /** @type {NodeJS.ErrnoException | undefined} */ (r.error);
+  const timedOut = errorDeSpawn?.code === "ETIMEDOUT" || r.signal === "SIGTERM";
+  const salida = `${r.stdout || ""}${r.stderr || ""}`;
+  return {
+    command: argv.join(" "),
+    exitCode: timedOut ? null : r.status,
+    ok: !timedOut && r.status === 0,
+    timedOut,
+    durationMs: Date.now() - t0,
+    output: truncar(salida, maxOutput),
+    gaps: repo.gaps || [],
+    ranAt: new Date().toISOString(),
+  };
 }
 
 /**

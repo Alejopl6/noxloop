@@ -26,6 +26,7 @@ import { drain } from "./merge-queue.mjs";
 import { acquire } from "./lock.mjs";
 import * as worktreeMod from "./worktree.mjs";
 import { commitPaths, mensajeDeFase } from "./vcs.mjs";
+import { comandosPermitidos } from "./wiring.mjs";
 
 const TIER_POR_DEFECTO = { model: null, effort: "high", gate: "full", review: true, fanout: false };
 
@@ -354,7 +355,13 @@ async function abrirTarea(run, taskId, deps) {
   const actualizada = tareaDe(loadRun(run.item.id, { home }), taskId);
   // El puntero es POR WORKTREE: con varias tareas en vuelo, es lo que permite a
   // los hooks saber cual les toca.
-  setActiveTask(run.item.id, taskId, { home, worktree: actualizada.worktree });
+  // La lista de permitidos viaja con el puntero porque el hook corre como
+  // proceso aparte y no tiene acceso a la configuracion.
+  setActiveTask(run.item.id, taskId, {
+    home,
+    worktree: actualizada.worktree,
+    allowedCommands: comandosPermitidos(config.repos?.[t.repo]),
+  });
   transition(loadRun(run.item.id, { home }), taskId, "in_progress", { home });
 }
 

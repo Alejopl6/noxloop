@@ -44,6 +44,25 @@ motor capacidad por capacidad, está en
    `process.env`: las credenciales y las opciones llegan por `ctx`, y esa es la
    única garantía de que no se pueda saltear la inyección en silencio.
 
+   Ese snippet alcanza para un gestor sin red, como `fake`. Si el tuyo habla
+   HTTP, el `ctx.fetch` de tus `fixtures` tiene que **negar** la red y el test
+   le pasa uno propio que sirve respuestas grabadas
+   —`contractChecks(mio, { ...mio.fixtures, ctx: miCtxGrabado })`, como hace
+   `github/index.test.mjs`—: un test que necesita una cuenta no lo puede correr
+   quien adopte el proyecto.
+
+   La otra forma, igual de offline, es que los `fixtures` vivan en un archivo
+   aparte que `index.mjs` **no** importe y que ya traigan el `ctx` que sirve las
+   respuestas grabadas —`contractChecks(mio, fixtures)`, como hace `linear/`—.
+   Lo que no puede pasar es que el módulo de producción cargue datos de prueba.
+
+   Y declará el `defaultLevel` de tus fixtures **distinto** del nivel al que
+   mapea la mayoría de tus tipos, o corré la suite dos veces con dos defaults:
+   si coinciden, el chequeo 6 lo aprueba igual un proveedor que devuelva ese
+   nivel fijo, que es justo el fallo que el chequeo busca. `linear/` corre las
+   dos vueltas, y el impostor que pasaba los ocho chequeos con una sola está
+   contado en [docs/PROVIDERS.md](../docs/PROVIDERS.md).
+
 5. **Apuntá `provider.module`** en tu `noxloop.config.json`. La ruta puede estar
    fuera de este repositorio: el motor carga el módulo por configuración.
 
@@ -80,6 +99,6 @@ proyecto, que es exactamente el motivo por el que el nivel sale del mapa.
 | Proveedor | Estado |
 |---|---|
 | `fake` | ✅ completo — tests del motor y ejemplo mínimo |
-| `azure-devops` | en curso (T060) |
-| `github` | en curso (T061) |
-| `linear` | en curso (T062) |
+| `azure-devops` | ✅ completo — las diez capacidades en `true`, así que no ejercita ningún camino degradado: ver [docs/PROVIDERS.md](../docs/PROVIDERS.md) |
+| `github` | ✅ completo — `linkUrl`/`boardFields` en `false`, y con dependencias nativas: ver [docs/PROVIDERS.md](../docs/PROVIDERS.md) |
+| `linear` | ✅ completo — todo en `true` menos `searchMentioned`; los estados se resuelven por equipo: ver [docs/PROVIDERS.md](../docs/PROVIDERS.md) |

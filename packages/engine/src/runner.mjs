@@ -24,6 +24,7 @@
 
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { buildHookSettings, validateHookSettings } from "./session-settings.mjs";
 
 const PAQUETE = "@anthropic-ai/claude-agent-sdk";
 
@@ -164,6 +165,12 @@ export async function reduceMessages(mensajes, opts = {}) {
  * distinta y corren igual. El limite de autonomia nunca vino del prompt de
  * permisos — viene de los hooks — y una lista explicita es preferible, porque
  * lo que no este en ella sigue requiriendo aprobacion.
+ *
+ * Esa frase era una suposicion hasta que el motor empezo a entregar los hooks
+ * el mismo: "corren igual" valia solo si el plugin estaba instalado en la
+ * maquina, y en una que no lo tenia esta lista abria las herramientas sin que
+ * ninguna guarda las mirara. Quien las entrega ahora es session-settings.mjs, y
+ * sin ellas no se lanza la sesion.
  */
 export const DEFAULT_ALLOWED_TOOLS = [
   "Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "Task", "Skill", "TodoWrite", "WebFetch",
@@ -174,20 +181,55 @@ export const DEFAULT_ALLOWED_TOOLS = [
  *   prompt: string, cwd: string, model?: string, effort?: string,
  *   allowedTools?: string[], maxTurns?: number, resume?: string, fork?: boolean,
  *   addDirs?: string[], timeoutMs?: number, onProgress?: (e: object) => void, log?: object,
- *   maxCostUsd?: number
+ *   maxCostUsd?: number, home?: string
  * }} opts
- * @param {{transport?: Function, via?: string}} [inject] el transporte se
- *   inyecta para poder probar la reduccion y el enrutado sin una sesion real.
+ * @param {{transport?: Function, via?: string, engineRoot?: string}} [inject] el
+ *   transporte se inyecta para poder probar la reduccion y el enrutado sin una
+ *   sesion real; `engineRoot` para poder probar que falta un hook sin borrarlo.
  */
 export async function runPhase(opts, inject = {}) {
   const via = inject.via || (inject.transport ? "inyectado" : sdkAvailable() ? "agent-sdk" : "cli");
   const transporte = inject.transport || (via === "agent-sdk" ? transporteSdk : transporteCli);
 
+  // LAS GUARDAS NO SON UNA OPCION DE LA FIRMA. No se aceptan por `opts`, no se
+  // pueden reemplazar y no hay bandera que las apague: apagar un hook para que
+  // una tarea avance no esta disponible. Y si no se pueden armar, la sesion no
+  // se lanza — correr sin guarda es peor que no correr, porque el paso RED se
+  // saltea y el limite del PR deja de existir, las dos cosas en silencio.
+  const hookSettings = buildHookSettings(inject.engineRoot);
+  const guardas = validateHookSettings(hookSettings);
+  if (!guardas.ok) {
+    return {
+      ok: false, sessionId: null, budgetExhausted: false, isError: true, subtype: "hooks_ausentes",
+      turns: 0, usd: null, segundos: 0, via,
+      text: `no se lanza la sesion: ${guardas.missing.length
+        ? `estos hooks declarados no existen en disco:\n  - ${guardas.missing.join("\n  - ")}`
+        : "no se declaro ningun hook"}\nUna sesion sin guardas se saltea el paso RED y el limite del principio IV, y no avisa.`,
+    };
+  }
+
   // `fork` sin `resume` no significa nada: bifurcar de ninguna sesion es abrir
   // una nueva, y mandarlo confunde la lectura de la bitacora.
+  // EL ENTORNO DE LA SESION, y no es un detalle de comodidad. El motor lanzaba
+  // la sesion sin inyectar NOXLOOP_HOME, pero `home` es un campo de la
+  // configuracion: el operador que lo declara en el archivo en vez de
+  // exportarlo corria todas sus sesiones con los hooks mirando `~/.noxloop`,
+  // donde no hay ninguna tarea activa — o sea, sin guarda y sin aviso.
+  //
+  // NOXLOOP_GUARD_ALWAYS hace que el limite de autonomia no dependa de que la
+  // tarea activa se resuelva. Adentro de una sesion del motor no hay una persona
+  // a la que un bloqueo de mas pueda dejar sin trabajar.
+  const env = {
+    ...process.env,
+    CI: "1",
+    ...(opts.home ? { NOXLOOP_HOME: opts.home } : {}),
+    NOXLOOP_GUARD_ALWAYS: "1",
+  };
+
   const parametros = {
     prompt: opts.prompt,
     cwd: opts.cwd,
+    env,
     model: opts.model || null,
     effort: opts.effort || null,
     allowedTools: opts.allowedTools || DEFAULT_ALLOWED_TOOLS,
@@ -196,6 +238,7 @@ export async function runPhase(opts, inject = {}) {
     fork: Boolean(opts.resume && opts.fork),
     addDirs: opts.addDirs || [],
     timeoutMs: opts.timeoutMs ?? 30 * 60_000,
+    hookSettings,
   };
   // `maxCostUsd` se acepta en la firma y NO se propaga a proposito: el techo es
   // por hito. Que llegue hasta aca y muera aca es lo que hace que un llamador
@@ -215,13 +258,26 @@ export async function runPhase(opts, inject = {}) {
 
 // ------------------------------------------------------------ transportes
 
-async function transporteSdk(p) {
-  const { query } = await import(PAQUETE);
+/**
+ * Las opciones del SDK para UNA sesion.
+ *
+ * Vive aparte del transporte por lo mismo que `progressEvents`: para poder
+ * verificar que las guardas van puestas sin arrancar una sesion.
+ *
+ * `settings` es la via medida para entregar hooks: carga en la capa "flag
+ * settings", la de mayor prioridad entre las controladas por el usuario, y es
+ * el equivalente exacto de `--settings` del CLI. NO se tocan `settingSources`:
+ * los settings de disco de quien corre el motor se suman, y solo pueden
+ * restringir mas — nunca menos, porque un `deny` no se destapa desde otra capa.
+ */
+export function sdkOptions(p) {
   const options = {
     cwd: p.cwd,
+    env: p.env,
     permissionMode: "acceptEdits",
     allowedTools: p.allowedTools,
     includePartialMessages: true,
+    settings: p.hookSettings,
   };
   if (p.model) options.model = p.model;
   // No todos los modelos soportan `effort`; el que no, lo degrada en silencio.
@@ -230,8 +286,12 @@ async function transporteSdk(p) {
   if (p.resume) options.resume = p.resume;
   if (p.resume && p.fork) options.forkSession = true;
   if (p.addDirs.length) options.additionalDirectories = p.addDirs;
+  return options;
+}
 
-  return query({ prompt: p.prompt, options });
+async function transporteSdk(p) {
+  const { query } = await import(PAQUETE);
+  return query({ prompt: p.prompt, options: sdkOptions(p) });
 }
 
 /**
@@ -240,23 +300,44 @@ async function transporteSdk(p) {
  * cada fase arranca un proceso y un contexto frios, y no hay sesion que
  * retomar.
  */
-async function transporteCli(p) {
+/**
+ * El argv del camino degradado.
+ *
+ * `--settings` acepta la ruta de un archivo o el JSON entero, y aca va el JSON:
+ * no hay archivo que crear, ni limpiar, ni que quede colgado en un worktree si
+ * el proceso muere a mitad. El argv no pasa por un shell, asi que el JSON viaja
+ * como un argumento y nadie lo reinterpreta. (`writeHookSettings` existe para
+ * el otro caso: una sesion que el motor no arranca.)
+ *
+ * OJO CON ESTE CAMINO: `-p/--print` ignora en silencio una configuracion que no
+ * valide —lo dice el propio help— asi que un error de forma aca no se ve como
+ * error, se ve como una sesion sin guardas que corre normal. Esta medido: con un
+ * bloque `hooks` mal formado la sesion termina con exit 0, stderr vacio,
+ * is_error false, y el `git merge` se ejecuta de verdad.
+ */
+export function cliArgs(p) {
   const args = [
     "-p", p.prompt,
     "--output-format", "json",
     "--permission-mode", "acceptEdits",
     "--allowedTools", p.allowedTools.join(" "),
+    "--settings", JSON.stringify(p.hookSettings),
   ];
   if (p.model) args.push("--model", p.model);
   if (p.resume) args.push("--resume", p.resume);
   for (const d of p.addDirs) args.push("--add-dir", d);
+  return args;
+}
+
+async function transporteCli(p) {
+  const args = cliArgs(p);
 
   const r = spawnSync("claude", args, {
     cwd: p.cwd,
     encoding: "utf8",
     timeout: p.timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, CI: "1" },
+    env: p.env,
   });
 
   let parseado = null;

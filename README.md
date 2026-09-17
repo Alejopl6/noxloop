@@ -15,9 +15,11 @@ dejar pull requests abiertos. No mergea. No despliega. Ahí termina, a propósit
                                                             └─ T3 ─┘   (rebase, verifica, integra)
 ```
 
-> **Estado: el recorrido completo funciona contra un gestor de prueba.** 180
-> tests, typecheck y validación de esquemas en verde. Lo que falta para usarlo en
-> serio son los tres proveedores reales y el modo daemon — ver
+> **Estado: usable.** 453 tests, typecheck y validación de esquemas en verde. El
+> recorrido completo funciona, los tres proveedores están implementados con su
+> suite de contrato, y el límite de autonomía está verificado dentro de una
+> sesión real —incluidos subagentes y sesiones retomadas— con el plugin sin
+> instalar. Falta el modo daemon y el recorrido de un hito completo: ver
 > [el plan de trabajo](#el-plan-de-trabajo).
 
 ---
@@ -96,9 +98,9 @@ puede ver el motor funcionando antes de poner una credencial.
 
 | Gestor | Jerarquía | Dependencias | Estado |
 |---|---|---|---|
-| **Azure DevOps** | Parent/Child nativo | `Predecessor`/`Successor` | en curso (T060) |
-| **Linear** | `parent` / sub-issues | relaciones `blocks` | en curso (T062) |
-| **GitHub Issues** | sub-issues | sin relación nativa → serializa y lo declara | en curso (T061) |
+| **Azure DevOps** | Parent/Child nativo | `Predecessor`/`Successor` | ✅ las 10 capacidades |
+| **Linear** | `parent` / sub-issues | relaciones `blocks` | ✅ |
+| **GitHub Issues** | sub-issues | sin relación nativa → serializa y lo declara | ✅ con su camino degradado |
 | **fake** | sí | sí | ✅ listo (tests, y ejemplo mínimo) |
 | Jira, y cualquier otro | — | — | un archivo en `providers/` |
 
@@ -146,7 +148,7 @@ persona no eligió.
 ## Verificación
 
 ```bash
-npm test          # 180 tests: unitarios, contrato de proveedor, integración y guardas de constitución
+npm test          # 453 tests: unitarios, contrato de proveedor, integración y guardas de constitución
 npm run typecheck # tsc --checkJs, sin paso de build
 npm run validate  # la configuración de ejemplo contra su esquema
 ```
@@ -170,16 +172,28 @@ contratos y 84 tareas en 8 fases.
 | 2. Fundacional | configuración, estado con guardas, gates, hooks, worktrees, lock, contrato de proveedor, CLI | ✅ 22/22 |
 | 3. US1 — un ticket, un PR | runner con el SDK, planificador, driver del ciclo TDD, commits, PRs, plugin | ✅ 14/14 |
 | 4. US2 — paralelismo | scheduler, cola de integración, driver concurrente | ✅ 7/12 — faltan hitos y el fan-out |
+| 5. US3 — proveedores | Azure DevOps, GitHub, Linear, degradación, docs | ✅ 9/9 |
 | 5. US3 — proveedores | Azure DevOps, GitHub, Linear | 9 tareas |
 | 6. US4 — retomar | reanudación, worktrees huérfanos, destrabar | 7 tareas |
 | 7. US5 — adoptabilidad | documentación de adopción, migración | 7 tareas |
 | 8. Pulido | daemon, disparo por asignación y mención | 6 tareas |
-| Descubiertas | 8 huecos que el plan no había previsto, todos cerrados | ✅ 8/8 |
+| Descubiertas | 15 huecos que el plan no había previsto, todos cerrados | ✅ 15/15 |
 
-Dos tareas bloquean la publicación y no se negocian: **T035** (el límite de
-autonomía, verificado pidiendo un merge y un deploy) y **T080** (que los hooks
-intercepten dentro de una sesión headless). Son las dos promesas cuyo
-incumplimiento daña el repositorio de otra persona.
+**T035 y T080 están cerradas**, y cómo se cerraron dice más que el hecho de que
+lo estén: una revisión adversarial rompió la promesa del límite de autonomía. De
+57 grafías de comando prohibido, **45 la sortearon** —bastaba un prefijo (`env`,
+`bash -c`), una comilla (`git push origin "main"`) o un intérprete (`node -e`)—
+y una se ejecutó contra un remoto real moviéndole la rama principal.
+
+El arreglo no fue alargar la lista, que es cómo se construye un verde inventado.
+Fue cambiar el punto de aplicación: **dentro de una tarea, el shell es denegar
+por defecto**, con una lista de permitidos derivada de lo que el repositorio
+declara necesitar. La constitución se enmendó a 1.1.0 para decirlo, porque
+contradice "ante la duda, permitir" — que ahora queda acotado a las sesiones
+donde hay una persona del otro lado.
+
+Después del cambio: de 28 grafías prohibidas pasan **0**, y de 8 comandos
+legítimos se bloquean **0**.
 
 ---
 
