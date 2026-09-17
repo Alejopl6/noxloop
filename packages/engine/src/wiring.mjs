@@ -156,6 +156,7 @@ export async function buildDeps(item, config, opts = {}) {
       runPhase({
         prompt: fase.prompt,
         cwd: fase.cwd,
+        home,
         model: fase.model,
         effort: fase.effort,
         resume: fase.resume,
@@ -175,6 +176,39 @@ export async function buildDeps(item, config, opts = {}) {
 export function planWorkdir(config, item, repo) {
   const resolve = makeResolve(config, { home: config.home, item });
   return resolve(repo).integrationPath;
+}
+
+/**
+ * Los binarios que una tarea de este repositorio puede correr.
+ *
+ * Sale de lo que el repositorio DECLARA necesitar —su gate y sus runners— y no
+ * de una constante del motor. Es la mitad que faltaba de la guarda invertida:
+ * sin esto, el hook tendria que adivinar, y adivinar es como una lista de
+ * permitidos se vuelve una lista de prohibidos otra vez.
+ *
+ * Los prefijos ejecutores no entran ni aunque el repositorio los declare: `env`
+ * o `bash -c` delante de un comando permitido devuelve el agujero entero.
+ *
+ * @param {object | null} repo la entrada de `repos` en la configuracion
+ * @returns {string[]}
+ */
+export function comandosPermitidos(repo) {
+  if (!repo || typeof repo !== "object") return [];
+  const NUNCA = new Set(["env", "sudo", "command", "eval", "exec", "bash", "sh", "zsh", "xargs", "time", "nohup", "ssh"]);
+
+  const plantillas = [repo.gate, repo.fastGate, ...Object.values(repo.runners || {})].filter(Boolean);
+  const binarios = new Set();
+  for (const plantilla of plantillas) {
+    // Un gate es una tuberia de shell escrita por una persona: se parte en
+    // segmentos y se toma el primer token de cada uno.
+    for (const segmento of String(plantilla).split(/&&|\|\||;|\|/)) {
+      const t = segmento.trim().split(/\s+/).filter(Boolean)[0];
+      if (!t) continue;
+      const cmd = t.replace(/^.*\//, "").replace(/["']/g, "");
+      if (!NUNCA.has(cmd)) binarios.add(cmd);
+    }
+  }
+  return [...binarios];
 }
 
 /** Los repos que el proyecto declara, para acotar el alcance de un plan. */

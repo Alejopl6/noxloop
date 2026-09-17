@@ -197,12 +197,41 @@ export function contractChecks(mod, fx) {
       },
     },
     {
-      name: "7. el mapa de estados es total y no inventa nativos",
+      name: "7. el mapa de estados es total, y el proveedor no inventa un nativo que no esta",
       run: async () => {
         const mapa = fx.ctx.options?.stateMap;
         assert(mapa, "los fixtures no traen stateMap en ctx.options");
         for (const s of CANONICAL_STATES) {
           assert(s in mapa, `el mapa de estados no declara "${s}" (null es una respuesta valida)`);
+        }
+
+        // LO DE ARRIBA VALIDA EL FIXTURE; ESTO VALIDA EL PROVEEDOR, y es la
+        // diferencia que importa. La primera mitad la controla quien escribe el
+        // fixture, asi que por si sola no prueba nada del codigo: un proveedor
+        // que inventara el nombre nativo pasaria igual.
+        //
+        // Aca se le pasa un ctx con el mapa INCOMPLETO y se exige que no
+        // escriba nada. Un nombre de estado inventado mueve un ticket a un
+        // estado que el proyecto no tiene, y el gestor contesta un error que no
+        // se lee como lo que es.
+        if (!mod.capabilities().setState || typeof mod.setState !== "function") return;
+
+        for (const canonico of CANONICAL_STATES) {
+          const sinEse = { ...mapa };
+          delete sinEse[canonico];
+          const ctxParcial = { ...fx.ctx, options: { ...fx.ctx.options, stateMap: sinEse } };
+          let r;
+          try {
+            r = await mod.setState(fx.knownItemId, canonico, ctxParcial);
+          } catch (e) {
+            // Negarse lanzando tambien es correcto: lo que no vale es escribir.
+            continue;
+          }
+          assert(
+            !r || r.written === null || r.written === undefined,
+            `con "${canonico}" ausente del mapa, setState devolvio written=${JSON.stringify(r?.written)}: ` +
+              `el nombre nativo se invento`,
+          );
         }
       },
     },

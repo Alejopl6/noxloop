@@ -4,35 +4,89 @@
   "title": "Plan",
   "description": "El DAG de tareas derivado de un ticket. Contrato entre la fase que entiende y la que ejecuta. La aciclicidad y la integridad referencial de dependsOn se validan en codigo: JSON Schema no las puede expresar.",
   "type": "object",
-  "required": ["item", "repoScope", "tasks"],
+  "required": [
+    "item",
+    "repoScope",
+    "tasks"
+  ],
   "additionalProperties": false,
   "properties": {
     "item": {
       "type": "object",
-      "required": ["id", "title", "level", "url", "provider"],
+      "required": [
+        "id",
+        "title",
+        "level",
+        "url",
+        "provider"
+      ],
       "additionalProperties": true,
       "properties": {
-        "id": { "type": "string" },
-        "key": { "type": ["string", "null"] },
-        "title": { "type": "string" },
-        "level": { "enum": ["epic", "feature", "story", "task"] },
-        "url": { "type": "string" },
-        "provider": { "type": "string" }
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "epic",
+            "feature",
+            "story",
+            "task"
+          ]
+        },
+        "url": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
       }
     },
-    "repoScope": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "repoScope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
     "evidence": {
       "type": "array",
       "description": "Por que cada repo esta en el alcance. Sin evidencia no entra: 'probablemente toque X' no es alcance.",
       "items": {
         "type": "object",
-        "required": ["repo", "why"],
-        "properties": { "repo": { "type": "string" }, "why": { "type": "string" } }
+        "required": [
+          "repo",
+          "why"
+        ],
+        "properties": {
+          "repo": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        }
       }
     },
-    "outOfScope": { "type": "array", "items": { "type": "string" } },
+    "outOfScope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "serializedBecause": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Si el proveedor no soporta dependencias, aca queda dicho por que el orden es serial."
     },
     "tasks": {
@@ -40,19 +94,76 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "repo", "title", "acceptance", "targetFiles", "testFiles", "tier", "dependsOn", "dependencyKind"],
+        "required": [
+          "id",
+          "repo",
+          "title",
+          "acceptance",
+          "targetFiles",
+          "testFiles",
+          "tier",
+          "dependsOn",
+          "dependencyKind"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^T[0-9]{3,}$" },
-          "repo": { "type": "string" },
-          "title": { "type": "string" },
-          "acceptance": { "type": "string", "minLength": 1 },
-          "targetFiles": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-          "testFiles": { "type": "array", "items": { "type": "string" } },
-          "tier": { "enum": ["trivial", "small", "medium", "large"] },
-          "specialist": { "type": ["string", "null"] },
-          "dependsOn": { "type": "array", "items": { "type": "string" } },
-          "dependencyKind": { "enum": ["hard", "soft"] },
+          "id": {
+            "type": "string",
+            "pattern": "^T[0-9]{3,}$"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "acceptance": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targetFiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_./@+-]+$",
+              "description": "Ruta relativa al repositorio. El patron NO es decorativo: esta ruta la escribe un modelo y el motor la ejecuta, y sin el un plan valido podia traer un `;` y correr cualquier cosa."
+            },
+            "minItems": 1
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_./@+-]+$",
+              "description": "Ruta relativa al repositorio. El patron NO es decorativo: esta ruta la escribe un modelo y el motor la ejecuta, y sin el un plan valido podia traer un `;` y correr cualquier cosa."
+            }
+          },
+          "tier": {
+            "enum": [
+              "trivial",
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "specialist": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dependencyKind": {
+            "enum": [
+              "hard",
+              "soft"
+            ]
+          },
           "noTestsBecause": {
             "type": "string",
             "description": "Obligatorio cuando testFiles esta vacio. Una tarea sin test y sin motivo se atasca hasta agotar su presupuesto."
