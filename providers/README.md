@@ -1,0 +1,85 @@
+# providers
+
+Un archivo = un gestor de tickets. Plano a propósito: agregar uno es agregar un
+archivo acá, no navegar la estructura interna de un paquete.
+
+El motor **no conoce ningún gestor**. Habla con la interfaz de
+[`contract.mjs`](contract.mjs) y le pregunta qué sabe hacer (`capabilities()`)
+antes de usar cada cosa. El contrato completo, con la tabla de cómo degrada el
+motor capacidad por capacidad, está en
+[`specs/001-parallel-ticket-orchestrator/contracts/provider.md`](../specs/001-parallel-ticket-orchestrator/contracts/provider.md).
+
+## Los cinco pasos
+
+1. **Copiá `fake/index.mjs`.** Es el ejemplo mínimo, y está comentado como
+   documentación y no como código de prueba.
+
+2. **Declará `capabilities()` con la verdad.** Empezar con casi todo en `false`
+   es correcto y produce un recorrido que funciona: el motor serializa, deja el
+   PR en un comentario, no mueve estados, y lo dice. Un `true` sin su función es
+   lo único que el validador rechaza.
+
+3. **Escribí el mapa de tipos y el de estados.** El mapa de tipos necesita una
+   entrada `default` explícita. El nivel de un ticket **nunca** se deduce
+   comparando el nombre del tipo: un gestor llama "Product Backlog Item" a lo
+   que otro llama "User Story", y un motor que compare nombres funciona en uno y
+   calla en el otro. El mapa de estados es total: todo estado canónico tiene
+   entrada, y `null` es una respuesta válida —significa "este proyecto no tiene
+   ese estado, no lo escribas".
+
+4. **Corré la suite de contrato hasta verde.**
+
+   ```js
+   // providers/mi-gestor/index.test.mjs
+   import { test } from "node:test";
+   import { contractChecks } from "../contract.mjs";
+   import * as mio from "./index.mjs";
+
+   test("pasa el contrato", async () => {
+     for (const check of contractChecks(mio, mio.fixtures)) await check.run();
+   });
+   ```
+
+   Son ocho chequeos. El octavo lee tu fuente para verificar que no tocás
+   `process.env`: las credenciales y las opciones llegan por `ctx`, y esa es la
+   única garantía de que no se pueda saltear la inyección en silencio.
+
+5. **Apuntá `provider.module`** en tu `noxloop.config.json`. La ruta puede estar
+   fuera de este repositorio: el motor carga el módulo por configuración.
+
+## Ejemplo trabajado: Jira
+
+Jira tiene jerarquía (`parent`), enlaces de tipo `Blocks`, transiciones por
+workflow y campos de tablero. Un primer proveedor honesto sería:
+
+```js
+export function capabilities() {
+  return {
+    children: true,          // búsqueda JQL por parent
+    dependencies: true,      // issue links de tipo Blocks
+    createChild: true,
+    setState: true,          // transiciones: ojo, son ids, no nombres
+    comment: true,
+    linkUrl: true,           // remote links acepta cualquier URL
+    labels: true,
+    searchAssigned: true,    // JQL: assignee = ...
+    searchMentioned: false,  // arrancá en false y sumalo después
+    boardFields: true,       // sprint, epic link
+  };
+}
+```
+
+Las dos trampas de Jira que conviene resolver en el paso 3 y no a mitad de un
+recorrido: las transiciones se piden por **id de transición** y no por nombre de
+estado, así que el `stateMap` guarda el destino y el proveedor resuelve la
+transición que lleva ahí; y el nombre del tipo de issue es configurable por
+proyecto, que es exactamente el motivo por el que el nivel sale del mapa.
+
+## Los incluidos
+
+| Proveedor | Estado |
+|---|---|
+| `fake` | ✅ completo — tests del motor y ejemplo mínimo |
+| `azure-devops` | en curso (T060) |
+| `github` | en curso (T061) |
+| `linear` | en curso (T062) |

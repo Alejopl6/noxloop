@@ -14,3 +14,10 @@ Thumbs.db
 .idea/
 # configuracion local de una instalacion: nunca se commitea
 /noxloop.config.json
+
+# Scaffolding de spec-kit (github/spec-kit): es de terceros y se instala, no se
+# redistribuye desde aca. `.specify/memory/` SI se versiona: la constitucion es
+# de este proyecto. Ver CONTRIBUTING.md.
+/.specify/*
+!/.specify/memory/
+/.claude/skills/speckit-*
