@@ -278,6 +278,59 @@ chequeo de tipos en CI sin introducir ese modo de fallo.
 
 ---
 
+## D11 — Agent Teams: no aplica al motor, y la razón no es el rendimiento
+
+**Decision**: el motor NO usa Agent Teams. El camino sigue siendo varias
+`query()` concurrentes.
+
+**Rationale**: la documentación lo cierra sin necesidad de medir nada:
+
+> *Spawning teammates also requires an interactive session. In non-interactive
+> mode with the `-p` flag, **including Agent SDK sessions**, Claude doesn't spawn
+> teammates, and a subagent that Claude names runs as an ordinary subagent even
+> with agent teams enabled.*
+
+El motor de noxloop es headless por diseño —corre como proceso aparte para que
+un recorrido de horas sobreviva a que se cierre la terminal— así que ahí los
+teammates no existen. No es que rindan mal: no se pueden crear.
+
+Y aunque se pudieran, hay cuatro cosas de su diseño que choocan con este motor:
+
+1. **Las aprobaciones de permiso de un teammate suben a la sesión líder**, para
+   que una persona las apruebe ahí. Todo el punto de noxloop es que no haya
+   nadie mirando.
+2. **No hay reanudación con teammates in-process**: `/resume` no los restaura, y
+   el líder queda mandándole mensajes a teammates que ya no existen. El motor se
+   apoya en retomar (US4, SC-010).
+3. **"El estado de las tareas se atrasa": los teammates a veces no marcan sus
+   tareas como completadas** y bloquean a las dependientes. Es exactamente el
+   fallo que la cola de integración y el scheduler existen para no tener.
+4. La propia doc dice que para **trabajo secuencial, ediciones al mismo archivo
+   o con muchas dependencias**, una sesión sola o los subagentes rinden más. El
+   ciclo de una tarea —RED → GREEN → GATE → REVIEW— es secuencial por
+   construcción y toca los mismos archivos.
+
+**Dónde SÍ sirve, y conviene no confundirlo**: en el camino interactivo, para
+investigación y revisión con hipótesis en competencia. La doc describe el patrón
+que mejor funcionó construyendo este proyecto — *"que hablen entre ellos para
+intentar refutar las teorías del otro, como un debate científico"*—, y es el
+mismo que produjo los hallazgos más valiosos acá: los escépticos encontraron más
+que los implementadores. Pero eso es para una persona orquestando, no para el
+motor.
+
+**Alternatives considered**:
+- *Teams para el abanico de revisión*: lo mismo se logra con cuatro `query()`
+  concurrentes, que sí funcionan headless, cuestan menos y están medidos (ver
+  D7). Y los teammates son experimentales, detrás de una variable de entorno.
+- *`SendMessage` entre subagentes nombrados*, que funciona incluso con teams
+  apagados: sigue siendo del camino interactivo. El motor invoca `query()`, no
+  la tool `Agent`.
+
+**Un detalle que sí conviene recordar**: el caché de prompt de un teammate
+in-process cae fuera del bucket de TTL de la conversación principal, o sea cinco
+minutos por defecto. Es el mismo fallo que D2 documenta para las fases del
+motor, y otra razón por la que el fan-out largo conviene armarlo a mano.
+
 ## Preguntas que quedan abiertas, y no bloquean
 
 1. **¿Puede una sesión del SDK invocar `Workflow`?** Acotado por D7: el motor no
