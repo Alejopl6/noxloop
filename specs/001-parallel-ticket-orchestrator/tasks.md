@@ -112,22 +112,30 @@ US3.
 
 ## Phase 4: User Story 2 — Un hito se cierra completo, y en paralelo (P1)
 
+> **Nota de ejecucion**: `scheduler.mjs` y `merge-queue.mjs` (T044, T045, T049,
+> T050) se adelantaron a la fase 3. La dependencia declarada de US2 sobre US1 es
+> sobre **T052** —implementar concurrencia encima de un bucle de tarea que
+> todavia no es solido multiplica los fallos del bucle— y esos dos modulos son
+> funciones sobre el estado y sobre git, probables de forma aislada y sin
+> modelo. Construirlos antes baja el riesgo en vez de subirlo: son la parte que
+> mas cuesta acertar, y ahora estan acertadas con un conflicto de git real.
+
 **Goal**: Una aprobación, N historias, tareas independientes en paralelo e integración ordenada.
 
 **Independent Test**: Una épica con tres historias sin dependencias avanza en tres worktreesa la vez y termina en un tiempo cercano al de la más lenta.
 
 ### Tests (OBLIGATORIO — TDD) ⚠️
 
-- [ ] T044 [P] [US2] Test del scheduler en `packages/engine/test/scheduler.test.mjs`: la tabla completa del escenario 2 de `quickstart.md`, incluyendo `blocked` vs `unreachable` y el recorte por `maxParallelTasks`
-- [ ] T045 [P] [US2] Test de la cola en `packages/engine/test/merge-queue.test.mjs`: repositorio git real, dos ramas que tocan la misma línea, rebase que falla, tarea que vuelve a `green` con el conflicto textual, rama base intacta, y gate **después** del rebase
+- [X] T044 [P] [US2] Test del scheduler en `packages/engine/test/scheduler.test.mjs`: la tabla completa del escenario 2 de `quickstart.md`, incluyendo `blocked` vs `unreachable` y el recorte por `maxParallelTasks`
+- [X] T045 [P] [US2] Test de la cola en `packages/engine/test/merge-queue.test.mjs`: repositorio git real, dos ramas que tocan la misma línea, rebase que falla, tarea que vuelve a `green` con el conflicto textual, rama base intacta, y gate **después** del rebase
 - [ ] T046 [P] [US2] Test de hito en `packages/engine/test/milestone.test.mjs`: orden desde dependencias cuando el proveedor las tiene, serialización declarada cuando no, `--skip` y `--only`, y el reporte final de bloqueadas e inalcanzables
 - [ ] T047 [US2] Test de concurrencia en `packages/engine/test/parallel.test.mjs`: N tareas concurrentes sobre el mismo repositorio mantienen el estado consistente y ninguna observa los cambios sin integrar de otra
 - [ ] T048 [P] [US2] Test del techo por hito en `packages/engine/test/milestone-budget.test.mjs`: al alcanzarlo el recorrido se detiene ordenadamente, sin cortar una tarea a mitad
 
 ### Implementación
 
-- [ ] T049 [US2] Implementar `packages/engine/src/scheduler.mjs`: orden topológico, dependencias duras contra `integrated`, recorte por ancho, y cálculo de `unreachable`
-- [ ] T050 [US2] Implementar `packages/engine/src/merge-queue.mjs`: cola serial, rebase sobre la punta, re-verificación con el gate rápido, e integración o rechazo con la causa
+- [X] T049 [US2] Implementar `packages/engine/src/scheduler.mjs`: orden topológico, dependencias duras contra `integrated`, recorte por ancho, y cálculo de `unreachable`
+- [X] T050 [US2] Implementar `packages/engine/src/merge-queue.mjs`: cola serial, rebase sobre la punta, re-verificación con el gate rápido, e integración o rechazo con la causa
 - [ ] T051 [US2] Implementar `packages/engine/src/milestone.mjs`: rama del hito, orden de items, exclusiones declaradas antes de arrancar, notas como canal de vuelta, y contabilidad de gasto
 - [ ] T052 [US2] Extender `driver.mjs` a ejecución concurrente: lanzar el ReadySet, esperar la primera que termine, recalcular desde disco, y respetar `maxParallelItems`
 - [ ] T053 [P] [US2] Escribir `packages/plugin/workflows/planning-fanout.mjs`: `pipeline` analista → planificador → materialización con salida validada por esquema
