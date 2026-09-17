@@ -45,6 +45,9 @@ const AYUDA = `noxloop ${VERSION} — un ticket entra, un pull request sale.
   noxloop unstick <item> --task <t> --nota "<que se decidio>"
                                     devuelve una tarea bloqueada al bucle
   noxloop prune [--force]           limpia worktrees huerfanos (sin --force no descarta trabajo)
+  noxloop board [--port N] [--open] el tablero 360 en el navegador: que hay, que corre,
+                                    que te necesita. Solo lectura, solo 127.0.0.1.
+                                    Con [--home <ruta>] no necesita configuracion
   noxloop add-target <item> <tarea> <ruta> "<motivo>"
                                     amplia el alcance de una tarea, con su motivo
 
@@ -163,6 +166,40 @@ async function main() {
     return;
   }
 
+  if (comando === "board") {
+    // El board NO pasa por `cargar`: es un lector de un directorio, y exigirle
+    // una configuracion con proveedor y repos rompia justo su escenario —
+    // mirar que quedo cuando el gestor esta caido, o desde otra maquina sin los
+    // checkouts. Se encontro usandolo.
+    const { resolverHomeDelBoard, levantarBoard } = await import("../src/board-server.mjs");
+    const r = resolverHomeDelBoard(args.flags, process.env, () => cargar(args));
+    if (!r.home) {
+      aviso(r.problema);
+      process.exit(1);
+    }
+
+    const { url, srv } = await levantarBoard({ home: r.home, port: args.flags.port ? Number(args.flags.port) : undefined });
+    aviso(`board en ${url}`);
+    aviso(`  lee ${r.home} (via ${r.de}) y no escribe nada`);
+    aviso(`  ctrl-c para cerrarlo`);
+    if (args.flags.open) {
+      const { spawn } = await import("node:child_process");
+      const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+      try {
+        spawn(cmd, [url], { stdio: "ignore", detached: true }).unref();
+      } catch {
+        aviso(`  (no pude abrir el navegador con ${cmd}: abrila a mano)`);
+      }
+    }
+    for (const senial of ["SIGINT", "SIGTERM"]) {
+      process.on(senial, () => {
+        aviso(`\nrecibi ${senial}: cierro el board...`);
+        srv.close(() => process.exit(0));
+      });
+    }
+    return;
+  }
+
   if (CON_ITEM.includes(comando) || SIN_ITEM.includes(comando)) {
     const itemId = args._[1];
     if (CON_ITEM.includes(comando) && !itemId) {
@@ -198,6 +235,8 @@ async function main() {
       repo: args.flags.repo ? String(args.flags.repo) : undefined,
       task: args.flags.task ? String(args.flags.task) : undefined,
       nota: args.flags.nota ? String(args.flags.nota) : undefined,
+      port: args.flags.port ? Number(args.flags.port) : undefined,
+      open: Boolean(args.flags.open),
       volverA: args.flags["volver-a"] ? String(args.flags["volver-a"]) : undefined,
       signal: ac.signal,
     }));

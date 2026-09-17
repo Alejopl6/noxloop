@@ -38,8 +38,15 @@ const codigo = (f) =>
 test("VII — el motor no contiene ningun nombre propio de organizacion, repo o host", () => {
   // La lista son los nombres del harness del que sale este motor. Si alguno
   // aparece, la genericidad se rompio y hay que mover el dato a configuracion.
+  //
+  // `flex` va CAPITALIZADO o como host a proposito. Con /\bflex\b/i la guarda
+  // atrapaba `display: flex` del CSS del board: un falso positivo que empuja a
+  // no escribir CSS en el motor, que no es lo que el principio VII protege. El
+  // nombre propio aparece como nombre (`el panel Flex`) o como host
+  // (`flex.staging...`), y las dos formas siguen cubiertas.
   const PROHIBIDOS = [
-    /partequipos/i, /\bflex\b/i, /azure[- ]?devops/i, /\bado_/i,
+    /partequipos/i, /\bFlex\b/, /\bflex\.[a-z]/i, /\bflex-(?:db|api|web)\b/i,
+    /azure[- ]?devops/i, /\bado_/i,
     /\.com\b/, /vstfs/i, /dev\.azure/i, /linear\.app/i, /api\.github/i,
   ];
   const hallazgos = [];

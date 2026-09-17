@@ -390,7 +390,22 @@ Mientras corre, la bitácora va a stderr y **completa** a
 
 ```bash
 noxloop status 2             # solo lectura, no toca el gestor: corre con la red caída
+noxloop board --open         # lo mismo, pero como tablero, y se actualiza solo
 ```
+
+`board` levanta un tablero en `127.0.0.1:7777` (cambiable con `--port`) que
+muestra en columnas todo lo que hay: por empezar, en curso, con PR abierto,
+integrado y bloqueado — y arriba, separado, **lo que te necesita**. Lee
+`$NOXLOOP_HOME` y nada más; no hay base de datos, no habla con el gestor y **no
+escribe una sola cosa**, así que podés abrirlo con un recorrido corriendo sin
+tocarlo. Escucha solo en loopback a propósito: lo que muestra son títulos de
+tickets y texto de fallos de gate, o sea tu trabajo interno.
+
+`board` es el único comando que **no necesita configuración**: con `--home
+<ruta>` mira un directorio de estado y listo. Es a propósito — el escenario para
+el que existe incluye "estoy en otra máquina sin los checkouts" y "el gestor
+está caído", y exigirle un proveedor y un repo declarado lo habría dejado
+inservible justo ahí.
 
 ### 5.4 Y después con el gestor real
 

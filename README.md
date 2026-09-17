@@ -60,6 +60,14 @@ abierto con tres tareas bloqueadas y un diagnóstico honesto es un éxito; uno q
 llega a PR mergeado sin revisión humana es un incidente, aunque el código esté
 bien.
 
+**Hay un tablero, y es un lector.** `noxloop board` levanta en `127.0.0.1` una
+vista de todo: qué hay por empezar, qué corre ahora, qué dejó PR, qué se integró,
+qué está bloqueado — y arriba, separado del resto, **lo que necesita que una
+persona conteste**, con la causa textual y no un resumen. No tiene base de datos
+ni backend: lee `$NOXLOOP_HOME` y **no escribe una sola cosa**, porque
+`state.mjs` es el único escritor del estado y un tablero con permiso de
+escritura sería el segundo. Hay un test que mide el disco antes y después.
+
 **El gestor de tickets es un detalle, y está probado que lo es.** El motor no
 sabe qué hay del otro lado: le pregunta capacidades y degrada de forma visible
 cuando algo no está. Agregar un gestor es agregar un archivo.
@@ -147,7 +155,7 @@ persona no eligió.
 ## Verificación
 
 ```bash
-npm test          # 650 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
+npm test          # 689 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
 npm run typecheck # tsc --checkJs, sin paso de build
 npm run validate  # la configuración de ejemplo contra su esquema
 ```
