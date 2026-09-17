@@ -47,7 +47,11 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          ejemplos=(examples/*.config.json)
+          # El glob era `examples/*.config.json`, y
+          # `examples/noxloop.config.github.json` NO matchea: el unico ejemplo
+          # apuntado a un gestor real era el que nadie validaba. Se encontro
+          # corriendo los pasos de este workflow a mano.
+          ejemplos=(examples/*.json)
           if [ ${#ejemplos[@]} -eq 0 ]; then
             echo "::error::no hay ninguna configuracion de ejemplo en examples/"
             exit 1
