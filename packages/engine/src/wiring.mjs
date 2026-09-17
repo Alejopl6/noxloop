@@ -45,6 +45,19 @@ export async function loadProvider(config, opts = {}) {
     // El proveedor NO lee la configuracion ni el entorno por su cuenta: recibe
     // lo que necesita. Es lo que lo hace probable sin red ni credenciales.
     options: { ...(config.provider.options || {}), stateMap: config.provider.stateMap, levelMap: config.provider.levelMap },
+    // QUIEN ES NOXLOOP EN EL GESTOR, y va aparte de `options` a proposito: es
+    // la misma pregunta para todo proveedor, no una opcion de uno.
+    //
+    // EL FALLO QUE CIERRA: `identity` estaba en el esquema, ADOPTING decia que
+    // lo consumen `inbox` y `daemon`, y el motor no lo leia en ningun lugar.
+    // Los proveedores usaban implicitamente el dueño del token, asi que
+    // declarar otro responsable no hacia nada — y no avisaba. Se llena siempre,
+    // con null explicito, para que un proveedor pueda distinguir "no declarado"
+    // de "no me llego".
+    identity: {
+      assignee: config.identity?.assignee ?? null,
+      mention: config.identity?.mention ?? null,
+    },
     env: Object.fromEntries((mod.requiredEnv || []).map((k) => [k, env[k]])),
     log: opts.log || createLogger({ home: config.home, quiet: true }),
     fetch: fetchConReintentos,

@@ -90,6 +90,7 @@ test("capabilities dice la verdad de este gestor", () => {
     // searchAssigned esta en true.
     searchMentioned: false,
     boardFields: true,
+    identityAssignee: false,
   });
 });
 

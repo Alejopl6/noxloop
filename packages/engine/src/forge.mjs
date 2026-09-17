@@ -90,6 +90,24 @@ export function prBody(run, opts = {}) {
     s.push("");
   }
 
+  // LO QUE QUEDO AFUERA A PROPOSITO, antes de las tareas.
+  //
+  // EL FALLO QUE CIERRA: `data-model.md` decia literalmente de `outOfScope`
+  // "Va al PR", y no iba a ningun lado. Quien revisa el PR no tenia forma de
+  // saber que se dejo afuera adrede, asi que un recorte deliberado se leia como
+  // un olvido — y al reves, que es peor.
+  if (run.outOfScope?.length) {
+    s.push("### Fuera de alcance, a proposito", "");
+    for (const x of run.outOfScope) s.push(`- ${x}`);
+    s.push("");
+  }
+
+  // Y por que el orden fue serial, si lo fue. Sin esto, un plan serializado por
+  // una limitacion del gestor se ve igual que uno que nadie supo paralelizar.
+  if (run.serializedBecause) {
+    s.push("### Por que el orden fue serial", "", run.serializedBecause, "");
+  }
+
   s.push(`### Tareas (${hechas.length} de ${run.tasks.length} integradas)`, "");
   for (const t of hechas) s.push(bloqueDeTarea(t), "");
 

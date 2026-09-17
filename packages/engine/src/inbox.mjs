@@ -426,6 +426,23 @@ export async function revisarBandeja(config, deps) {
     log.warn(d);
   }
 
+  // UN RESPONSABLE DECLARADO QUE EL GESTOR NO PUEDE HONRAR.
+  //
+  // EL FALLO QUE CIERRA: `identity.assignee` llega al proveedor, pero solo
+  // algunos pueden buscar por un responsable distinto al dueño del token. Sin
+  // este aviso, alguien declaraba un responsable, la bandeja seguia trayendo
+  // los del token, y no habia una sola linea diciendo que lo declarado se
+  // ignoro. El motor degrada, pero DE FORMA VISIBLE.
+  const declarado = config?.identity?.assignee || providerCtx?.identity?.assignee;
+  if (declarado && !caps.identityAssignee) {
+    const d =
+      `el gestor "${gestor}" no puede buscar por un responsable declarado: ` +
+      `\`identity.assignee\` dice "${declarado}" y la bandeja va a traer los del dueño del token. ` +
+      `Si el trabajo se le asigna a "${declarado}" y no a la cuenta del token, esta bandeja va a estar vacia.`;
+    degradaciones.push(d);
+    log.warn(d);
+  }
+
   let crudo;
   try {
     crudo = await provider.searchInbox(providerCtx);

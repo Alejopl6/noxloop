@@ -4,97 +4,311 @@
   "title": "Run",
   "description": "Estado persistido de una ejecucion. Es la fuente de verdad; la conversacion no.",
   "type": "object",
-  "required": ["schemaVersion", "item", "tasks", "createdAt", "updatedAt"],
+  "required": [
+    "schemaVersion",
+    "item",
+    "tasks",
+    "createdAt",
+    "updatedAt"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "milestoneId": { "type": ["string", "null"] },
-    "createdAt": { "type": "string", "format": "date-time" },
-    "updatedAt": { "type": "string", "format": "date-time" },
+    "schemaVersion": {
+      "const": 1
+    },
+    "milestoneId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
     "item": {
       "type": "object",
-      "required": ["id", "title", "level", "url", "provider"],
+      "required": [
+        "id",
+        "title",
+        "level",
+        "url",
+        "provider"
+      ],
       "additionalProperties": true,
       "properties": {
-        "id": { "type": "string" },
-        "title": { "type": "string" },
-        "level": { "enum": ["epic", "feature", "story", "task"] },
-        "url": { "type": "string" },
-        "provider": { "type": "string" },
-        "branch": { "type": ["string", "null"] },
-        "baseBranch": { "type": ["string", "null"] },
-        "prTarget": { "type": ["string", "null"] },
-        "pr": { "type": ["string", "null"] },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "epic",
+            "feature",
+            "story",
+            "task"
+          ]
+        },
+        "url": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseBranch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prTarget": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pr": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "providerStateWritten": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "El ultimo estado que el motor escribio en el ticket. Es lo que vuelve idempotente la escritura: relanzar no lo mueve dos veces."
         },
-        "boardFields": { "type": ["object", "null"] }
+        "boardFields": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
       }
     },
     "tasks": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "repo", "title", "acceptance", "targetFiles", "testFiles", "tier", "dependsOn", "dependencyKind", "status", "attempts", "redVerified"],
+        "required": [
+          "id",
+          "repo",
+          "title",
+          "acceptance",
+          "targetFiles",
+          "testFiles",
+          "tier",
+          "dependsOn",
+          "dependencyKind",
+          "status",
+          "attempts",
+          "redVerified"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "repo": { "type": "string" },
-          "title": { "type": "string" },
-          "acceptance": { "type": "string" },
-          "targetFiles": { "type": "array", "items": { "type": "string" } },
-          "testFiles": { "type": "array", "items": { "type": "string" } },
-          "tier": { "enum": ["trivial", "small", "medium", "large"] },
-          "specialist": { "type": ["string", "null"] },
-          "dependsOn": { "type": "array", "items": { "type": "string" } },
-          "dependencyKind": { "enum": ["hard", "soft"] },
-          "noTestsBecause": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "acceptance": {
+            "type": "string"
+          },
+          "targetFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tier": {
+            "enum": [
+              "trivial",
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "specialist": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dependencyKind": {
+            "enum": [
+              "hard",
+              "soft"
+            ]
+          },
+          "noTestsBecause": {
+            "type": "string"
+          },
           "status": {
-            "enum": ["pending", "in_progress", "red", "green", "gated", "reviewed", "queued", "integrated", "blocked"]
+            "enum": [
+              "pending",
+              "in_progress",
+              "red",
+              "green",
+              "gated",
+              "reviewed",
+              "queued",
+              "integrated",
+              "blocked"
+            ]
           },
           "attempts": {
             "type": "object",
-            "required": ["red", "green", "gate", "review"],
+            "required": [
+              "red",
+              "green",
+              "gate",
+              "review"
+            ],
             "additionalProperties": false,
             "properties": {
-              "red": { "type": "integer", "minimum": 0 },
-              "green": { "type": "integer", "minimum": 0 },
-              "gate": { "type": "integer", "minimum": 0 },
-              "review": { "type": "integer", "minimum": 0 }
+              "red": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "green": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "gate": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "review": {
+                "type": "integer",
+                "minimum": 0
+              }
             }
           },
           "redVerified": {
             "type": "boolean",
             "description": "Solo se pone en true despues de una corrida real con exit code distinto de cero. Escribir texto no la concede."
           },
-          "worktree": { "type": ["string", "null"] },
-          "branch": { "type": ["string", "null"] },
-          "sessionId": { "type": ["string", "null"] },
-          "providerItemId": { "type": ["string", "null"] },
+          "worktree": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerItemId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "gateEvidence": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "description": "Sin este objeto no hay veredicto. La transicion a gated lo exige con exitCode 0.",
-            "required": ["command", "exitCode", "durationMs"],
+            "required": [
+              "command",
+              "exitCode",
+              "durationMs"
+            ],
             "properties": {
-              "command": { "type": "string" },
-              "exitCode": { "type": ["integer", "null"] },
-              "durationMs": { "type": "integer" },
-              "output": { "type": "string" },
-              "timedOut": { "type": "boolean" },
-              "ranAt": { "type": "string", "format": "date-time" }
+              "command": {
+                "type": "string"
+              },
+              "exitCode": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "durationMs": {
+                "type": "integer"
+              },
+              "output": {
+                "type": "string"
+              },
+              "timedOut": {
+                "type": "boolean"
+              },
+              "ranAt": {
+                "type": "string",
+                "format": "date-time"
+              }
             }
           },
           "addedTargets": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["path", "why"],
-              "properties": { "path": { "type": "string" }, "why": { "type": "string" } }
+              "required": [
+                "path",
+                "why"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                }
+              }
             }
           },
-          "lastFailure": { "type": ["string", "null"] },
-          "integratedAt": { "type": ["string", "null"], "format": "date-time" }
+          "lastFailure": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "integratedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
         }
       }
     },
@@ -102,9 +316,29 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "usd": { "type": "number", "minimum": 0 },
-        "calls": { "type": "integer", "minimum": 0 }
+        "usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
+    },
+    "outOfScope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Lo que el plan dejo afuera a proposito. Va al cuerpo del pull request."
+    },
+    "serializedBecause": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Si el orden fue serial por una limitacion del gestor, aca queda el motivo. Va al pull request."
     }
   }
 }

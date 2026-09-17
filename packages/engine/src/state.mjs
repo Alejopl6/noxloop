@@ -135,6 +135,11 @@ export function createRun(plan, opts) {
     milestoneId: opts.milestoneId || null,
     createdAt: ahora,
     updatedAt: ahora,
+    // Lo que el plan dejo dicho y el PR tiene que repetir. Sin copiarlo aca,
+    // `prBody` leeria un campo que en un recorrido de verdad nunca esta: el
+    // mismo cable cortado, un nivel mas abajo.
+    outOfScope: plan.outOfScope || [],
+    serializedBecause: plan.serializedBecause ?? null,
     item: {
       ...plan.item,
       branch: null,

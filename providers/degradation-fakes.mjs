@@ -106,6 +106,7 @@ const TODAS_EN_TRUE = {
   searchAssigned: true,
   searchMentioned: true,
   boardFields: true,
+  identityAssignee: true,
 };
 
 /**

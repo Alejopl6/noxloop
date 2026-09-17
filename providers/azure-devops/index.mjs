@@ -85,6 +85,7 @@ export function capabilities() {
     // escriben en el MISMO patch que crea el hijo: la herencia de campos de
     // tablero no cuesta un viaje aparte.
     boardFields: true,
+    identityAssignee: true,  // WIQL acepta cualquier valor en [System.AssignedTo]
   };
 }
 
@@ -181,6 +182,37 @@ const WIQL_POR_DEFECTO = {
     "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project " +
     "AND [System.Id] IN @RecentMentions",
 };
+
+/** WIQL escapa una comilla simple duplicandola. */
+const comillar = (v) => `'${String(v).replaceAll("'", "''")}'`;
+
+/**
+ * Las consultas de la bandeja, con el responsable declarado si lo hay.
+ *
+ * EL FALLO QUE CIERRA. `identity.assignee` estaba en el esquema y ADOPTING
+ * decia que lo consumen `inbox` y `daemon`, pero la consulta preguntaba por
+ * `@Me` —el dueño del token— asi que declarar otro responsable no cambiaba nada
+ * y tampoco avisaba. Donde noxloop corre con una cuenta de servicio y los
+ * tickets se asignan a OTRO usuario, la bandeja quedaba muda sin decir por que.
+ *
+ * `identity.mention` NO se usa: las menciones salen de `@RecentMentions`, que
+ * es del dueño del token y Azure DevOps no acepta pedirlas de otra persona. Eso
+ * se declara en `capabilities()` en vez de fingir que funciona.
+ *
+ * @param {object} o `provider.options`
+ * @param {{assignee?: string|null, mention?: string|null}} identity
+ */
+export function consultasDeBandeja(o = {}, identity = {}) {
+  const base = { ...WIQL_POR_DEFECTO };
+  if (identity?.assignee) {
+    base.assigned =
+      "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project " +
+      `AND [System.AssignedTo] = ${comillar(identity.assignee)} AND [System.State] <> ''`;
+  }
+  // Un `wiql` propio gana sobre todo: es la salida para una consulta que no
+  // anticipamos, y quien la escribe ya sabe a quien esta preguntando.
+  return { ...base, ...(o.wiql || {}) };
+}
 
 // --------------------------------------------------------------- plomeria
 
@@ -862,7 +894,7 @@ export async function createChild(parentId, spec, ctx) {
  */
 export async function searchInbox(ctx) {
   const o = opciones(ctx);
-  const consultas = { ...WIQL_POR_DEFECTO, ...(o.wiql || {}) };
+  const consultas = consultasDeBandeja(o, ctx.identity);
   const url = urlApi(ctx, "project", "_apis/wit/wiql");
 
   const idsDe = async (query) => {

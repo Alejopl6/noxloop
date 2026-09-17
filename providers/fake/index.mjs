@@ -31,6 +31,7 @@ export function capabilities() {
     searchAssigned: true,
     searchMentioned: true,
     boardFields: false,
+    identityAssignee: true,  // el falso honra lo declarado: es lo que permite probar el camino bueno
   };
 }
 

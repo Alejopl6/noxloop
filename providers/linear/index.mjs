@@ -66,6 +66,7 @@ export function capabilities() {
     // al crear el hijo: cycleId, projectId, projectMilestoneId, assigneeId,
     // estimate. Declararlo true es honesto porque `createChild` los pasa.
     boardFields: true,
+    identityAssignee: false, // assignee: { isMe: { eq: true } } es del token; pedir otro exige otra consulta
   };
 }
 

@@ -68,6 +68,7 @@ export function capabilities() {
     searchAssigned: true,
     searchMentioned: true,
     boardFields: false,      // Projects v2 es solo GraphQL
+    identityAssignee: false, // /issues?filter=assigned es del dueño del token y no se puede cambiar
   };
 }
 

@@ -526,8 +526,31 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
   });
 }
 
-async function fase(nombre, run, taskId, politica, deps, opts = {}) {
+export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   const t = tareaDe(run, taskId);
+
+  // EL TECHO SE VERIFICA ANTES DE INVOCAR. Despues ya se pago.
+  //
+  // `limits.callsPerItem` estaba en el esquema y en los dos ejemplos (60 y 40)
+  // y nadie lo hacia cumplir: los presupuestos por bucle acotan cada bucle, no
+  // la suma del item, asi que un recorrido que entraba en reintentos gastaba sin
+  // tope. Se devuelve `budgetExhausted` porque el driver YA sabe tratar eso
+  // como un corte de presupuesto y no como un fallo del codigo — que es lo
+  // correcto: la tarea no esta mal, se quedo sin plata.
+  const techo = techoDeLlamadas(deps.config);
+  const fresco = deps.home ? loadRun(run.item.id, { home: deps.home }) || run : run;
+  if (excedeLlamadas(fresco, techo)) {
+    return {
+      ok: false,
+      budgetExhausted: true,
+      subtype: "callsPerItem",
+      text:
+        `el recorrido ${run.item.id} ya hizo ${fresco.spent?.calls} invocaciones y el techo ` +
+        `\`limits.callsPerItem\` es ${techo}: no se invoca mas. ` +
+        `Si el trabajo lo justifica, subi ese limite; si no, hay un bucle de reintentos que hay que mirar.`,
+    };
+  }
+
   const r = await deps.runPhase({
     phase: nombre,
     taskId,
@@ -561,9 +584,39 @@ async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   return r || { ok: false, budgetExhausted: false, text: "la fase no devolvio nada" };
 }
 
-function promptDeFase(nombre, run, t, extra) {
+export function promptDeFase(nombre, run, t, extra) {
   const base = `/noxloop-task ${run.item.id} ${t.id} --phase ${nombre}`;
-  return extra ? `${base}\n\n${extra}` : base;
+  // El especialista SUGERIDO por el plan. Es una sugerencia y se pasa como tal:
+  // el campo estaba en los dos esquemas y lo produce el workflow de
+  // planificacion, pero no llegaba a quien implementa, asi que el plan decia
+  // quien iba a hacer la tarea y no era verdad.
+  const partes = [];
+  if (t.specialist) partes.push(`El plan sugiere el especialista \`${t.specialist}\` para esta tarea.`);
+  if (extra) partes.push(extra);
+  return partes.length ? `${base}\n\n${partes.join("\n\n")}` : base;
+}
+
+/**
+ * El techo de invocaciones por item.
+ *
+ * EL FALLO QUE CIERRA: `limits.callsPerItem` estaba en el esquema y en los dos
+ * ejemplos de configuracion (60 y 40), y NADIE lo hacia cumplir. Un recorrido
+ * que entraba en un bucle de reintentos podia gastar sin tope: los presupuestos
+ * por bucle acotan cada bucle, no la suma del item.
+ *
+ * Un techo invalido cae al default del esquema en vez de lanzar: dejar el motor
+ * sin poder invocar nada por un cero mal puesto es peor que ignorarlo.
+ */
+export function techoDeLlamadas(config) {
+  const n = config?.limits?.callsPerItem;
+  return Number.isInteger(n) && n > 0 ? n : 60;
+}
+
+/** Si el recorrido ya llego a su techo. En el techo NO se invoca mas. */
+export function excedeLlamadas(run, techo) {
+  const hechas = run?.spent?.calls;
+  if (!Number.isFinite(hechas)) return false;
+  return hechas >= techo;
 }
 
 async function cortoPorPresupuesto(r, itemId, taskId, deps) {
