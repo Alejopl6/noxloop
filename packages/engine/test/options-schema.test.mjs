@@ -164,6 +164,11 @@ test("cada opcion que un proveedor LEE esta descrita en su esquema", async () =>
     const src = readFileSync(new URL(`../../../providers/${nombre}/index.mjs`, import.meta.url), "utf8");
     const mod = await import(`../../../providers/${nombre}/index.mjs`);
     const descritas = new Set(Object.keys(mod.optionsSchema.properties || {}));
+    // EL HEURISTICO ES TOSCO: busca `o.<algo>` y `options?.<algo>`, asi que
+    // cualquier parametro llamado `o` le parece el objeto de opciones. Se
+    // prefiere tosco y ruidoso antes que fino y ciego —el falso positivo se
+    // arregla renombrando una variable; el falso negativo es una opcion que
+    // nadie describe y que con additionalProperties:false nadie puede usar—.
     const leidas = new Set([...src.matchAll(/\bo(?:ptions)?(?:\?)?\.([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1]));
     for (const l of leidas) {
       // `stateMap` y `levelMap` los inyecta el motor, no la persona.

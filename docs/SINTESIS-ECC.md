@@ -48,34 +48,49 @@ ECC y mal para noxloop, en todos los casos porque choca con la constitución:
 
 ## Pendiente
 
-Estas son las que quedaron sin hacer. **Advertencia de completitud**: la lista
-autoritativa de diez vivía en la sesión y no se pudo recuperar entera del
-transcript; las cinco de abajo son las que se pudieron reconstruir con
-precisión. Si falta alguna, es exactamente por el motivo por el que este archivo
-existe, y la próxima que aparezca se agrega acá y no a una conversación.
+**Ninguna.** Las cinco que quedaban se cerraron. Quedan acá con lo que resultó
+ser cada una, porque en cuatro de los cinco casos lo que se encontró al
+implementar era peor que lo que decía la nota:
 
-1. **Clasificar el fallo de gate en código / base / entorno.** Hoy un gate que
-   falla es un gate que falla, y los tres se arreglan distinto: el de código lo
-   arregla la tarea, el de base lo arregla rebasar, el de entorno no lo arregla
-   ningún reintento —y es el que hoy consume los tres intentos para nada—.
-2. **Corte por no convergencia.** Un presupuesto por bucle acota los intentos,
-   pero no detecta el caso en que los tres intentos producen el *mismo* fallo.
-   Repetir sin converger es distinto de estar cerca, y merece cortar antes.
-3. **Delimitar la entrada no confiable.** El título y la descripción de un
-   ticket, el diff, y el texto de salida de un gate entran a un prompt sin
-   marcar como datos. Un ticket cuyo cuerpo diga "ignorá las instrucciones
-   anteriores" es entrada de otra persona, y hoy nada lo separa.
-4. **Persistir el objeto del run rojo en el cuerpo del PR.** El PR dice que el
-   rojo se vio; no muestra la corrida. Quien revisa tiene que creer al estado en
-   vez de leer la evidencia, y la evidencia ya existe en disco.
-5. **No acotar cobertura en silencio.** Si un fan-out toma los primeros N, no
-   reintenta, o muestrea, tiene que decir qué dejó afuera. Un recorte que no se
-   registra se lee como "se cubrió todo".
+1. **Clasificar el fallo de gate en código / base / entorno.** Hecho, en
+   `claseDeFallo()`. Lo que apareció: `blameGate()` ya existía en `gate.mjs`
+   distinguiendo base de tarea, y **nadie lo llamaba**. El entorno se decide
+   primero y sin correr nada: si falta `npm`, correr el gate sobre la base
+   tampoco va a funcionar. Y si la base no se puede correr, la clase es
+   *indeterminada* y no *código* — asumir que es de la tarea cuando no se sabe
+   le hace cargar un fallo ajeno.
+2. **Corte por no convergencia.** Hecho, en `huellaDeFallo()` + `noConverge()`.
+   Lo delicado no fue cortar: fue qué normalizar. Los colores, duraciones,
+   rutas y shas se borran, pero **los conteos de tests se dejan tal cual**,
+   porque pasar de tres a uno es la señal de avance más común y borrarla haría
+   cortar trabajo que estaba llegando.
+3. **Delimitar la entrada no confiable.** Hecho, en `prompt.mjs`. El vector real
+   no es envolver: es que el contenido pueda **cerrar su propio bloque**.
+   Envolver sin neutralizar eso es teatro — y el primer intento de
+   neutralización tenía el bug, porque el reemplazo contenía la marca que
+   reemplazaba. El texto del ticket no pasa por el motor (lo lee el agente), así
+   que ahí la marca vive en `noxloop-plan.md`, con un test que la sostiene.
+4. **Persistir el objeto del run rojo en el cuerpo del PR.** Hecho. Lo que
+   apareció es más feo de lo que decía la nota: la evidencia del rojo **se
+   validaba y se tiraba** — sólo sobrevivía `redVerified: true`. El mismo PR
+   mostraba "exit 0" del gate y "creeme" del rojo.
+5. **No acotar cobertura en silencio.** Hecho. Tres topes ya avisaban y no se
+   tocaron (`truncar` del gate, el cupo del daemon, el `stoppedBy` del hito).
+   Los que no: el informe de cada lente del abanico, el diagnóstico del
+   planificador —el peor, porque es la causa de por qué no se pudo planificar—
+   y **la paginación de GitHub**, que al llegar a `maxPages` con la última
+   página llena dejaba tickets afuera sin una línea que lo dijera.
 
-De la lista original, dos ya se resolvieron por otro camino:
+De la lista original, dos se habían resuelto antes por otro camino:
 
 - **`needs-clarification` como resultado terminal de la planificación** quedó
   cubierto de hecho por el tablero, que deriva "necesita una persona" de tres
   fuentes que sí se escriben (ver D13 en `research.md`).
-- **El test de campos sin consumidor** está hecho, y es el que encontró los seis
-  cables cortados.
+- **El test de campos sin consumidor** encontró seis cables cortados, y es el
+  que hizo aparecer `identity`, `outOfScope`, `callsPerItem` y los otros tres.
+
+## Lo que sigue
+
+La lista autoritativa de diez no se pudo recuperar entera del transcript, así
+que puede faltar alguna. Si aparece, se agrega **acá** y no a una conversación
+— que es la razón por la que este archivo existe.

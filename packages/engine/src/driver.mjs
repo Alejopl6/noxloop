@@ -28,6 +28,8 @@ import * as worktreeMod from "./worktree.mjs";
 import { commitPaths, mensajeDeFase } from "./vcs.mjs";
 // De quien es el fallo del gate: ver `claseDeFallo` en gate.mjs.
 import { claseDeFallo, huellaDeFallo, noConverge } from "./gate.mjs";
+// El texto ajeno entra al prompt marcado como dato: ver prompt.mjs.
+import { comoDato, recorteQueAvisa } from "./prompt.mjs";
 import { comandosPermitidos } from "./wiring.mjs";
 
 const TIER_POR_DEFECTO = { model: null, effort: "high", gate: "full", review: true, fanout: false };
@@ -292,7 +294,7 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
             return;
           }
           const fix = await fase("GREEN", run, taskId, politica, deps, {
-            extra: `Hay que resolver esto antes de seguir:\n${t.lastFailure}`,
+            extra: `Hay que resolver esto antes de seguir:\n${comoDato(t.lastFailure, "el fallo pendiente")}`,
           });
           if (await cortoPorPresupuesto(fix, itemId, taskId, deps)) return;
           clearLastFailure(loadRun(itemId, { home }), taskId, { home });
@@ -386,7 +388,11 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
           }
           // No se reintenta el gate a secas: se le devuelve el fallo al modelo
           // para que lo arregle. Volver a correr lo mismo daria lo mismo.
-          const fix = await fase("GREEN", run, taskId, politica, deps, { extra: `El gate fallo:\n${g.output}` });
+          // La salida del gate la escribio una herramienta que repite lo que
+          // escribio otra persona: entra marcada como dato.
+          const fix = await fase("GREEN", run, taskId, politica, deps, {
+            extra: `El gate fallo:\n${comoDato(g.output, "salida del gate")}`,
+          });
           if (await cortoPorPresupuesto(fix, itemId, taskId, deps)) return;
         }
         break;
@@ -572,8 +578,14 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
   // jerarquia producen hallazgos contradictorios y nadie con autoridad para
   // resolverlos — y el motor lee UN marcador, asi que cual gana dependeria de
   // cual texto se leyo primero.
+  // Cada informe es texto que produjo OTRA invocacion mirando un diff que
+  // escribio alguien mas. Que la sintesis lo lea como dato y no como
+  // instruccion es la diferencia entre juzgar los informes y obedecerlos.
   const resumen = informes
-    .map(({ lente, r }) => `### lente: ${lente}\nveredicto: ${r.findings || "sin veredicto"}\n\n${String(r.text || "").slice(0, 4000)}`)
+    .map(({ lente, r }) => `### lente: ${lente}\nveredicto: ${r.findings || "sin veredicto"}\n\n` +
+      // Recorte que AVISA: un slice pelado dejaba a la sintesis juzgando con
+      // menos de lo que hubo, sin que nada lo dijera.
+      comoDato(recorteQueAvisa(String(r.text || ""), 4000), `informe de la lente ${lente}`))
     .join("\n\n");
 
   return deps.runPhase({

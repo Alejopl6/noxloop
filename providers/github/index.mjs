@@ -210,15 +210,54 @@ async function paginar(ctx, ruta, extra = "") {
   const maxPaginas = ctx?.options?.maxPages ?? 20;
   const prefijo = extra ? `${extra}&` : "";
   const todos = [];
+  let ultimoLote = 0;
+  let paginas = 0;
   for (let pagina = 1; pagina <= maxPaginas; pagina++) {
     const completa = `${ruta}?${prefijo}per_page=${porPagina}&page=${pagina}`;
     const r = await pedir(ctx, completa);
     const lote = await leer(r, "GET", completa);
     if (!Array.isArray(lote) || lote.length === 0) break;
+    paginas = pagina;
+    ultimoLote = lote.length;
     todos.push(...lote);
     if (lote.length < porPagina) break;
   }
+
+  // NINGUN TOPE ACOTA EN SILENCIO. Ver `paginacionIncompleta`.
+  const corte = paginacionIncompleta({ paginas, maxPaginas, ultimoLote, porPagina });
+  if (corte.incompleta) ctx?.log?.warn?.(`${ruta}: ${corte.aviso}`);
+
   return todos;
+}
+
+/**
+ * Si la paginacion corto por el tope y quedaron cosas sin traer.
+ *
+ * EL FALLO QUE CIERRA. El bucle se detenia al llegar a `maxPages` sin decir
+ * nada. Si la ultima pagina vino LLENA, hay mas del otro lado y esos tickets
+ * simplemente no existen para el motor: la bandeja se ve completa y no lo esta.
+ * Es el peor de los recortes silenciosos, porque lo que se pierde es trabajo.
+ *
+ * Una ultima pagina CORTA es el final de verdad, no un recorte.
+ *
+ * El parametro NO se llama `o`: el test que verifica que toda opcion leida este
+ * descrita en el esquema del proveedor busca `o.<algo>`, y un parametro con ese
+ * nombre le hace ver opciones donde no las hay. El heuristico es tosco a
+ * proposito —atrapa el caso que importa— y esto es lo que cuesta.
+ *
+ * @param {{paginas: number, maxPaginas: number, ultimoLote: number, porPagina: number}} corte
+ * @returns {{incompleta: boolean, aviso?: string}}
+ */
+export function paginacionIncompleta(corte) {
+  if (corte.paginas < corte.maxPaginas) return { incompleta: false };
+  if (corte.ultimoLote < corte.porPagina) return { incompleta: false };
+  return {
+    incompleta: true,
+    aviso:
+      `se llego al tope de ${corte.maxPaginas} paginas (options.maxPages) con la ultima pagina llena: ` +
+      `hay mas resultados que no se trajeron. Lo que sigue esta INCOMPLETO. ` +
+      `Subi \`maxPages\` o acota la consulta.`,
+  };
 }
 
 /**

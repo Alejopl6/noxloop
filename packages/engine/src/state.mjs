@@ -53,6 +53,16 @@ const ADELANTE = {
 };
 const VUELVEN_A_GREEN = ["gated", "reviewed", "queued"];
 
+/**
+ * Recorta dejando dicho que se recorto. Un recorte silencioso hace pensar que
+ * eso fue todo lo que salio, que es una afirmacion distinta y falsa.
+ */
+function recortar(texto, max) {
+  const t = String(texto ?? "");
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n... [recortado: ${t.length - max} caracteres mas]`;
+}
+
 export class GuardError extends Error {
   constructor(mensaje) {
     super(mensaje);
@@ -159,6 +169,7 @@ export function createRun(plan, opts) {
       sessionId: null,
       providerItemId: null,
       gateEvidence: null,
+      redEvidence: null,
       addedTargets: [],
       lastFailure: null,
       gateFingerprint: null,
@@ -279,6 +290,24 @@ function transicionar(run, taskId, next, opts) {
       );
     }
     t.redVerified = true;
+    // Y LA CORRIDA SE GUARDA, no solo el booleano.
+    //
+    // Antes esta evidencia se validaba —sin exit code no pasa, con exit code 0
+    // tampoco— y despues se tiraba: el PR afirmaba que el rojo se vio y no lo
+    // podia mostrar, porque el motor no lo tenia. Quien revisa quedaba obligado
+    // a creerle al estado, y el estado es confiable justamente porque hay
+    // evidencia detras. Es la contraparte del gate, que si se muestra.
+    //
+    // La salida se recorta aca y no al renderizar: el estado en disco lo lee
+    // todo el motor, y una salida de megabytes lo paga cada lectura.
+    t.redEvidence = {
+      command: ev.command || null,
+      exitCode: ev.exitCode,
+      durationMs: ev.durationMs ?? null,
+      timedOut: Boolean(ev.timedOut),
+      ranAt: ev.ranAt || new Date().toISOString(),
+      output: recortar(ev.output, 4000),
+    };
   }
 
   if (next === "gated") {

@@ -16,6 +16,7 @@
 // mando a revisar el lugar equivocado. Aca se reporta lo que se observo.
 
 import { readFileSync, existsSync } from "node:fs";
+import { recorteQueAvisa } from "./prompt.mjs";
 import { join } from "node:path";
 import { validatePlan } from "./plan.mjs";
 import { createRun, loadRun, setTaskFields } from "./state.mjs";
@@ -102,7 +103,10 @@ export async function planItem(itemId, deps) {
       ok: false,
       reason:
         `la fase de planificacion termino sin dejar el plan en ${archivo}. ` +
-        `Lo que dijo: ${String(r?.text || "(nada)").slice(0, 500)}`,
+        // El texto que sigue es el DIAGNOSTICO de por que no se pudo
+        // planificar. Recortarlo en silencio deja a una persona leyendo media
+        // causa sin saber que era media.
+        `Lo que dijo: ${recorteQueAvisa(String(r?.text || "(nada)"), 500)}`,
     };
   }
 
