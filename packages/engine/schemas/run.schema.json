@@ -74,6 +74,7 @@
           "branch": { "type": ["string", "null"] },
           "sessionId": { "type": ["string", "null"] },
           "providerItemId": { "type": ["string", "null"] },
+          "redEvidence": { "type": ["object", "null"], "description": "La corrida del test que fallo antes del cambio. Va al cuerpo del pull request: sin ella, el PR afirma el rojo y no lo puede mostrar." },
           "gateEvidence": {
             "type": ["object", "null"],
             "description": "Sin este objeto no hay veredicto. La transicion a gated lo exige con exitCode 0.",
@@ -96,6 +97,7 @@
             }
           },
           "lastFailure": { "type": ["string", "null"] },
+          "gateFingerprint": { "type": ["string", "null"], "description": "La huella del ultimo fallo del gate, sin lo que cambia entre corridas. Sirve para cortar cuando dos intentos producen el mismo fallo." },
           "integratedAt": { "type": ["string", "null"], "format": "date-time" }
         }
       }

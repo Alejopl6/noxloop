@@ -26,6 +26,10 @@ import { drain, syncItemBranch } from "./merge-queue.mjs";
 import { acquire } from "./lock.mjs";
 import * as worktreeMod from "./worktree.mjs";
 import { commitPaths, mensajeDeFase } from "./vcs.mjs";
+// De quien es el fallo del gate: ver `claseDeFallo` en gate.mjs.
+import { claseDeFallo, huellaDeFallo, noConverge } from "./gate.mjs";
+// El texto ajeno entra al prompt marcado como dato: ver prompt.mjs.
+import { comoDato, recorteQueAvisa } from "./prompt.mjs";
 import { comandosPermitidos } from "./wiring.mjs";
 
 const TIER_POR_DEFECTO = { model: null, effort: "high", gate: "full", review: true, fanout: false };
@@ -290,7 +294,7 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
             return;
           }
           const fix = await fase("GREEN", run, taskId, politica, deps, {
-            extra: `Hay que resolver esto antes de seguir:\n${t.lastFailure}`,
+            extra: `Hay que resolver esto antes de seguir:\n${comoDato(t.lastFailure, "el fallo pendiente")}`,
           });
           if (await cortoPorPresupuesto(fix, itemId, taskId, deps)) return;
           clearLastFailure(loadRun(itemId, { home }), taskId, { home });
@@ -308,18 +312,87 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
           const ci = commitPaths(t.worktree, t.targetFiles, mensajeDeFase("GREEN", t, run.item));
           if (ci.committed) bitacora.info(`commit de la implementacion: ${ci.sha.slice(0, 7)}`);
         } else {
+          // DE QUIEN ES EL FALLO. Los tres se arreglan distinto y antes los tres
+          // consumian los mismos tres intentos del bucle:
+          //
+          //   - ENTORNO: falta una herramienta, no hay red. Ningun reintento lo
+          //     arregla, y se pagaban tres invocaciones del modelo para llegar
+          //     al mismo lugar, con un diagnostico final que decia "el gate no
+          //     paso" cuando lo que pasa es que la maquina no puede correrlo.
+          //   - BASE: ya estaba roto antes de esta tarea. Gastarle el
+          //     presupuesto es como se pierde una tarea que estaba bien, y si el
+          //     modelo "lo arregla" mete en su diff un cambio que no es suyo.
+          //   - CODIGO: el unico donde reintentar sirve.
+          //
+          // La base es el worktree de integracion del item: es exactamente
+          // sobre lo que la tarea ramifico, asi que responde la pregunta que
+          // importa —"¿ya estaba roto antes de mi?"— y no una parecida.
+          const destinoBase = deps.resolve(t.repo);
+          const clase = claseDeFallo(g, destinoBase?.integrationPath
+            ? () => deps.runGate(t.repo, destinoBase.integrationPath, config, { kind: politica.gate })
+            : null);
+
+          if (clase.clase === "entorno") {
+            transition(run, taskId, "blocked", {
+              home,
+              failure:
+                `el gate no pudo correr por un problema del ENTORNO, no del codigo: ${clase.porque}\n\n` +
+                `Salida del gate (exit ${g.exitCode}):\n${g.output}`,
+            });
+            bitacora.error(`gate: fallo de entorno — ${clase.porque}`);
+            return;
+          }
+
+          if (clase.clase === "base") {
+            transition(run, taskId, "blocked", {
+              home,
+              failure:
+                `el gate ya fallaba sobre la BASE, antes de esta tarea: el fallo no es suyo, y arreglarlo desde ` +
+                `aca meteria en su diff un cambio que no le corresponde.\n\n` +
+                `Sobre la base (exit ${clase.base?.exitCode}):\n${clase.base?.output}\n\n` +
+                `Sobre la tarea (exit ${g.exitCode}):\n${g.output}`,
+            });
+            bitacora.error("gate: el fallo ya estaba en la base — se bloquea sin gastarle el presupuesto a la tarea");
+            return;
+          }
+
+          // NO CONVERGE: el mismo fallo, textualmente, que el intento anterior.
+          //
+          // El presupuesto acota cuantas veces se intenta; no distingue "cada
+          // vez estuvo mas cerca" de "dos veces lo mismo". Si el modelo leyo el
+          // fallo, cambio algo, y el fallo salio identico, lo que cambio no toca
+          // la causa: el intento que queda cuesta lo mismo y termina igual. Y el
+          // diagnostico mejora — "agoto sus tres intentos" manda a mirar el
+          // presupuesto, "produjo el mismo fallo dos veces" manda a mirar el fallo.
+          const huella = huellaDeFallo(g.output);
+          const nc = noConverge(t.gateFingerprint || null, huella);
+          if (nc.corta) {
+            transition(run, taskId, "blocked", {
+              home,
+              failure: `el gate no converge: ${nc.porque}.\n\nEl fallo, las dos veces (exit ${g.exitCode}):\n${g.output}`,
+            });
+            bitacora.error("gate: dos intentos, el mismo fallo — se corta sin gastar el que queda");
+            return;
+          }
+          setTaskFields(loadRun(itemId, { home }), taskId, { gateFingerprint: huella }, { home });
+
           const b = bump(run, taskId, "gate", { home, budgets });
-          bitacora.warn(`gate rojo (exit ${g.exitCode}) — intento ${b.count}/${b.budget}`);
+          const deQuien = clase.clase === "indeterminada" ? " (no se pudo comparar contra la base)" : "";
+          bitacora.warn(`gate rojo (exit ${g.exitCode})${deQuien} — intento ${b.count}/${b.budget}`);
           if (b.exhausted) {
             transition(run, taskId, "blocked", {
               home,
-              failure: `el gate no paso (exit ${g.exitCode}${g.timedOut ? ", TIMEOUT" : ""}):\n${g.output}`,
+              failure: `el gate no paso (exit ${g.exitCode}${g.timedOut ? ", TIMEOUT" : ""})${clase.clase === "indeterminada" ? `; ${clase.porque}` : ""}:\n${g.output}`,
             });
             return;
           }
           // No se reintenta el gate a secas: se le devuelve el fallo al modelo
           // para que lo arregle. Volver a correr lo mismo daria lo mismo.
-          const fix = await fase("GREEN", run, taskId, politica, deps, { extra: `El gate fallo:\n${g.output}` });
+          // La salida del gate la escribio una herramienta que repite lo que
+          // escribio otra persona: entra marcada como dato.
+          const fix = await fase("GREEN", run, taskId, politica, deps, {
+            extra: `El gate fallo:\n${comoDato(g.output, "salida del gate")}`,
+          });
           if (await cortoPorPresupuesto(fix, itemId, taskId, deps)) return;
         }
         break;
@@ -505,8 +578,14 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
   // jerarquia producen hallazgos contradictorios y nadie con autoridad para
   // resolverlos — y el motor lee UN marcador, asi que cual gana dependeria de
   // cual texto se leyo primero.
+  // Cada informe es texto que produjo OTRA invocacion mirando un diff que
+  // escribio alguien mas. Que la sintesis lo lea como dato y no como
+  // instruccion es la diferencia entre juzgar los informes y obedecerlos.
   const resumen = informes
-    .map(({ lente, r }) => `### lente: ${lente}\nveredicto: ${r.findings || "sin veredicto"}\n\n${String(r.text || "").slice(0, 4000)}`)
+    .map(({ lente, r }) => `### lente: ${lente}\nveredicto: ${r.findings || "sin veredicto"}\n\n` +
+      // Recorte que AVISA: un slice pelado dejaba a la sintesis juzgando con
+      // menos de lo que hubo, sin que nada lo dijera.
+      comoDato(recorteQueAvisa(String(r.text || ""), 4000), `informe de la lente ${lente}`))
     .join("\n\n");
 
   return deps.runPhase({

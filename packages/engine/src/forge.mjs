@@ -26,6 +26,17 @@ export function prTitle(run) {
   return base.length <= 100 ? base : `${base.slice(0, 97)}...`;
 }
 
+/**
+ * Recorta para el cuerpo del PR, diciendo que recorto. Un recorte silencioso
+ * hace pensar que eso fue todo lo que salio.
+ */
+function recorte(texto, max) {
+  const t = String(texto ?? "").trim();
+  if (!t) return "(sin salida)";
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n... [truncado: ${t.length - max} caracteres mas]`;
+}
+
 function bloqueDeTarea(t) {
   const lineas = [`### ${t.id} — ${t.title}`, "", `**Criterio**: ${t.acceptance}`];
 
@@ -41,6 +52,34 @@ function bloqueDeTarea(t) {
     );
   } else {
     lineas.push("", "**Gate**: sin evidencia registrada.");
+  }
+
+  // EL ROJO, CON SU CORRIDA. Antes el PR decia "exit 0" del gate y "creeme" del
+  // rojo: la evidencia se validaba al transicionar y despues se tiraba. Quien
+  // revisa quedaba obligado a creerle al estado, y el estado vale justamente
+  // porque hay una corrida detras.
+  //
+  // A una tarea que declaro no tener tests no se le reclama: ese caso ya se
+  // explica abajo, con su motivo.
+  if (t.testFiles?.length) {
+    if (t.redEvidence) {
+      const rv = t.redEvidence;
+      lineas.push(
+        "",
+        "**Rojo** (el test corrido ANTES del cambio):",
+        "```",
+        `$ ${rv.command || "(comando no registrado)"}`,
+        `exit ${rv.exitCode}${rv.timedOut ? " (TIMEOUT)" : ""}  ·  ${Math.round((rv.durationMs || 0) / 1000)}s`,
+        "",
+        recorte(rv.output, 1200),
+        "```",
+      );
+    } else {
+      // Omitirlo seria indistinguible de "no habia nada que mostrar", y son
+      // cosas distintas: una tarea vieja sin evidencia y una que nunca vio el
+      // rojo se verian igual.
+      lineas.push("", "**Rojo**: sin evidencia registrada de la corrida.");
+    }
   }
 
   if (!t.testFiles?.length) {

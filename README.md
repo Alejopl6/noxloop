@@ -155,7 +155,7 @@ persona no eligió.
 ## Verificación
 
 ```bash
-npm test          # 786 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
+npm test          # 849 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
 npm run typecheck # tsc --checkJs, sin paso de build
 npm run validate  # la configuración de ejemplo contra su esquema
 ```

@@ -181,9 +181,25 @@ test("una dependencia dura serializa: la segunda no arranca hasta que la primera
 test("el gate rojo consume presupuesto y la tarea termina bloqueada con la salida real", async () => {
   const esc = escenario();
   const registro = [];
+  let intentos = 0;
   await runItem("1", depsBase(esc, registro, {
-    runGate: () => ({ ok: false, exitCode: 1, command: "npm test", durationMs: 10,
-                      output: "FAIL test/x > el caso limite", timedOut: false, gaps: [] }),
+    // El gate falla en el worktree de la TAREA y pasa sobre la base: eso es un
+    // fallo de codigo, que es lo que este test afirma. Antes este falso
+    // devolvia rojo sin mirar el worktree, asi que describia a la vez un fallo
+    // de codigo y uno de base — y desde que el driver los distingue, esa
+    // ambiguedad lo volvia un test de otra cosa. Y cada intento falla DISTINTO. Es lo que este test quiere decir —"consume
+    // su presupuesto"— y desde que el driver corta por no convergencia, un
+    // fallo identico dos veces se corta antes: eso tiene su propio test en
+    // `gate-clasificado.test.mjs`, y mezclarlo aca haria que este afirme dos
+    // cosas y no pruebe ninguna.
+    runGate: (_repo, cwd) => {
+      if (cwd === esc.integracion) {
+        return { ok: true, exitCode: 0, command: "npm test", durationMs: 10, output: "", timedOut: false, gaps: [] };
+      }
+      intentos++;
+      return { ok: false, exitCode: 1, command: "npm test", durationMs: 10,
+               output: `FAIL test/x > el caso limite\nTests: ${10 - intentos} failed`, timedOut: false, gaps: [] };
+    },
   }));
   const run = loadRun("1", { home: esc.home });
   assert.equal(run.tasks[0].status, "blocked");
