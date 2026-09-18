@@ -66,8 +66,24 @@ export function capabilities() {
     // al crear el hijo: cycleId, projectId, projectMilestoneId, assigneeId,
     // estimate. Declararlo true es honesto porque `createChild` los pasa.
     boardFields: true,
+    identityAssignee: false, // assignee: { isMe: { eq: true } } es del token; pedir otro exige otra consulta
   };
 }
+
+/**
+ * Lo que este proveedor acepta en `provider.options`. Ver T114 y el
+ * `optionsSchema` de los otros dos: una clave mal escrita tiene que fallar al
+ * cargar, no a mitad de un recorrido.
+ */
+export const optionsSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    teamId: { type: "string", description: "El UUID del equipo donde se crean las hijas." },
+    teamKey: { type: "string", description: "La clave corta del equipo (ENG), para resolver identificadores humanos." },
+    acceptanceHeading: { type: "string", description: "El encabezado de la descripcion donde viven los criterios." },
+  },
+};
 
 /**
  * El mapa de tipos nativos a niveles canonicos, con `default` EXPLICITO.

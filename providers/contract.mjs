@@ -21,6 +21,11 @@ export const CAPABILITY_KEYS = [
   "searchAssigned",
   "searchMentioned",
   "boardFields",
+  // Si el gestor puede buscar por un responsable DECLARADO y no solo por el
+  // dueño del token. Azure DevOps puede (WIQL acepta cualquier valor en
+  // System.AssignedTo); GitHub y Linear no, y sin esta capacidad declarar un
+  // responsable se ignoraba en silencio.
+  "identityAssignee",
 ];
 
 export const CANONICAL_STATES = ["todo", "in_progress", "blocked", "in_review", "done"];
@@ -40,6 +45,11 @@ export const CAPABILITY_FUNCTIONS = {
   searchAssigned: "searchInbox",
   searchMentioned: "searchInbox",
   boardFields: null, // no es una funcion: es un campo del Item
+  // NO tiene funcion propia, igual que `boardFields`: no es una operacion
+  // nueva, es COMO se llama a `searchInbox`. Mapearla a `searchInbox` obligaba
+  // a exportarla a un gestor con los dos disparos en false — que es legitimo:
+  // se usa a mano, con el id del ticket. Lo cacho el test de esa fila.
+  identityAssignee: null,
 };
 
 export class NotSupportedError extends Error {

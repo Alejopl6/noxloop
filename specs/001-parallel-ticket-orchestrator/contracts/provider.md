@@ -56,6 +56,7 @@ credenciales: la suite de contrato le pasa un `ctx` falso.
   searchAssigned:  boolean,  // disparo por asignación
   searchMentioned: boolean,  // disparo por mención
   boardFields:     boolean,  // iteración/área/responsable heredables
+  identityAssignee: boolean, // puede buscar por un responsable declarado, no solo el del token
 }
 ```
 
@@ -73,6 +74,7 @@ sugerencia: cada fila es un test.
 | `labels` | Se omiten las etiquetas de progreso. |
 | `searchAssigned` / `searchMentioned` | El disparo correspondiente se desactiva; si los dos están en `false`, el modo daemon no arranca y lo dice al validar. |
 | `boardFields` | Las tareas hijas no heredan campos de tablero. Se advierte una vez por recorrido. |
+| `identityAssignee` | La bandeja busca por el dueño del token y no por el `identity.assignee` declarado. Se advierte al revisar la bandeja, nombrando el responsable que se ignora: si el trabajo se asigna a esa cuenta y no a la del token, la bandeja va a estar vacía. |
 
 ## Estados canónicos
 

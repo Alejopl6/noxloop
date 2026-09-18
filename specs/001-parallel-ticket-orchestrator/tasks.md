@@ -309,7 +309,7 @@ fallos reales, que arregle yo:
 Ninguno es un olvido. Se declaran porque un hueco dicho vale mas que un verde
 inventado.
 
-- [ ] T114 **`provider.options` no se valida.** En `config.schema.json` es
+- [x] T114 **`provider.options` se valida** contra el `optionsSchema` que declara cada proveedor. En `config.schema.json` es
   `{"type": "object"}` sin `properties` ni `additionalProperties`, asi que nada
   de lo que un proveedor real necesita ahi se describe ni se comprueba, y un
   proveedor no tiene forma de declarar el esquema de sus opciones. Una opcion
@@ -317,17 +317,21 @@ inventado.
   mitad de un recorrido — la clase de fallo que la decision D9 de `research.md`
   dice que validar vino a matar. El ejemplo lo esquiva porque no declara
   `options`, asi que el hueco no se ve desde la puerta de entrada. El arreglo
-  natural es un `optionsSchema` opcional en el contrato de proveedor; no lo
-  construi porque ninguno de los tres lo usaria todavia, y media solucion aca es
-  peor que el hueco declarado
-- [ ] T115 **`doctor` no puede probar su propia rama degradada.**
+  natural era un `optionsSchema` opcional en el contrato de proveedor, y se
+  construyo: la premisa de que "ninguno de los tres lo usaria" era falsa —
+  azure-devops EXIGE organization, project y team; github usa owner y repo;
+  linear teamId—. Los tres lo declaran, con `additionalProperties: false`, y hay
+  un test que falla si el codigo lee una opcion que el esquema no describe
+- [x] T115 **`doctor` prueba su rama degradada** con el detector inyectado.
   `sdkDisponible()` resuelve el paquete con `createRequire` y no acepta
   inyeccion, y como el SDK es `optionalDependency` un `npm ci` normal lo
   instala. O sea: el camino que el README promete —"si falta, se degrada a
   invocar el CLI y lo dice"— casi nunca se recorre en los tests. El test que
-  existe es una bicondicional (ausente ⇔ hay aviso, y en ningun caso un
-  problema), que es lo mas que se puede afirmar sin un subproceso con un
-  `node_modules` falso
+  existia era una bicondicional (ausente ⇔ hay aviso), que no prueba ni el
+  mensaje ni que sea aviso y no problema. Ahora `doctor` acepta `sdkDisponible`
+  por `opts` —la misma forma que ya usa para el reloj, los locks y la cola— con
+  el detector de produccion como default, y hay un test que verifica que doctor
+  y el runner coincidan: si difieren, uno de los dos miente
 - [ ] T116 **El merge local en dos tiempos** (`git checkout main` y despues
   `git merge task/x`) no lo frena el hook. No se cerro porque bloquear
   `checkout` es el sobre-bloqueo que este hook ya cometio una vez, y la salida a

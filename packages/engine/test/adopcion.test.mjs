@@ -378,7 +378,7 @@ test("T073 una variable de entorno que el proveedor necesita se reporta por su n
     capabilities: () => ({
       children: false, dependencies: false, createChild: false, setState: false,
       comment: false, linkUrl: false, labels: false, searchAssigned: false,
-      searchMentioned: false, boardFields: false,
+      searchMentioned: false, boardFields: false, identityAssignee: false,
     }),
   };
   const r = await doctor(cfg, { env: { TOKEN_A: "presente" }, loadProvider: async () => proveedor });

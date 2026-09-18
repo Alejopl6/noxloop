@@ -68,8 +68,40 @@ export function capabilities() {
     searchAssigned: true,
     searchMentioned: true,
     boardFields: false,      // Projects v2 es solo GraphQL
+    identityAssignee: false, // /issues?filter=assigned es del dueño del token y no se puede cambiar
   };
 }
+
+/**
+ * Lo que este proveedor acepta en `provider.options`, y lo unico que acepta.
+ *
+ * POR QUE `additionalProperties: false` (T114). Una clave mal escrita
+ * —`owner` por `onwer`— pasaba la validacion entera y fallaba a mitad de un
+ * recorrido, con el modelo ya pagado. Cerrado aca significa que el error sale
+ * al cargar, nombrando la clave que sobra y la que falta.
+ *
+ * `owner` y `repo` no son `required` a proposito: sin ellos el proveedor sigue
+ * funcionando con los ids completos, y `searchInbox` lo dice al degradar. Lo
+ * que no puede pasar es una clave que nadie lee.
+ */
+export const optionsSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    owner: { type: "string", description: "La organizacion o persona dueña del repositorio." },
+    repo: { type: "string", description: "El repositorio del que sale la bandeja." },
+    apiBase: { type: "string", description: "Para GitHub Enterprise. Por omision, la API publica." },
+    webBase: { type: "string", description: "La base de las URLs que se muestran, si difiere de la API." },
+    apiVersion: { type: "string", description: "El header X-GitHub-Api-Version que se pinnea." },
+    perPage: { type: "integer", minimum: 1, maximum: 100 },
+    maxPages: { type: "integer", minimum: 1 },
+    childType: { type: "string", description: "El tipo que se le pone a las tareas hijas." },
+    childLabels: { type: "array", items: { type: "string" }, description: "Etiquetas que llevan las hijas creadas." },
+    typeMap: { type: "object", description: "De tipo nativo a nivel canonico." },
+    typeMapById: { type: "object", description: "Igual, pero por id de tipo." },
+    stateReasonMap: { type: "object", description: "De estado canonico a state_reason de GitHub." },
+  },
+};
 
 /**
  * La version de la API se pinnea, y no es cosmetico: omitir el header cae en

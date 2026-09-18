@@ -65,6 +65,7 @@ const FILAS_CUBIERTAS = [
   "searchAssigned",
   "searchMentioned",
   "boardFields",
+  "identityAssignee",
 ];
 
 const CONTRATO = new URL("../specs/001-parallel-ticket-orchestrator/contracts/provider.md", import.meta.url);
@@ -491,4 +492,58 @@ test("fila boardFields: en true la hija hereda los del padre", async () => {
   // proyecto y no aparece en ningun taskboard. Nadie la ve, y el recorrido
   // parece no haber creado nada.
   assert.deepEqual(hija.boardFields, { iteration: "Sprint 7", area: "Plataforma" });
+});
+
+// ---------------------------------------------------- fila identityAssignee
+//
+// La fila dice: con la capacidad en false la bandeja busca por el dueño del
+// token y no por el `identity.assignee` declarado, y se advierte nombrando el
+// responsable que se ignora.
+//
+// LA MITAD QUE SE PRUEBA ACA es que la superficie alcanza para decidirlo sin
+// adivinar: la capacidad es consultable y el aviso sale de `revisarBandeja`. La
+// otra mitad —que Azure DevOps de verdad mete el responsable en su WIQL— vive
+// en `providers/azure-devops/identidad.test.mjs`, que es donde esta el WIQL.
+
+import { revisarBandeja } from "../packages/engine/src/inbox.mjs";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const homeDesechable = () => mkdtempSync(join(tmpdir(), "nox-degr-"));
+
+test("fila identityAssignee: en false, declarar un responsable AVISA en vez de ignorarse callado", async () => {
+  const { mod, fixtures } = sinCapacidad("identityAssignee");
+  const r = await revisarBandeja(
+    { identity: { assignee: "cuenta-de-servicio@x.test" } },
+    {
+      provider: mod,
+      providerCtx: { ...fixtures.ctx, identity: { assignee: "cuenta-de-servicio@x.test" } },
+      home: homeDesechable(),
+    },
+  );
+
+  const aviso = r.degradaciones.find((d) => /identity\.assignee/.test(d));
+  assert.ok(aviso, "la degradacion tiene que salir: sin aviso, lo declarado se ignora en silencio");
+  assert.match(aviso, /cuenta-de-servicio@x\.test/, "y nombrar el responsable que se ignora");
+  assert.match(aviso, /vacia|dueño del token/, "y decir la consecuencia, que es una bandeja vacia");
+});
+
+test("fila identityAssignee: en true no hay aviso, porque no hay degradacion", async () => {
+  const { mod, fixtures } = gestorFalso();
+  const r = await revisarBandeja(
+    { identity: { assignee: "cuenta-de-servicio@x.test" } },
+    {
+      provider: mod,
+      providerCtx: { ...fixtures.ctx, identity: { assignee: "cuenta-de-servicio@x.test" } },
+      home: homeDesechable(),
+    },
+  );
+  assert.equal(r.degradaciones.filter((d) => /identity/.test(d)).length, 0);
+});
+
+test("fila identityAssignee: la capacidad se puede consultar sin llamar a searchInbox", () => {
+  const { mod, llamadas } = sinCapacidad("identityAssignee");
+  assert.equal(mod.capabilities().identityAssignee, false);
+  assert.equal(llamadas.searchInbox, 0, "decidir el camino degradado no puede costar un viaje a la API");
 });

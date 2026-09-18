@@ -11,6 +11,8 @@
     "milestoneId": { "type": ["string", "null"] },
     "createdAt": { "type": "string", "format": "date-time" },
     "updatedAt": { "type": "string", "format": "date-time" },
+    "outOfScope": { "type": "array", "items": { "type": "string" }, "description": "Lo que el plan dejo afuera a proposito. Va al cuerpo del pull request." },
+    "serializedBecause": { "type": ["string", "null"], "description": "Si el orden fue serial por una limitacion del gestor, aca queda el motivo. Va al pull request." },
     "item": {
       "type": "object",
       "required": ["id", "title", "level", "url", "provider"],

@@ -1,5 +1,5 @@
 {
-  "description": "Los hooks de noxloop. Inactivos mientras no haya una tarea activa: si el orquestador no esta corriendo, permiten todo. Ante la duda, permitir — un hook que bloquea por un error propio deja a una persona sin poder trabajar, que es peor que el problema que evitaba.",
+  "description": "Harness de noxloop: fuerza TDD, alcance y el limite de autonomia. Inactivo mientras no haya un recorrido activo. Si hay recorrido y el motor no se puede cargar, BLOQUEA en vez de permitir: una guarda ausente que permite es el verde inventado aplicado a los hooks.",
   "hooks": {
     "PreToolUse": [
       {
@@ -7,12 +7,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/tdd-order-guard.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" tdd-order-guard",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/task-scope-guard.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" task-scope-guard",
             "timeout": 10
           }
         ]
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/no-prod-writes.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" no-prod-writes",
             "timeout": 10
           }
         ]
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/state-checkpoint.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" state-checkpoint",
             "timeout": 15
           }
         ]
@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../engine/src/hooks/state-checkpoint.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" state-checkpoint",
             "timeout": 15
           }
         ]

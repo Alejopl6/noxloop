@@ -17,6 +17,7 @@ import { runPhase, sdkAvailable, DEFAULT_ALLOWED_TOOLS } from "./runner.mjs";
 import { createPR } from "./forge.mjs";
 import * as worktree from "./worktree.mjs";
 import { createLogger } from "./log.mjs";
+import { validate } from "./schema.mjs";
 
 /**
  * Carga el proveedor declarado y lo valida ANTES de usarlo.
@@ -35,6 +36,41 @@ export async function loadProvider(config, opts = {}) {
     );
   }
 
+  // LAS OPCIONES DEL PROVEEDOR, CONTRA EL ESQUEMA QUE EL PROVEEDOR DECLARA.
+  //
+  // EL FALLO QUE CIERRA (T114): en `config.schema.json`, `provider.options` es
+  // `{"type":"object"}` sin `properties`, asi que nada de lo que un gestor
+  // necesita ahi se comprobaba. Una opcion mal escrita —`organizacion` por
+  // `organization`— pasaba la validacion entera y fallaba a mitad de un
+  // recorrido, con el modelo ya pagado. Es la clase de fallo que D9 dice que
+  // validar vino a matar.
+  //
+  // EL ESQUEMA LO TRAE EL PROVEEDOR porque el motor no sabe que necesita un
+  // gestor. Si viviera en el esquema del motor, agregar un proveedor exigiria
+  // tocar el motor, y el principio VI dice lo contrario.
+  //
+  // Se valida SOLO lo que escribio una persona: `stateMap` y `levelMap` los
+  // agrega el motor mas abajo, y juzgarlos contra un esquema con
+  // `additionalProperties: false` rechazaria una configuracion correcta.
+  if (mod.optionsSchema != null) {
+    if (typeof mod.optionsSchema !== "object" || Array.isArray(mod.optionsSchema)) {
+      throw new Error(
+        `el proveedor "${config.provider.name}" exporta un \`optionsSchema\` que no es un objeto ` +
+        `(llego ${Array.isArray(mod.optionsSchema) ? "una lista" : typeof mod.optionsSchema}). ` +
+        `Un esquema invalido no puede degradarse a "no valida nada": seria peor que no declararlo.`,
+      );
+    }
+    const problemas = validate(mod.optionsSchema, config.provider.options || {});
+    if (problemas.length) {
+      throw new Error(
+        `las opciones del proveedor "${config.provider.name}" no validan contra su propio esquema:\n  - ` +
+        problemas.join("\n  - ") +
+        `\n\nSe comprueba al cargar y no a mitad del recorrido a proposito: una opcion mal escrita que ` +
+        `revienta en la fase GREEN ya gasto el modelo.`,
+      );
+    }
+  }
+
   for (const nombre of mod.requiredEnv || []) {
     if (!env[nombre]) {
       throw new Error(`falta la variable de entorno ${nombre}, que el proveedor "${config.provider.name}" necesita`);
@@ -45,6 +81,19 @@ export async function loadProvider(config, opts = {}) {
     // El proveedor NO lee la configuracion ni el entorno por su cuenta: recibe
     // lo que necesita. Es lo que lo hace probable sin red ni credenciales.
     options: { ...(config.provider.options || {}), stateMap: config.provider.stateMap, levelMap: config.provider.levelMap },
+    // QUIEN ES NOXLOOP EN EL GESTOR, y va aparte de `options` a proposito: es
+    // la misma pregunta para todo proveedor, no una opcion de uno.
+    //
+    // EL FALLO QUE CIERRA: `identity` estaba en el esquema, ADOPTING decia que
+    // lo consumen `inbox` y `daemon`, y el motor no lo leia en ningun lugar.
+    // Los proveedores usaban implicitamente el dueño del token, asi que
+    // declarar otro responsable no hacia nada — y no avisaba. Se llena siempre,
+    // con null explicito, para que un proveedor pueda distinguir "no declarado"
+    // de "no me llego".
+    identity: {
+      assignee: config.identity?.assignee ?? null,
+      mention: config.identity?.mention ?? null,
+    },
     env: Object.fromEntries((mod.requiredEnv || []).map((k) => [k, env[k]])),
     log: opts.log || createLogger({ home: config.home, quiet: true }),
     fetch: fetchConReintentos,

@@ -155,7 +155,7 @@ persona no eligió.
 ## Verificación
 
 ```bash
-npm test          # 689 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
+npm test          # 786 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
 npm run typecheck # tsc --checkJs, sin paso de build
 npm run validate  # la configuración de ejemplo contra su esquema
 ```
@@ -211,12 +211,19 @@ legítimos se bloquean **0**.
 
 ## Huecos declarados
 
-Tres, y ninguno es un olvido. Están en `tasks.md` como T114, T115 y T116:
-`provider.options` no se valida contra ningún esquema; `doctor` no puede probar
-su propia rama degradada porque la detección del SDK no acepta inyección; y el
-merge local en dos tiempos no lo frena el hook —deliberado: bloquear `checkout`
-es el sobre-bloqueo que ese hook ya cometió una vez, y la salida a lo compartido
-sí está cerrada—.
+Uno, y es deliberado. Está en `tasks.md` como T116: **el merge local en dos
+tiempos** (`git checkout main` y después `git merge task/x`) no lo frena el hook.
+No se cerró porque bloquear `checkout` es el sobre-bloqueo que ese hook ya
+cometió una vez, y la salida a lo compartido sí está cerrada: publicarlo exige un
+`git push origin main`, que está probado bloqueado.
+
+Los otros dos que estaban declarados se cerraron. T114: `provider.options` ahora
+se valida contra el `optionsSchema` que declara cada proveedor, con
+`additionalProperties: false` y un test que falla si el código lee una opción que
+el esquema no describe —la premisa de que "ninguno de los tres lo usaría" era
+falsa—. T115: `doctor` acepta el detector del SDK por `opts`, así que su rama
+degradada se prueba de verdad, y un test verifica que `doctor` y el runner
+coincidan sobre si el SDK está: si difieren, uno de los dos miente.
 
 Un hueco declarado vale más que un verde inventado. Es el principio II.
 
@@ -236,6 +243,9 @@ frío encontró once afirmaciones que el código no respaldaba.
 Cada arreglo lleva su medición en el comentario, y cada test que protege un
 mecanismo se verificó rompiendo el mecanismo a propósito para ver el rojo. Un
 test que pasa con el mecanismo roto no prueba nada.
+
+Lo que se tomó de otros harness —y lo que se descartó, con el motivo— está en
+[`docs/SINTESIS-ECC.md`](docs/SINTESIS-ECC.md).
 
 ## La constitución
 
