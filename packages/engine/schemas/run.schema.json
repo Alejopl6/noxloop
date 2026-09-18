@@ -96,6 +96,7 @@
             }
           },
           "lastFailure": { "type": ["string", "null"] },
+          "gateFingerprint": { "type": ["string", "null"], "description": "La huella del ultimo fallo del gate, sin lo que cambia entre corridas. Sirve para cortar cuando dos intentos producen el mismo fallo." },
           "integratedAt": { "type": ["string", "null"], "format": "date-time" }
         }
       }

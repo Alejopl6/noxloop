@@ -161,6 +161,7 @@ export function createRun(plan, opts) {
       gateEvidence: null,
       addedTargets: [],
       lastFailure: null,
+      gateFingerprint: null,
       integratedAt: null,
     })),
     spent: { usd: 0, calls: 0 },
@@ -421,7 +422,14 @@ export function setItemFields(run, fields, opts = {}) {
 }
 
 export function setTaskFields(run, taskId, fields, opts = {}) {
-  const PERMITIDOS = ["worktree", "branch", "sessionId", "providerItemId", "tier"];
+  // La lista es corta a proposito: lo que el driver puede escribir en una tarea
+  // desde afuera es plomeria (donde corre, con que sesion) y nunca el estado ni
+  // la evidencia, que solo se mueven por `transition`.
+  //
+  // `gateFingerprint` entra porque es diagnostico: la huella del ultimo fallo
+  // del gate, que sirve para cortar cuando dos intentos producen exactamente lo
+  // mismo. No decide si una tarea cumple.
+  const PERMITIDOS = ["worktree", "branch", "sessionId", "providerItemId", "tier", "gateFingerprint"];
   for (const k of Object.keys(fields)) {
     if (!PERMITIDOS.includes(k)) {
       throw new GuardError(`"${k}" no se puede escribir en una tarea desde afuera (permitidos: ${PERMITIDOS.join(", ")})`);
