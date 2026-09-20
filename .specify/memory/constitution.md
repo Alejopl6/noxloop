@@ -91,6 +91,75 @@ organización, repo, host o proyecto aparece en el código del motor.
 Es la condición para que esto sea instalable por alguien más, y la verificación
 es mecánica: un grep del motor buscando nombres propios tiene que volver vacío.
 
+### VIII. La interfaz lee; el motor y el servicio escriben
+
+La superficie visual —escritorio o web— no escribe estado. Ni archivos de run,
+ni el almacén, ni worktrees, ni archivos del proyecto. Toda mutación pasa por el
+servicio de control, que es el único escritor del almacén igual que `state.mjs`
+es el único escritor del estado del run.
+
+Con varias ventanas abiertas y una sesión de CLI en marcha, siguen siendo un
+escritor y N lectores.
+
+El fallo ya está medido en este repositorio: el board de v1 no escribe, y hay un
+test que mide el disco antes y después para probarlo. La superficie de v2 se
+multiplica por diez —pantallas que editan constitution, guidelines,
+recomendaciones, credenciales y flota— y cada una es un candidato a segundo
+escritor. Un segundo escritor saltea las guardas de transición, que son lo único
+que sostiene el principio del exit code.
+
+Sin esto, dos ventanas sobre el mismo proyecto lo corrompen sin que nadie lo
+note, y el síntoma aparece tres etapas después, sin forma de saber cuál de las
+dos lo puso ahí.
+
+### IX. El secreto vive en la bóveda y en el subproceso. En ningún otro sitio
+
+El valor de una credencial existe en dos lugares: el backend de secretos del
+sistema operativo, y el entorno del subproceso que tiene grant vigente, mientras
+ese subproceso vive. No en el almacén, no en estado, no en logs, no en
+respuestas de la API, no en mensajes de error, no en transcripts, no en
+evidencia, no en la interfaz.
+
+La redacción contra la bóveda ocurre ANTES de persistir, no después. Y como todo
+invariante de este proyecto, se prueba sobre el objeto serializado con un valor
+centinela, no sobre la intención.
+
+Ninguna credencial se entrega sin grant vigente verificado en el instante del
+uso. Denegar por defecto: una tarea sin grant se bloquea y entra en la bandeja;
+nunca falla en silencio ni continúa sin ella.
+
+Es el único fallo de este producto sin segundo intento. Un gate mal configurado
+o un plan equivocado se corrigen en el ciclo siguiente; un secreto filtrado se
+rota, se audita y se explica. El vector concreto no es hipotético: un agente lee
+una credencial durante la ejecución y la reproduce en su transcript. Si la
+redacción es posterior a la escritura, hubo un instante en que estuvo en disco, y
+un instante es todo lo que hace falta.
+
+### X. Lo detectado se distingue de lo inferido, y el hueco se declara hueco
+
+Todo hallazgo que el sistema produce sobre un proyecto —snapshot, recomendación,
+constitution propuesta— declara su origen: DETECTADO con la ruta y la línea que
+lo respaldan, INFERIDO con su confianza declarada, o VACÍO con la constancia de
+que se buscó y no había.
+
+Un hallazgo detectado sin evidencia no se persiste. Un hueco no se rellena con
+lo probable.
+
+Es el principio II aplicado a la lectura en vez de a la ejecución, y evita el
+mismo fallo con otro disfraz. El verde inventado es un gate que afirma haber
+pasado sin exit code; el contexto inventado es un snapshot que afirma
+"arquitectura hexagonal, cobertura 80%" sin un archivo detrás.
+
+Y es peor en un aspecto: el verde inventado se descubre cuando el código falla.
+El contexto inventado no se descubre nunca — se convierte en la constitution del
+proyecto, el runtime la aplica durante meses, y cada tarea hereda la suposición
+como si fuera un hecho verificado.
+
+El flujo de trabajo ya lo dice para las personas: las ambigüedades se preguntan,
+no se rellenan. Este principio lo extiende a lo que el sistema lee por su cuenta,
+donde no hay nadie a quien preguntar — y por eso hay que declarar el hueco en
+vez de cerrarlo.
+
 ## Additional Constraints
 
 **Sin dependencias en el camino crítico.** El motor corre con Node y git. El SDK
@@ -157,4 +226,4 @@ enmienda: es una preferencia.
 Bajar un umbral, saltear un test, apagar un hook o recortar un gate para que una
 tarea avance no es una decisión de implementación. No está disponible.
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-16 | **Last Amended**: 2026-09-17
+**Version**: 1.2.0 | **Ratified**: 2026-09-16 | **Last Amended**: 2026-09-20

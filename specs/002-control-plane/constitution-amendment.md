@@ -1,10 +1,12 @@
-# Enmienda propuesta a la constitution · v1.1.0 → v1.2.0
+# Enmienda a la constitution · v1.1.0 → v1.2.0
 
-**Branch**: `002-control-plane` | **Estado: propuesta, no aplicada**
+**Branch**: `002-control-plane` | **Estado: APLICADA el 2026-09-20**
 
 La constitution vigente exige que toda enmienda traiga tres cosas: el principio nuevo o modificado, el fallo concreto que lo motiva, y qué se rompe si no se hace. *"Una enmienda sin un fallo detrás no es una enmienda: es una preferencia."*
 
-Este archivo es una propuesta. **No he tocado `.specify/memory/constitution.md`**: cambiar la constitution de un proyecto sin que su operador lo apruebe contradice el principio que el propio producto vende —puertas humanas en fronteras significativas— y esta es una de ellas.
+Este archivo fue la propuesta. El operador la aprobó y los tres principios están en `.specify/memory/constitution.md`, que pasó a **v1.2.0**.
+
+Se conserva como registro de por qué entró cada uno: la constitution dice *qué* hay que respetar; esto dice *qué se rompió* para que haga falta respetarlo. Revertirla es un `git revert` del commit que la aplicó.
 
 Los tres principios existentes que la feature amplía no se modifican: se extienden a una superficie que en v1.1.0 no existía.
 

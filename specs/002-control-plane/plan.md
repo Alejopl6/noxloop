@@ -149,9 +149,19 @@ noxloop/
 
 ### La migración a TypeScript
 
-Decisión: **el motor no se migra en esta feature.**
+Decisión: **el motor no se migra en esta feature.** Y una corrección sobre la formulación inicial, tomada al montar el andamiaje:
 
-Los paquetes nuevos nacen en TypeScript. El motor sigue en `.mjs` con `checkJs`, que es como ya está tipado, y gana declaraciones `.d.ts` en su costura pública para que los paquetes nuevos lo consuman tipado.
+**TypeScript va donde rinde: `apps/studio` y `packages/ui`.** Los paquetes de servidor —empezando por `packages/service`— nacen en `.mjs` con JSDoc y `checkJs`, igual que el motor.
+
+El motivo no es gusto, son tres costes concretos que TS impondría en el servidor y ninguno en la interfaz:
+
+1. **Node 20 no ejecuta TypeScript**, y 20 es el mínimo de la matriz de CI. Habría que compilar antes de probar.
+2. `node --test` dejaría de encontrar los tests directamente; haría falta un runner o un paso de build entre escribir y verificar.
+3. El sidecar tendría que empaquetar `dist/` en vez de las fuentes, añadiendo un artefacto intermedio al empaquetado que ya es la parte más delicada de la fase A.
+
+`checkJs` con `strict` tipa igual de estricto y ya está funcionando sobre 30 archivos del motor. En la interfaz no aplica ninguno de los tres costes, porque Next compila de todas formas.
+
+El motor gana declaraciones `.d.ts` en su costura pública para que los paquetes nuevos lo consuman tipado.
 
 El motivo es el criterio de riesgo del propio repositorio. Migrar 30 archivos `.mjs` con 849 tests detrás, en la misma feature que construye una superficie nueva, mete dos variables en el mismo experimento: cuando algo se rompa, nadie sabrá cuál de las dos fue. La migración es su propia feature, con su propio criterio de éxito —los mismos 849 tests en verde antes y después— y no está en el camino crítico de nada.
 
@@ -289,6 +299,7 @@ El CI actual verifica que la documentación no mienta: corre los comandos que lo
 
 - [x] Fase 0 · Investigación — tres frentes, 10 decisiones, lo no verificado declarado
 - [x] Fase 1 · Diseño — data model, cinco contratos, enmienda propuesta
-- [ ] **Puerta humana: aprobar la enmienda a la constitution**
-- [ ] Fase 2 · Tareas — `tasks.md`
-- [ ] Fase A … E
+- [x] **Puerta humana: enmienda aprobada. Constitution en v1.2.0**
+- [x] Fase 2 · Tareas — `tasks.md`
+- [ ] Fase A · el esqueleto que arranca
+- [ ] Fase B … E
