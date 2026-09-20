@@ -1,0 +1,27 @@
+[package]
+name = "noxloop-desktop"
+version = "0.1.0"
+description = "La ventana de escritorio de noxloop: empaqueta la interfaz estatica y levanta el servicio de control como sidecar."
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+# El binario es una cascara de tres lineas y toda la logica vive en la
+# biblioteca. No es estetica: `cargo test` no puede enlazar contra un crate
+# que solo expone `main`, asi que sin este `[lib]` las pruebas de T035 no
+# tendrian nada a lo que llamar.
+[lib]
+name = "noxloop_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
+tauri-plugin-opener = "2"
+getrandom = "0.3"
+serde_json = "1"
