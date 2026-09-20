@@ -146,6 +146,26 @@ Espaciado: Geist **no define escala propia**. Tailwind sin modificar, 4px.
 
 Tema: sobre **clases** (`.dark`, `.light-theme`, `.invert-theme`), no sobre `data-theme`. Cero ocurrencias de `prefers-color-scheme`. Vercel resuelve "system" con `next-themes`; nosotros también.
 
+### Los valores, y el fallo que casi entra con ellos
+
+**Los docs de Geist no publican ni un solo valor numérico.** Ni un hex, ni una sombra, ni un tamaño. Publican el patrón y la semántica; los números viven únicamente en los bundles CSS de producción de vercel.com.
+
+La primera versión de `apps/studio/app/globals.css` se escribió de memoria, y **166 de los ~184 valores estaban mal**. No eran valores aproximados: eran **la paleta de Radix Colors**, que es lo que Geist usaba antes. `red-700` decía `#e5484d` donde Geist dice `#fc0035`; `purple-700` decía `#8e4ec6` donde dice `#9f00f4`.
+
+Se descubrió porque dos extracciones independientes discrepaban, y la discrepancia era identificable. Se resolvió bajando los bundles y comparando valor por valor. El origen queda fijado:
+
+| Tema | Selector exacto |
+|---|---|
+| Claro | `:root,.light-theme,.dark .invert-theme,.dark-theme .invert-theme` |
+| Oscuro | `.dark,.dark-theme,.invert-theme` |
+
+**Lo que este episodio enseña, y por qué está aquí y no en un comentario:** un color equivocado compila, pasa el typecheck, pasa los tests y se ve bien. Ninguna guarda mecánica lo atrapa. Es el principio X en su forma más incómoda — lo inferido presentado con la misma autoridad que lo detectado, en un dominio donde no hay exit code posible. La única defensa es no escribirlos de memoria, y dejar anotado de dónde salieron.
+
+Ambigüedades resueltas en esa pasada:
+- **`--ds-background-100` en oscuro**: `background-100` y `background-200` son **ambos `#000`**. El `~#0a0a0a` no existe en ninguna capa. Geist separa superficies con el borde de la sombra (`--ds-shadow-border-base`), no con el fondo.
+- **`--ds-focus-color` en oscuro** es `var(--ds-blue-900)`, no el `800`. El `800` oscuro es un azul de fondo que sobre negro casi no se ve.
+- **`gray-alpha`** se declara en hex con alfa (`#0000000d`), no en `rgba()`.
+
 ### Componentes que esta consola necesita y no están en la lista obvia
 
 | Componente | Para qué, aquí |
@@ -171,9 +191,15 @@ Trampa de nombres: **el `Switch` de Geist es un control segmentado**, no un bool
 
 ### No verificado
 
-- Si `@vercel/geistcn` es privado o inexistente.
-- **Los docs de Geist no publican ningún valor numérico.** Los hex, sombras y tamaños salen del stylesheet de producción de vercel.com, no de documentación autorizada: **pueden cambiar sin aviso**. Se fijan en nuestro CSS y se revisan a mano.
-- `--ds-background-100` en oscuro: dos capas del bundle discrepan (`#000` vs `~#0a0a0a`).
+- Si `@vercel/geistcn` es privado o inexistente. Lo comprobable es que no se puede instalar.
+- **Los valores no tienen fuente autorizada.** Están extraídos y fijados (ver arriba), pero salen de código de producción de otra empresa: sin changelog, sin compromiso de estabilidad, y pueden cambiar sin aviso. Revalidar es volver a bajar los bundles y comparar.
+- Los iconos: Geist no los publica, se usa `lucide-react`. No son los mismos glifos.
+
+Tipografía y sombras **sí** se re-extrajeron en la misma pasada, y también traían errores: `heading-16` tenía `-0.2px` de interletraje donde el origen dice `-0.32px`, y `label-13`, `label-16` y `label-20` tenían la interlinea equivocada. Faltaban además seis clases (`heading-14/48/56/64/72`, `label-18`, `copy-20`).
+
+Un detalle que justifica transcribirlas una por una en vez de generarlas: **la interlinea no es proporcional al tamaño**. `label-13` es 13/16 y `copy-13` es 13/18 — mismo tamaño, distinta caja. Cualquier fórmula que las derive se equivoca.
+
+Y una que cambia cómo se escriben los componentes: **en Geist el borde de un material va dentro de la sombra** (`--ds-shadow-border-base`), no en `border`. Un panel se separa del fondo por la sombra, no por el color — que es también por lo que los dos fondos oscuros pueden ser el mismo `#000`. Sustituir eso por `border: 1px solid` se ve parecido y descuadra el layout, porque el borde suma a la caja y la sombra no.
 
 ---
 

@@ -29,11 +29,11 @@ funcione.
 
 **Bloquea todo lo demás.**
 
-- [ ] T000 **PUERTA HUMANA**: aprobar, corregir o rechazar `constitution-amendment.md`. Los tres principios nuevos gobiernan decisiones de las fases A, D y B respectivamente; implementarlas antes de que estén ratificadas es construir sobre reglas que pueden cambiar
-- [ ] T001 Instalar Rust y la cadena de Tauri; `cargo --version` y `rustc --print host-tuple` responden. **Bloqueante de la fase A**
-- [ ] T002 [P] Fijar Node 20 para desarrollo (`.nvmrc` ya lo dice). Node 26 no está en la matriz de CI
-- [ ] T003 [P] Añadir `tsconfig.base.json` con project references. El `tsconfig.json` actual (`checkJs` sobre `.mjs`) se conserva sin tocar para el motor y los proveedores
-- [ ] T004 [P] Registrar `apps/*` en los workspaces de npm del `package.json` raíz
+- [X] T000 **PUERTA HUMANA**: aprobar, corregir o rechazar `constitution-amendment.md`. Los tres principios nuevos gobiernan decisiones de las fases A, D y B respectivamente; implementarlas antes de que estén ratificadas es construir sobre reglas que pueden cambiar
+- [X] T001 Instalar Rust y la cadena de Tauri; `cargo --version` y `rustc --print host-tuple` responden. **Bloqueante de la fase A**
+- [X] T002 [P] Fijar Node 20 para desarrollo (`.nvmrc` ya lo dice). Node 26 no está en la matriz de CI
+- [X] T003 [P] Añadir `tsconfig.base.json` con project references. El `tsconfig.json` actual (`checkJs` sobre `.mjs`) se conserva sin tocar para el motor y los proveedores
+- [X] T004 [P] Registrar `apps/*` en los workspaces de npm del `package.json` raíz
 
 ---
 
@@ -45,43 +45,43 @@ funcione.
 
 ### A.1 · Interfaz
 
-- [ ] T010 [A] Crear `apps/studio` con Next 16, `output: 'export'`, `images.unoptimized`, `trailingSlash`, y `assetPrefix` solo en desarrollo
-- [ ] T011 [A] Ruta catch-all `app/[[...slug]]/page.tsx` con `generateStaticParams()` devolviendo `[{ slug: [] }]`
-- [ ] T012 [P] [A] `npm i geist` y cargar `GeistSans`/`GeistMono` con `next/font`. Test: el build no hace peticiones de red en runtime
-- [ ] T013 [P] [A] `packages/ui`: declarar las 10 escalas `--ds-*` en claro y oscuro, las sombras `--ds-shadow-*` y `--ds-focus-ring`, con los valores de `research.md` §2.2
-- [ ] T014 [A] `next-themes` con `attribute="class"`, `defaultTheme="system"`. Test: alternar tema no produce destello
-- [ ] T015 [P] [A] `shadcn init` + primitivas base, con los tokens de shadcn mapeados a `--ds-*`
+- [X] T010 [A] Crear `apps/studio` con Next 16, `output: 'export'`, `images.unoptimized`, `trailingSlash`, y `assetPrefix` solo en desarrollo
+- [X] T011 [A] Ruta catch-all `app/[[...slug]]/page.tsx` con `generateStaticParams()` devolviendo `[{ slug: [] }]`
+- [X] T012 [P] [A] `npm i geist` y cargar `GeistSans`/`GeistMono` con `next/font`. Test: el build no hace peticiones de red en runtime
+- [X] T013 [P] [A] `packages/ui`: declarar las 10 escalas `--ds-*` en claro y oscuro, las sombras `--ds-shadow-*` y `--ds-focus-ring`, con los valores de `research.md` §2.2
+- [X] T014 [A] `next-themes` con `attribute="class"`, `defaultTheme="system"`. Test: alternar tema no produce destello
+- [X] T015 [P] [A] `shadcn init` + primitivas base, con los tokens de shadcn mapeados a `--ds-*`
 
 ### A.2 · Servicio
 
-- [ ] T020 [A] Test primero: `/v1/health` devuelve `escritorUnico: true` y el `home` resuelto
-- [ ] T021 [A] `packages/service`: servidor HTTP sobre `127.0.0.1`, **nunca** `0.0.0.0`, puerto efímero, imprime `NOXLOOP_READY <url>` en stdout
-- [ ] T022 [A] Test primero: una petición sin token válido se rechaza con 401
-- [ ] T023 [A] Token de sesión: se recibe por `--token`, se valida en cada petición, y el `Origin` se comprueba contra la allowlist
-- [ ] T024 [A] Formato único de error `{ codigo, causa, accion }`. Test: **ningún** error de la API sale sin `accion` (NFR-006)
-- [ ] T025 [A] `/v1/events`: SSE con `Last-Event-ID`, buffer acotado y `sincronizar_completo` cuando el hueco lo excede
-- [ ] T026 [A] Watchdog: `--parent-pid` y `process.kill(pid, 0)` cada 2s; si el padre no está, salir
-- [ ] T027 [A] Lock del `home`: un segundo servicio sobre el mismo `home` se niega a arrancar y nombra el PID del primero
-- [ ] T028 [P] [A] `/v1/capabilities`: runtimes disponibles, backend de bóveda en uso, proveedor de conexiones, presencia del motor
+- [X] T020 [A] Test primero: `/v1/health` devuelve `escritorUnico: true` y el `home` resuelto
+- [X] T021 [A] `packages/service`: servidor HTTP sobre `127.0.0.1`, **nunca** `0.0.0.0`, puerto efímero, imprime `NOXLOOP_READY <url>` en stdout
+- [X] T022 [A] Test primero: una petición sin token válido se rechaza con 401
+- [X] T023 [A] Token de sesión: se recibe por `--token`, se valida en cada petición, y el `Origin` se comprueba contra la allowlist
+- [X] T024 [A] Formato único de error `{ codigo, causa, accion }`. Test: **ningún** error de la API sale sin `accion` (NFR-006)
+- [X] T025 [A] `/v1/events`: SSE con `Last-Event-ID`, buffer acotado y `sincronizar_completo` cuando el hueco lo excede
+- [X] T026 [A] Watchdog: `--parent-pid` y `process.kill(pid, 0)` cada 2s; si el padre no está, salir
+- [X] T027 [A] Lock del `home`: un segundo servicio sobre el mismo `home` se niega a arrancar y nombra el PID del primero
+- [X] T028 [P] [A] `/v1/capabilities`: runtimes disponibles, backend de bóveda en uso, proveedor de conexiones, presencia del motor
 
 ### A.3 · Escritorio
 
-- [ ] T030 [A] `apps/desktop/src-tauri` con `frontendDist: "../out"`, `beforeBuildCommand` y `devUrl`
-- [ ] T031 [A] CSP con `connect-src` incluyendo `http://127.0.0.1:* http://localhost:* ipc: http://ipc.localhost`
-- [ ] T032 [A] CORS en el servicio: allowlist con `tauri://localhost`, `http://tauri.localhost` y `http://localhost:3000`. **Verificar `location.origin` en cada SO antes de cerrar la lista** (`research.md` §1, no verificado)
-- [ ] T033 [A] Empaquetar el binario de Node como `externalBin` con sufijo de target triple, y el código del servicio como `resources`
-- [ ] T034 [A] `lib.rs`: lanzar el sidecar, parsear `NOXLOOP_READY`, guardar el `CommandChild`
-- [ ] T035 [A] Test primero: al cerrar la aplicación no queda ningún proceso del daemon. Matar en `RunEvent::Exit` **más** el watchdog de T026
-- [ ] T036 [A] Comando `daemon_info` → `(url, token)` para el frontend
-- [ ] T037 [A] `apps/studio/lib/daemon.ts`: `isTauri()` dentro de `useEffect`; en web, `NEXT_PUBLIC_DAEMON_URL`
-- [ ] T038 [A] SSE con token en query string — `EventSource` no manda headers. **Una sola** conexión multiplexada para toda la aplicación
-- [ ] T039 [A] Pantalla de servicio caído: causa textual y acción concreta, nunca pantalla en blanco ni datos rancios (FR-005)
+- [X] T030 [A] `apps/desktop/src-tauri` con `frontendDist: "../out"`, `beforeBuildCommand` y `devUrl`
+- [X] T031 [A] CSP con `connect-src` incluyendo `http://127.0.0.1:* http://localhost:* ipc: http://ipc.localhost`
+- [X] T032 [A] CORS en el servicio: allowlist con `tauri://localhost`, `http://tauri.localhost` y `http://localhost:3000`. **Verificar `location.origin` en cada SO antes de cerrar la lista** (`research.md` §1, no verificado)
+- [X] T033 [A] Empaquetar el binario de Node como `externalBin` con sufijo de target triple, y el código del servicio como `resources`
+- [X] T034 [A] `lib.rs`: lanzar el sidecar, parsear `NOXLOOP_READY`, guardar el `CommandChild`
+- [X] T035 [A] Test primero: al cerrar la aplicación no queda ningún proceso del daemon. Matar en `RunEvent::Exit` **más** el watchdog de T026
+- [X] T036 [A] Comando `daemon_info` → `(url, token)` para el frontend
+- [X] T037 [A] `apps/studio/lib/daemon.ts`: `isTauri()` dentro de `useEffect`; en web, `NEXT_PUBLIC_DAEMON_URL`
+- [X] T038 [A] SSE con token en query string — `EventSource` no manda headers. **Una sola** conexión multiplexada para toda la aplicación
+- [X] T039 [A] Pantalla de servicio caído: causa textual y acción concreta, nunca pantalla en blanco ni datos rancios (FR-005)
 
 ### A.4 · CI
 
-- [ ] T040 [P] [A] `typecheck` de los paquetes TypeScript
-- [ ] T041 [P] [A] Build de `apps/studio` verificando que la salida es estática
-- [ ] T042 [P] [A] Extender la guarda de genericidad a `apps/` y a los paquetes nuevos (principio VII)
+- [X] T040 [P] [A] `typecheck` de los paquetes TypeScript
+- [X] T041 [P] [A] Build de `apps/studio` verificando que la salida es estática
+- [X] T042 [P] [A] Extender la guarda de genericidad a `apps/` y a los paquetes nuevos (principio VII)
 
 ---
 

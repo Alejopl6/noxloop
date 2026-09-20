@@ -204,3 +204,49 @@ jobs:
           done < comandos-doc.txt
           rm -f comandos-doc.txt
           exit "$falla"
+
+      # La interfaz compila, y lo que sale sigue siendo estatico.
+      #
+      # EL FALLO QUE ESTO EVITA. `output: 'export'` no es una preferencia de
+      # empaquetado: es el mecanismo que hace IMPOSIBLE que la interfaz escriba
+      # estado, porque sin servidor no hay donde escribirlo. El principio VIII
+      # se sostiene sobre esa restriccion.
+      #
+      # Perderla es barato y silencioso: alguien necesita una ruta de API "solo
+      # para una cosa", saca `output: 'export'`, y el build sigue verde. La
+      # guarda de `npm run guard` atrapa que la linea desaparezca de la
+      # configuracion; este paso atrapa el caso en que la linea sigue ahi pero
+      # el build ya no la respeta.
+      #
+      # Dos comprobaciones, porque miden cosas distintas: que `out/` exista con
+      # su `index.html`, y que NO haya quedado un manifiesto de servidor al
+      # lado. Lo primero prueba que el export corrio; lo segundo, que corrio
+      # entero.
+      - name: la interfaz compila y su salida no tiene servidor
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run studio:build
+
+          if [ ! -f apps/studio/out/index.html ]; then
+            echo '::error::apps/studio/out/index.html no existe: el export estatico no produjo nada'
+            exit 1
+          fi
+
+          # `.next/server/` es la marca de un build con servidor. Con
+          # `output: 'export'` Next lo usa como paso intermedio, asi que lo que
+          # se comprueba es que no se haya COLADO en la salida publicada.
+          if [ -d apps/studio/out/_next/server ]; then
+            echo '::error::la salida estatica contiene un directorio de servidor: `output: export` dejo de aplicarse'
+            exit 1
+          fi
+
+          # Un catch-all mal configurado produce un `out/` de un solo archivo o
+          # de ninguno. No es un error del build, y se descubre al abrir la app
+          # de escritorio en blanco.
+          archivos=$(find apps/studio/out -type f | wc -l | tr -d ' ')
+          echo "la salida estatica tiene $archivos archivos"
+          if [ "$archivos" -lt 3 ]; then
+            echo "::error::la salida estatica tiene $archivos archivos: el export no genero la aplicacion"
+            exit 1
+          fi
