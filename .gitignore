@@ -2,6 +2,19 @@ node_modules/
 dist/
 build/
 coverage/
+
+# La superficie de la feature 002. Todo esto es salida de build, no fuente.
+#
+# `binaries/` lleva el ejecutable de Node copiado con sufijo de target triple
+# para el sidecar: son ~60-90 MB por plataforma y los regenera
+# `preparar-sidecar.mjs` en cada empaquetado. Versionarlo seria meter el
+# runtime de Node en el historial de git.
+/apps/studio/.next/
+/apps/studio/out/
+/apps/desktop/src-tauri/target/
+/apps/desktop/src-tauri/binaries/
+*.tsbuildinfo
+next-env.d.ts
 *.log
 .env
 .env.*

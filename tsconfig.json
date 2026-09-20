@@ -21,10 +21,13 @@
   "include": [
     "packages/engine/src/**/*.mjs",
     "packages/engine/bin/**/*.mjs",
+    "packages/service/src/**/*.mjs",
+    "packages/service/bin/**/*.mjs",
     "providers/**/*.mjs"
   ],
   "exclude": [
     "**/*.test.mjs",
-    "node_modules"
+    "node_modules",
+    "apps"
   ]
 }

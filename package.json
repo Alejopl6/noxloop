@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "engines": {
     "node": ">=20"
@@ -15,7 +16,12 @@
     "test": "node --test",
     "typecheck": "tsc -p tsconfig.json",
     "validate": "node packages/engine/bin/noxloop.mjs validate examples/noxloop.config.json",
-    "guard": "node packages/engine/test/constitution.test.mjs"
+    "guard": "node packages/engine/test/constitution.test.mjs",
+    "service": "node packages/service/bin/noxloop-service.mjs",
+    "studio:dev": "npm run dev --workspace=@noxloop/studio",
+    "studio:build": "npm run build --workspace=@noxloop/studio",
+    "desktop": "npm run tauri:dev --workspace=@noxloop/desktop",
+    "desktop:build": "npm run tauri:build --workspace=@noxloop/desktop"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",
