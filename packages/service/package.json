@@ -1,0 +1,11 @@
+{
+  "name": "@noxloop/service",
+  "version": "0.1.0",
+  "description": "El servicio de control de noxloop: unico escritor del almacen, y lo unico con lo que habla la interfaz.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": { "noxloop-service": "bin/noxloop-service.mjs" },
+  "engines": { "node": ">=20" },
+  "files": ["src", "bin"]
+}
