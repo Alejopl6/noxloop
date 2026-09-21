@@ -189,7 +189,11 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          grep -horE 'node --test packages/engine/test/[A-Za-z0-9_.-]+\.test\.mjs' \
+          # El patron era `packages/engine/test/...` y miraba SOLO al motor.
+          # Con seis paquetes mas, la doc de la boveda o la del scanner podia
+          # citar un test renombrado y este paso seguia verde: cubria una
+          # septima parte del repositorio creyendo que lo cubria entero.
+          grep -horE 'node --test packages/[a-z-]+/test/[A-Za-z0-9_.-]+\.test\.mjs' \
             docs/*.md README.md CONTRIBUTING.md | sort -u > comandos-doc.txt
           if [ ! -s comandos-doc.txt ]; then
             echo '::error::ninguna doc dice como verificar nada: los bloques "Como se verifica" desaparecieron'
@@ -210,6 +214,58 @@ jobs:
             fi
           done < comandos-doc.txt
           rm -f comandos-doc.txt
+          exit "$falla"
+
+      # Los dos invariantes sin segundo intento, corridos SOLOS y con nombre.
+      #
+      # POR QUE NO ALCANZA QUE `npm test` YA LOS CORRA. Los corre, y entre
+      # otros mil doscientos. Cuando uno de estos dos cae, el fallo tiene que
+      # leerse como lo que es y no como una linea mas en el resumen:
+      #
+      #   - "el scanner escribio en el proyecto de alguien" = nadie vuelve a
+      #     apuntar la herramienta a un repositorio que le importa, y el
+      #     producto se queda sin etapa 01.
+      #   - "un secreto se filtro" = el unico fallo de este producto que no
+      #     tiene segundo intento. Un gate mal configurado se corrige en el
+      #     ciclo siguiente; un secreto filtrado se rota, se audita y se
+      #     explica.
+      #
+      # Los archivos se descubren por su nombre y no se listan a mano: una
+      # lista escrita se queda vieja en cuanto alguien anade una prueba, y
+      # entonces el paso sigue verde mirando menos de lo que cree.
+      - name: el scanner no escribe, y ningun secreto se filtra
+        shell: bash
+        run: |
+          set -uo pipefail
+          archivos=$(
+            ls packages/scanner/test/scanner-no-escribe*.test.mjs \
+               packages/scanner/test/scanner-no-copia-secreto.test.mjs \
+               packages/vault/test/*.test.mjs \
+               packages/store/test/invariantes.test.mjs 2>/dev/null
+          )
+          if [ -z "$archivos" ]; then
+            echo '::error::no se encontro ninguna prueba de no escritura ni de no filtracion: se renombraron y este paso dejo de mirar donde tiene que mirar'
+            exit 1
+          fi
+
+          # Se cuentan para que el paso no pueda quedarse verde mirando dos
+          # archivos cuando antes miraba doce.
+          cuantos=$(echo "$archivos" | wc -l | tr -d ' ')
+          echo "corriendo $cuantos archivos de invariantes criticos"
+          if [ "$cuantos" -lt 10 ]; then
+            echo "::error::solo $cuantos archivos de invariantes criticos: antes habia mas, alguien los quito o los renombro"
+            exit 1
+          fi
+
+          falla=0
+          for a in $archivos; do
+            echo "--- $a"
+            if ! node --test "$a" > /dev/null 2>&1; then
+              echo "::error file=$a::cayo un invariante sin segundo intento"
+              node --test "$a" 2>&1 | tail -40
+              falla=1
+            fi
+          done
           exit "$falla"
 
       # La interfaz compila, y lo que sale sigue siendo estatico.

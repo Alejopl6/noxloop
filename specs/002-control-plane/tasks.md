@@ -135,12 +135,12 @@ funcione.
 
 **Criterio de salida**: el bootstrap corre sobre este repositorio y **no vuelve a proponer** los hooks, skills y plugin que ya existen.
 
-- [ ] T100 [C] Test primero: `POST /constitution/amend` sin los tres campos devuelve 400
-- [ ] T101 [C] `packages/core`: constitution con enmiendas (`principio`, `fallo_que_motiva`, `que_se_rompe_si_no`) y versión anterior recuperable
-- [ ] T102 [C] Propuesta desde el snapshot, cada apartado marcado `detectado` / `inferido` / `vacio`
-- [ ] T103 [C] Escritura versionada en el repositorio del proyecto → `CONSTITUTED`
-- [ ] T104 [P] [C] Guidelines por área, versionadas junto al código
-- [ ] T105 [P] [C] Etapa de diseño, omitible sin bloquear (FR-023)
+- [X] T100 [C] Test primero: `POST /constitution/amend` sin los tres campos devuelve 400
+- [X] T101 [C] `packages/core`: constitution con enmiendas (`principio`, `fallo_que_motiva`, `que_se_rompe_si_no`) y versión anterior recuperable
+- [X] T102 [C] Propuesta desde el snapshot, cada apartado marcado `detectado` / `inferido` / `vacio`
+- [X] T103 [C] Escritura versionada en el repositorio del proyecto → `CONSTITUTED`
+- [X] T104 [P] [C] Guidelines por área, versionadas junto al código
+- [X] T105 [P] [C] Etapa de diseño, omitible sin bloquear (FR-023)
 - [X] T110 [C] Test primero: el bootstrap detecta lo existente **antes** de proponer nada
 - [X] T111 [C] Motor de recomendaciones con el diff exacto calculado antes de proponer
 - [X] T112 [C] Test primero: `apply` con el árbol cambiado falla con `diff_obsoleto`. **Aplicar algo distinto de lo mostrado es como se pierde la confianza en un instalador**
@@ -166,9 +166,9 @@ funcione.
 - [X] T133 [D] Test primero, con centinela: serializar cualquier entidad del inventario no produce el valor, ni truncado
 - [X] T134 [D] `packages/vault`: inventario con huella, `ref_boveda`, backend declarado
 - [X] T135 [D] Test primero: `recuperar` sin `MotivoDeAcceso` no compila; sin grant vigente lanza y audita el intento denegado
-- [ ] T136 [D] Grants: la tripleta, con vigencia opcional. Denegar por defecto
-- [ ] T137 [D] Test primero: `reach` no devuelve grants revocados ni expirados (vista inversa, FR-045)
-- [ ] T138 [D] Test primero: rotar cambia la huella y **conserva** los grants
+- [X] T136 [D] Grants: la tripleta, con vigencia opcional. Denegar por defecto
+- [X] T137 [D] Test primero: `reach` no devuelve grants revocados ni expirados (vista inversa, FR-045)
+- [X] T138 [D] Test primero: rotar cambia la huella y **conserva** los grants
 - [X] T139 [D] Redactor: carga huellas, busca **por valor** y reemplaza por `[redactado:<nombre>]`
 - [ ] T140 [D] Test primero: el evidence packet **en disco** nunca contuvo el centinela — sobre el archivo escrito, no sobre el objeto en memoria
 - [ ] T141 [D] Auditoría append-only con hash encadenado. Test: no existe ruta en la API que la edite o borre

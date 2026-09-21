@@ -1,0 +1,89 @@
+# Nango self-hosted, edicion gratuita. Tres contenedores.
+#
+# QUE TRAE Y QUE NO. La edicion gratuita da API Auth y proxy, y nada mas: la
+# imagen `Dockerfile.self_hosted` BORRA `packages/jobs`, `packages/runner` y
+# `packages/persist`, asi que no hay orquestador, ni syncs, ni servidor MCP.
+# Para lo que hace falta aqui —autorizar, recuperar el token y proxear— eso es
+# exactamente lo necesario, y el resultado son tres contenedores en vez de una
+# plataforma.
+#
+# EL BUG QUE MUERDE EL PRIMER DIA, y por eso `SERVER_PORT` esta explicito en el
+# `.env` y no comentado: el compose oficial lo pasa sin valor por defecto, pero
+# la imagen trae `PORT=8080` horneado. El servidor resuelve SERVER_PORT → PORT →
+# 3003, encuentra 8080, escucha ahi, y el compose solo expone 3003: no conecta
+# nada, y el sintoma no menciona ningun puerto. Esta reportado en la incidencia
+# 5305 del proyecto y se cerro como "not planned", asi que no va a arreglarse
+# rio arriba.
+#
+# EL PUERTO 3003 ES UN CONTRATO CON EL MUNDO EXTERIOR. Queda registrado como
+# redirect URI en la aplicacion OAuth de CADA proveedor. Si esta ocupado, todos
+# los flujos OAuth rompen y no hay degradacion elegante posible: no se puede
+# reasignar dinamicamente sin volver a registrar la URI en todas partes. Por eso
+# `preflight()` lo comprueba al arrancar y falla ruidosamente.
+#
+# La imagen se fija por etiqueta aqui por comodidad de arranque. Antes de
+# depender de esto en serio, cambiala por un digest: `:hosted` se mueve.
+
+services:
+  nango-db:
+    image: postgres:16.0-alpine
+    container_name: nango-db
+    environment:
+      POSTGRES_PASSWORD: ${NANGO_DB_PASSWORD:-nango}
+      POSTGRES_USER: ${NANGO_DB_USER:-nango}
+      POSTGRES_DB: ${NANGO_DB_NAME:-nango}
+    ports:
+      - "${NANGO_DB_PORT:-5432}:5432"
+    volumes:
+      - ./datos:/var/lib/postgresql/data
+    networks: [nango]
+
+  nango-server:
+    image: nangohq/nango-server:hosted
+    container_name: nango-server
+    platform: linux/amd64
+    environment:
+      # Sin esta clave las credenciales se guardan EN CLARO en Postgres, y
+      # ademas Connect UI no funciona. No admite rotacion: cambiarla despues
+      # rompe el descifrado de todo lo guardado.
+      - NANGO_ENCRYPTION_KEY
+      - NANGO_DB_USER
+      - NANGO_DB_PASSWORD
+      - NANGO_DB_HOST=${NANGO_DB_HOST:-nango-db}
+      - NANGO_DB_NAME
+      - NANGO_DB_SSL
+      # El fix del bug de arriba. No lo quites.
+      - SERVER_PORT=${SERVER_PORT:-3003}
+      - NANGO_SERVER_URL=${NANGO_SERVER_URL:-http://localhost:3003}
+      - NANGO_PUBLIC_SERVER_URL=${NANGO_PUBLIC_SERVER_URL:-http://localhost:3003}
+      # El panel esta ABIERTO por defecto a cualquiera que alcance la
+      # instancia. En localhost es menos grave, pero cualquier bind a 0.0.0.0
+      # lo vuelve critico, asi que se cierra desde el principio.
+      - FLAG_AUTH_ENABLED=${FLAG_AUTH_ENABLED:-false}
+      - NANGO_DASHBOARD_USERNAME
+      - NANGO_DASHBOARD_PASSWORD
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NANGO_LOGS_ENABLED=${NANGO_LOGS_ENABLED:-false}
+      - FLAG_SERVE_CONNECT_UI=${FLAG_SERVE_CONNECT_UI:-true}
+      - NANGO_PUBLIC_CONNECT_URL=${NANGO_PUBLIC_CONNECT_URL:-http://localhost:3009}
+      - CSP_REPORT_ONLY=true
+    ports:
+      - "${SERVER_PORT:-3003}:${SERVER_PORT:-3003}"
+      - "${CONNECT_UI_PORT:-3009}:${CONNECT_UI_PORT:-3009}"
+    depends_on: [nango-db]
+    restart: always
+    networks: [nango]
+
+  nango-redis:
+    image: redis:7.2.4
+    container_name: nango-redis
+    ports:
+      - "${NANGO_REDIS_PORT:-6379}:6379"
+    networks: [nango]
+
+# El servicio de busqueda que el compose oficial trae comentado NO se incluye:
+# solo hace falta con `NANGO_LOGS_ENABLED=true`, y son varios GB de memoria para
+# unos logs que aqui no se consultan.
+
+networks:
+  nango:
