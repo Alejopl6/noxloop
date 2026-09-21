@@ -48,7 +48,7 @@ const TIPO_POR_CLASE = Object.freeze({
  *
  * @typedef {object} DepositoDeSecretos
  * @property {(datos: {workspace: string, nombre: string, proveedor: string, tipo: string, ambito?: string, project_id?: string|null, alcance_declarado?: string|null, valor: string}) => Promise<{credencial: {id: string, ref_boveda: string}}>} registrar
- * @property {(datos: {project_id: string, agent_id: string, credential_id: string}) => Promise<{id: string}>} otorgar
+ * @property {(datos: {project_id: string, agent_id: string, credential_id: string, concedido_por: string}) => Promise<{id: string}>} otorgar
  * @property {(ref: string, motivo: {grant_id: string, project_id: string, agent_id: string, proposito: string}) => Promise<string>} recuperar
  * @property {(ref: string) => Promise<any>} borrar
  * @property {(grantId: string) => Promise<any>} revocar
@@ -59,6 +59,7 @@ const TIPO_POR_CLASE = Object.freeze({
  *   boveda: DepositoDeSecretos,
  *   catalogo?: readonly any[],
  *   agenteId?: string,
+ *   quienConecta?: string,
  *   peticion?: (url: string, init: any) => Promise<any>,
  *   repositorio?: any,
  *   reloj?: () => number,
@@ -69,6 +70,12 @@ export function crearAdaptadorLocal({
   boveda,
   catalogo = catalogoPorModo(CATALOGO_POR_DEFECTO, MODOS_DEL_ADAPTADOR_LOCAL),
   agenteId = "capa-de-conexiones",
+  // Quien concede el grant. Tiene valor por defecto y es DELIBERADAMENTE
+  // explicito sobre lo que significa: aqui no hay sesion de usuario, asi que lo
+  // unico honesto que se puede decir es que la decision se tomo en la pantalla
+  // de conexiones. Quien monte esto con una identidad real la pasa, y entonces
+  // la auditoria contesta la pregunta entera.
+  quienConecta = "operador (pantalla de conexiones)",
   peticion = (url, init) => fetch(url, init),
   ...resto
 }) {
@@ -163,7 +170,16 @@ export function crearAdaptadorLocal({
           }),
         );
         const grant = await contraElDeposito(`autorizar el uso de '${campo.nombre}'`, () =>
-          boveda.otorgar({ project_id: projectId, agent_id: agenteId, credential_id: credencial.id }),
+          // `concedido_por` viaja desde quien conecta. NO se pone aqui un valor
+          // de sistema: el grant es una decision humana, y un autor inventado
+          // convierte la auditoria en una fila que dice que alguien autorizo sin
+          // poder decir quien. Si no hubo persona, no hubo decision.
+          boveda.otorgar({
+            project_id: projectId,
+            agent_id: agenteId,
+            credential_id: credencial.id,
+            concedido_por: quienConecta,
+          }),
         );
         refs[campo.nombre] = { ref: credencial.ref_boveda, grant_id: grant.id };
       }

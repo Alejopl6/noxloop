@@ -45,6 +45,7 @@ test("EL INVARIANTE: ninguna entidad del inventario serializa el valor, ni trunc
     valor,
   });
   const grant = await boveda.otorgar({
+    concedido_por: "operadora-de-prueba",
     project_id: "p1",
     agent_id: "a1",
     credential_id: credencial.id,

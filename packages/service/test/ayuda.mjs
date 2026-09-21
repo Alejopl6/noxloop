@@ -2,16 +2,106 @@
 // un helper que ademas afirma cosas obliga a leer dos archivos para entender
 // por que fallo uno.
 
-import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import { arrancar } from "../src/servidor.mjs";
 
 export const TOKEN = "token-de-prueba";
 export const ORIGEN = "tauri://localhost";
 
+/**
+ * La frase de paso de la boveda en las pruebas.
+ *
+ * Va explicita y no por entorno: el servicio se NIEGA a inventar una —una frase
+ * guardada junto al archivo que cifra no protege de nadie— asi que una prueba
+ * que quiera ejercer credenciales tiene que dar la suya, igual que el operador.
+ */
+export const FRASE = "una frase de paso solo para las pruebas";
+
 export const homeTemporal = (prefijo = "noxloop-svc-") => mkdtempSync(join(tmpdir(), prefijo));
+
+/** Una carpeta vacia de usar y tirar. */
+export const carpetaDePrueba = () => mkdtempSync(join(tmpdir(), "noxloop-carpeta-"));
+
+/**
+ * Un repositorio git de verdad.
+ *
+ * POR QUE `git init` Y NO UN `.git` FABRICADO A MANO. Porque lo que el servicio
+ * comprueba es lo que hay en el disco, y un `.git` de mentira probaria que la
+ * comprobacion pasa sobre un directorio con ese nombre — no que pasa sobre un
+ * repositorio. El dia que la comprobacion se afine, el test tiene que seguir
+ * siendo verdad.
+ */
+export function repoDePrueba() {
+  const ruta = carpetaDePrueba();
+  execFileSync("git", ["init", "--quiet", ruta], { stdio: "ignore" });
+  writeFileSync(join(ruta, "README.md"), "# un proyecto del operador\n");
+  return ruta;
+}
+
+/**
+ * Un repositorio con MUCHOS archivos.
+ *
+ * POR QUE HACE FALTA. La prueba de cancelacion es una carrera de verdad: el
+ * `DELETE` tiene que llegar mientras el recorrido todavia corre. Sobre un
+ * repositorio de tres archivos, el escaneo termina antes que el viaje de ida y
+ * vuelta de la peticion y el test falla —o peor, pasa a veces—. Con unos miles
+ * de archivos la fase de inventario dura lo suficiente para que la carrera
+ * tenga un ganador estable, y lo que se prueba sigue siendo lo mismo.
+ *
+ * @param {number} [cuantos]
+ */
+export function repoGrandeDePrueba(cuantos = 4000) {
+  const ruta = repoDePrueba();
+  const dir = join(ruta, "muchos");
+  mkdirSync(dir, { recursive: true });
+  for (let i = 0; i < cuantos; i++) writeFileSync(join(dir, `archivo-${i}.txt`), `contenido ${i}\n`);
+  return ruta;
+}
+
+/**
+ * Huella del arbol COMPLETO, incluido lo que git ignora.
+ *
+ * Inodo, mtime, tamaño y modo: un archivo reescrito con el mismo contenido
+ * cambia mtime, y uno reemplazado por temporal + rename cambia el inodo. `atime`
+ * queda fuera a proposito — leer un archivo lo mueve, y leer es exactamente lo
+ * que estas rutas tienen permitido hacer.
+ *
+ * @param {string} raiz
+ * @returns {Map<string, string>}
+ */
+export function huellaDelArbol(raiz) {
+  /** @type {Map<string, string>} */
+  const huella = new Map();
+  /** @param {string} dir */
+  const recorrer = (dir) => {
+    for (const nombre of readdirSync(dir).sort()) {
+      const p = join(dir, nombre);
+      const st = lstatSync(p);
+      huella.set(
+        relative(raiz, p).split(sep).join("/"),
+        `${st.ino}:${st.mtimeMs}:${st.size}:${st.mode}:${st.isDirectory() ? "d" : "f"}`,
+      );
+      if (st.isDirectory() && !st.isSymbolicLink()) recorrer(p);
+    }
+  };
+  recorrer(raiz);
+  return huella;
+}
+
+/** La diferencia entre dos huellas, en texto, para que el fallo diga QUE se toco. */
+export function diferencias(antes, despues) {
+  const cambios = [];
+  for (const [ruta, valor] of despues) {
+    if (!antes.has(ruta)) cambios.push(`creado: ${ruta}`);
+    else if (antes.get(ruta) !== valor) cambios.push(`modificado: ${ruta} (${antes.get(ruta)} -> ${valor})`);
+  }
+  for (const ruta of antes.keys()) if (!despues.has(ruta)) cambios.push(`borrado: ${ruta}`);
+  return cambios;
+}
 
 /**
  * Levanta un servicio y garantiza apagarlo, pase lo que pase. Un servicio que

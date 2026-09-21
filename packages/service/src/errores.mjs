@@ -90,6 +90,124 @@ export const CATALOGO = {
         : "Cierra la aplicacion que ya esta usando ese home, o arranca este servicio con otro `--home`.",
   },
 
+  cuerpo_invalido: {
+    estado: 400,
+    causa: (d) =>
+      `El cuerpo de la peticion no sirve: ${d.detalle || "no se pudo leer"}. Este servicio es el unico ` +
+      "escritor del almacen, asi que valida la forma ANTES de escribir nada: una fila a medias se lee " +
+      "despues como un dato verificado y no hay forma de distinguirla.",
+    // La accion repite las OPCIONES cuando el campo es un enum, aunque la causa
+    // ya las diga. No es redundancia: quien recibe el error lee la accion —es
+    // lo que la interfaz pone en el boton— y "vuelve a mandarlo con `area`" no
+    // dice cuales valen, asi que el siguiente intento es otra adivinanza.
+    accion: (d) => {
+      if (d.opciones && d.opciones.length) {
+        return (
+          `Repite la peticion con \`${d.campos?.[0] ?? "el campo"}\` en uno de estos valores: ` +
+          `${d.opciones.map((/** @type {string} */ o) => `\`${o}\``).join(", ")}.`
+        );
+      }
+      return d.campos && d.campos.length
+        ? `Vuelve a mandar la peticion con ${d.campos.map((/** @type {string} */ c) => `\`${c}\``).join(", ")}.`
+        : "Vuelve a mandar la peticion con un cuerpo JSON valido; el contrato de la API de control declara la " +
+          "forma que espera cada ruta.";
+    },
+  },
+
+  // Escenario 4 de US1. La accion es LA que resuelve —inicializar el
+  // repositorio— y no "elige otra carpeta": quien apunto ahi sabe que carpeta
+  // quiere, lo que no sabe es que le falta `git init`.
+  no_es_repositorio: {
+    estado: 400,
+    causa: (d) =>
+      `\`${d.ruta}\` existe pero no es un repositorio git: no se encontro \`.git\` dentro. Un proyecto de ` +
+      "origen `local` se adopta tal como esta, y todo lo que viene despues —la constitution versionada, el " +
+      "diff del bootstrap, el worktree de cada tarea— necesita un repositorio debajo.",
+    accion: (d) =>
+      `Inicializa el repositorio con \`git init ${d.ruta}\` y vuelve a darlo de alta, o declara el proyecto ` +
+      "con `origen: \"nuevo\"` para que el servicio lo prepare desde cero.",
+  },
+
+  // Escenario 3 de US2. Ofrecer adoptarlo es la mitad que importa: sin eso, el
+  // operador borra la carpeta para poder seguir, y ahi se pierde trabajo suyo.
+  destino_no_vacio: {
+    estado: 409,
+    causa: (d) =>
+      `\`${d.ruta}\` ya tiene contenido (${d.cuantas} entrada(s), entre ellas ${d.muestra}). Un proyecto de ` +
+      "origen `nuevo` escribe el andamiaje ahi dentro, y hacerlo sobre lo que ya hay es la forma exacta de " +
+      "pisar trabajo que nadie volvio a ver.",
+    accion: (d) =>
+      `Da de alta \`${d.ruta}\` con \`origen: "local"\` para adoptarlo como esta —es lo que suele querer ` +
+      "decir una carpeta con contenido— o apunta `ruta_local` a un destino vacio.",
+  },
+
+  proyecto_desconocido: {
+    estado: 404,
+    causa: (d) =>
+      `No hay ningun proyecto con el id \`${d.id}\` en este home. Puede ser de otro home —la interfaz y la ` +
+      "CLI miran el mismo `--home` a proposito— o puede haberse dejado de gestionar desde otra ventana.",
+    accion: () =>
+      "Pide `/v1/projects` para ver los que este servicio gestiona y usa uno de esos ids; `/v1/health` dice " +
+      "sobre que home esta corriendo.",
+  },
+
+  // UN codigo para todos los recursos de segundo nivel, con `tipo` adentro. Uno
+  // por entidad multiplica el catalogo por diez y hace que el error del septimo
+  // —el que nadie se acuerda de declarar— salga como `fallo_interno`.
+  recurso_desconocido: {
+    estado: 404,
+    causa: (d) =>
+      `No hay ningun ${d.tipo} con el id \`${d.id}\`${d.de ? ` en ${d.de}` : ""}. ` +
+      "Los ids de este servicio no sobreviven a que el recurso se borre, y otra ventana sobre el mismo home " +
+      "pudo borrarlo entre que lo leiste y lo pediste.",
+    accion: (d) => `Vuelve a pedir la lista de ${d.tipo}(s) —${d.donde}— y usa un id de los que salgan ahi.`,
+  },
+
+  // FR-034. Se valida al guardar y no al ejecutar: un error de configuracion
+  // descubierto a mitad de un run cuesta el run entero.
+  revisor_comparte_runtime: {
+    estado: 409,
+    causa: (d) =>
+      `El revisor \`${d.revisor}\` y el implementador \`${d.implementador}\` corren sobre el mismo runtime ` +
+      `\`${d.runtime}\`. Una revision hecha por el mismo runtime que escribio el codigo aprueba sus propios ` +
+      "puntos ciegos: no es una segunda opinion, es la primera repetida.",
+    accion: (d) =>
+      `Cambia el runtime de \`${d.revisor}\` a uno distinto de \`${d.runtime}\` en la pantalla de flota del ` +
+      "proyecto, y vuelve a activar.",
+  },
+
+  // FR-064. La etapa que falta va en la causa a proposito: "no esta activo" sin
+  // decir que falta deja al operador recorriendo las seis etapas a mano.
+  proyecto_no_activo: {
+    estado: 409,
+    causa: (d) =>
+      `El proyecto \`${d.nombre}\` esta en \`${d.estado}\` y un run solo se lanza desde \`ACTIVE\`. La etapa ` +
+      `que falta es \`${d.etapa}\`: ${d.hallado}.`,
+    accion: (d) => d.comoConseguirlo,
+  },
+
+  // Principio X aplicado a las costuras que todavia no estan montadas. UN
+  // codigo, con la pieza adentro: declarar el hueco es el contrato, y un
+  // `fallo_interno` en su lugar manda al operador a leer una traza que no es suya.
+  pieza_ausente: {
+    estado: 503,
+    causa: (d) => `${d.porque} Sin \`${d.pieza}\`, esta ruta no puede hacer lo que promete y no lo va a fingir.`,
+    accion: (d) => d.comoConseguirlo,
+  },
+
+  // La otra mitad del compare-and-set del contrato: `ETag`/`If-Match` en `PUT`
+  // y `PATCH`, y `412` si cambio por debajo.
+  estado_obsoleto: {
+    estado: 412,
+    causa: (d) =>
+      `La peticion declaro \`If-Match: ${d.esperado}\` y el ${d.tipo} \`${d.id}\` esta hoy en \`${d.actual}\`. ` +
+      "Cambio por debajo entre que lo leiste y lo mandaste — con dos ventanas abiertas sobre el mismo home " +
+      "eso pasa, y escribir encima es como se pierde lo que hizo la otra.",
+    accion: () =>
+      "Vuelve a pedir el recurso, mira que cambio, y repite la operacion con el `ETag` nuevo. Si lo que " +
+      "querias sigue teniendo sentido sobre el estado de ahora, sale igual.",
+  },
+
   fallo_interno: {
     estado: 500,
     causa: (d) =>
@@ -148,14 +266,116 @@ export function problema(codigo, datos = {}) {
 }
 
 /**
+ * Un error que YA viene con causa y accion desde el paquete que lo emitio.
+ *
+ * POR QUE SE MIRA LA FORMA Y NO `instanceof`. Los cinco paquetes que este
+ * servicio cablea declaran su propia clase de error —`ErrorDeNucleo`,
+ * `ErrorDeAlmacen`, `ErrorDeBoveda`, `ErrorDeConexion`, `ErrorDeScanner`— y
+ * ninguna importa a las otras a proposito: cada paquete viaja al escritorio como
+ * recurso suelto. Con `instanceof` habria que importar las cinco clases aqui, y
+ * la sexta que aparezca saldria como `fallo_interno` sin que nadie lo note. La
+ * forma —codigo, causa y accion— es el contrato que NFR-006 les exige a todas.
+ *
+ * @param {any} e
+ */
+export function esDeDominio(e) {
+  return Boolean(e) && typeof e.codigo === "string" && typeof e.causa === "string" && typeof e.accion === "string";
+}
+
+/**
+ * El codigo HTTP de un error de dominio que no lo trae puesto.
+ *
+ * POR QUE ESTA TABLA EXISTE, Y POR QUE ES CORTA. `ErrorDeNucleo` trae su propio
+ * `estado` porque el contrato de la API fija codigos concretos para sus casos
+ * —el 400 de la enmienda incompleta, el 409 del diff obsoleto— y el dominio es
+ * quien sabe cual corresponde. Los otros cuatro paquetes no saben de HTTP a
+ * proposito: `packages/store` no importa nada de fuera de si mismo, y meterle
+ * un campo `estado` seria meterle el protocolo del servicio adentro.
+ *
+ * Asi que la traduccion vive aqui, que es el unico sitio que conoce a los dos.
+ * Solo se listan los que NO son 400: un error de dominio es, por defecto, algo
+ * que la peticion pidio y no se pudo dar. Lo que esta tabla evita es que un
+ * conflicto real —una transicion sin su artefacto, un grant revocado— salga
+ * como `400 Bad Request` y el cliente lo trate como un error de formato suyo y
+ * deje de reintentar lo que si tenia sentido reintentar.
+ *
+ * @type {Record<string, number>}
+ */
+const ESTADO_DE_DOMINIO = {
+  // `packages/store` — la maquina de estados y sus guardas.
+  proyecto_desconocido: 404,
+  transicion_no_declarada: 409,
+  retroceso_no_existe: 409,
+  atajo_solo_para_proyecto_nuevo: 409,
+  transicion_sin_artefacto: 409,
+  escritor_concurrente: 409,
+  auditoria_sin_redactor: 503,
+
+  // `packages/vault`. Denegar por defecto: un acceso sin grant vigente es un
+  // 403 y no un 400 — lo que se pidio esta bien escrito, lo que falta es el
+  // permiso, y la accion del error dice como pedirlo.
+  credencial_ausente: 404,
+  grant_ausente: 404,
+  sin_grant: 403,
+  grant_no_vigente: 403,
+  redactor_sin_cargar: 503,
+  backend_sin_motivo: 503,
+  backend_desconocido: 503,
+
+  // `packages/connections`.
+  proveedor_desconocido: 404,
+  conexion_desconocida: 404,
+  handle_desconocido: 404,
+  conexion_revocada: 409,
+  conexion_pendiente: 409,
+  adaptador_caido: 503,
+  espera_agotada: 504,
+  // Una fuga detectada es un fallo DE ESTE SERVICIO, no de quien llamo: la
+  // peticion era correcta y el que se equivoco fue el adaptador al devolver un
+  // valor donde iba una referencia.
+  fuga_de_valor: 500,
+
+  // `packages/scanner`.
+  ruta_inaccesible: 404,
+  no_es_directorio: 400,
+};
+
+/**
  * Cualquier excepcion convertida al unico formato. Lo que entra por aqui es lo
  * que nadie previo, y sale igual de accionable que lo previsto.
  *
  * @param {any} e
  */
 export function deExcepcion(e) {
-  if (e instanceof ErrorDeServicio) return e.cuerpo;
-  return problema("fallo_interno", { detalle: e && e.message ? e.message : String(e) });
+  return describir(e).cuerpo;
+}
+
+/**
+ * El sobre Y el codigo HTTP, juntos.
+ *
+ * POR QUE LOS DOS A LA VEZ. Un error del nucleo trae su propio `estado` —el 400
+ * de la enmienda sin sus tres campos, el 409 del diff obsoleto son decisiones
+ * del contrato, no de este archivo— y el catalogo de aqui no lo conoce.
+ * Calcular el estado aparte, mirando solo el codigo, devolvia 500 para todos
+ * ellos: el cliente veia "fallo del servicio" donde el servicio habia dicho
+ * exactamente que estaba mal en la peticion.
+ *
+ * @param {any} e
+ * @returns {{cuerpo: {error: any}, estado: number}}
+ */
+export function describir(e) {
+  if (e instanceof ErrorDeServicio) return { cuerpo: e.cuerpo, estado: e.estado };
+  if (esDeDominio(e)) {
+    const error = /** @type {any} */ ({ codigo: e.codigo, causa: e.causa, accion: e.accion });
+    if (e.objeto) error.objeto = e.objeto;
+    // `estado` solo lo trae el nucleo. Para los demas esta la tabla de arriba,
+    // y lo que no aparece en ninguna de las dos es un 400: lo que llego no se
+    // pudo aceptar, y no es una caida de este servicio.
+    const estado = typeof e.estado === "number" ? e.estado : (ESTADO_DE_DOMINIO[e.codigo] ?? 400);
+    return { cuerpo: { error }, estado };
+  }
+  const cuerpo = problema("fallo_interno", { detalle: e && e.message ? e.message : String(e) });
+  return { cuerpo, estado: 500 };
 }
 
 /** El estado HTTP que le toca a un sobre ya construido. */

@@ -71,24 +71,88 @@ test("dos homes distintos conviven: dos proyectos abiertos a la vez no son un er
   }
 });
 
-test("el servicio no importa nada de fuera de su paquete: al escritorio viaja solo", () => {
-  // EL FALLO QUE EVITA. El escritorio empaqueta `packages/service/{package.json,
-  // bin,src}` como recurso y nada mas. Un import relativo que salga del paquete
-  // —a `packages/engine`, a `providers/`— resuelve perfectamente en el
-  // repositorio y revienta al abrir la aplicacion instalada, con un
-  // ERR_MODULE_NOT_FOUND que el operador ve como una ventana que no abre.
+/**
+ * Los paquetes hermanos que este servicio CABLEA, y por tanto los que tienen
+ * que viajar al escritorio a su lado.
+ *
+ * Esta lista es el contrato con `tauri.conf.json`: lo que este en ella tiene
+ * que estar declarado alli como recurso del sidecar, y lo que no este en ella
+ * no puede importarse desde aqui.
+ */
+const PAQUETES_QUE_VIAJAN = ["store", "vault", "scanner", "core", "connections"];
+
+test("el servicio solo importa los cinco paquetes que viajan con el al escritorio", () => {
+  // EL FALLO QUE EVITA, Y YA OCURRIO UNA VEZ CON EL LOCK. El escritorio
+  // empaqueta recursos declarados y nada mas. Un import relativo que salga del
+  // paquete resuelve perfectamente en el repositorio y revienta al abrir la
+  // aplicacion instalada, con un `ERR_MODULE_NOT_FOUND` que el operador ve como
+  // una ventana que no abre y sin ningun mensaje que lo explique.
+  //
+  // POR QUE ESTE TEST YA NO DICE "NINGUNO" Y AHORA DICE "ESTOS CINCO". Porque
+  // cablear los seis paquetes ES el trabajo de este servicio: prohibir del todo
+  // los imports de fuera solo dejaba dos salidas, y las dos peores —copiar el
+  // almacen aqui dentro, o importarlo por nombre de paquete
+  // (`@noxloop/store`), que resuelve por `node_modules` y por tanto PASA este
+  // test y revienta igual en el binario, callado—. La lista explicita hace lo
+  // contrario: deja el cableado a la vista y convierte el requisito de
+  // empaquetado en algo que se puede leer y comprobar.
+  //
+  // LO QUE ESTE TEST NO PUEDE COMPROBAR, y por eso se dice aqui: que esos cinco
+  // esten declarados en `apps/desktop/src-tauri/tauri.conf.json`. Ese archivo
+  // esta fuera de este paquete. Si falta uno, el sintoma es el mismo que el del
+  // lock, y el sitio donde mirar es esta lista.
   const dir = new URL("../src/", import.meta.url).pathname;
   const bin = new URL("../bin/", import.meta.url).pathname;
+  const permitidos = new Set(PAQUETES_QUE_VIAJAN.map((p) => `../../${p}/`));
   const fuera = [];
+
   for (const base of [dir, bin]) {
     for (const archivo of readdirRecursivo(base)) {
       const texto = readFileSync(archivo, "utf8");
       for (const m of texto.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g)) {
-        if (/(^|\/)\.\.\/\.\.\//.test(m[1])) fuera.push(`${archivo}: ${m[1]}`);
+        const especificador = m[1];
+        if (!/(^|\/)\.\.\/\.\.\//.test(especificador)) continue;
+        const paquete = especificador.match(/^\.\.\/\.\.\/([^/]+)\//);
+        if (!paquete || !permitidos.has(`../../${paquete[1]}/`)) {
+          fuera.push(`${archivo.replace(dir, "src/").replace(bin, "bin/")}: ${especificador}`);
+        }
       }
     }
   }
-  assert.deepEqual(fuera, [], `hay imports que salen del paquete:\n${fuera.join("\n")}`);
+
+  assert.deepEqual(
+    fuera,
+    [],
+    "hay imports que salen del paquete hacia algo que NO viaja al escritorio:\n" +
+      `${fuera.join("\n")}\n` +
+      `Los unicos permitidos son ${PAQUETES_QUE_VIAJAN.join(", ")}, y estan permitidos porque estan ` +
+      "declarados como recursos del sidecar. Agregar uno aqui obliga a declararlo alli tambien.",
+  );
+});
+
+test("y no importa por NOMBRE de paquete, que es la forma callada de romper el binario", () => {
+  // `import { abrirAlmacen } from "@noxloop/store"` resuelve por el
+  // `node_modules` del monorepo y funciona en el repositorio y en los tests.
+  // En la aplicacion instalada no hay `node_modules`, asi que muere igual que
+  // un import relativo — con la diferencia de que el test de arriba no lo ve.
+  // Un fallo que una guarda no puede ver es peor que el mismo fallo a la vista.
+  const dir = new URL("../src/", import.meta.url).pathname;
+  const bin = new URL("../bin/", import.meta.url).pathname;
+  const porNombre = [];
+  for (const base of [dir, bin]) {
+    for (const archivo of readdirRecursivo(base)) {
+      const texto = readFileSync(archivo, "utf8");
+      for (const m of texto.matchAll(/from\s+["'](@noxloop\/[^"']+)["']/g)) {
+        porNombre.push(`${archivo.replace(dir, "src/").replace(bin, "bin/")}: ${m[1]}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    porNombre,
+    [],
+    `hay imports por nombre de paquete:\n${porNombre.join("\n")}\n` +
+      "Usa la ruta relativa: se ve en el diff y la guarda de arriba la puede contar.",
+  );
 });
 
 function readdirRecursivo(dir, acc = []) {

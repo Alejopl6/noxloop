@@ -100,6 +100,7 @@ test("T135: un acceso sin motivo completo no se puede escribir", async () => {
 test("EL INVARIANTE: un grant con vigencia pasada no alcanza, aunque la fila exista", async () => {
   const { boveda, auditoria, credencial, repositorio } = await conCredencial();
   const grant = await boveda.otorgar({
+    concedido_por: "operadora-de-prueba",
     project_id: "p1",
     agent_id: "a1",
     credential_id: credencial.id,
@@ -124,7 +125,7 @@ test("EL INVARIANTE: un grant con vigencia pasada no alcanza, aunque la fila exi
 
 test("un grant revocado deja de alcanzar desde el instante en que se revoca", async () => {
   const { boveda, credencial } = await conCredencial();
-  const grant = await boveda.otorgar({ project_id: "p1", agent_id: "a1", credential_id: credencial.id });
+  const grant = await boveda.otorgar({ concedido_por: "operadora-de-prueba", project_id: "p1", agent_id: "a1", credential_id: credencial.id });
   const motivo = motivoDePrueba({ grant_id: grant.id });
 
   assert.ok(await boveda.recuperar(credencial.ref_boveda, motivo));
@@ -135,7 +136,7 @@ test("un grant revocado deja de alcanzar desde el instante en que se revoca", as
 test("el grant es una tripleta: no sirve el de otro proyecto, otro agente ni otra credencial", async () => {
   const { boveda, credencial } = await conCredencial();
   const otra = await boveda.registrar({ workspace: "w1", nombre: "otra", proveedor: "proveedor-de-prueba", tipo: "api_token", valor: centinela("otra") });
-  const grant = await boveda.otorgar({ project_id: "p1", agent_id: "a1", credential_id: credencial.id });
+  const grant = await boveda.otorgar({ concedido_por: "operadora-de-prueba", project_id: "p1", agent_id: "a1", credential_id: credencial.id });
 
   for (const cambio of [{ project_id: "p2" }, { agent_id: "a2" }]) {
     await assert.rejects(
@@ -153,7 +154,7 @@ test("el grant es una tripleta: no sirve el de otro proyecto, otro agente ni otr
 
 test("EL INVARIANTE: rotar cambia la huella y conserva los grants", async () => {
   const { boveda, credencial } = await conCredencial(centinela("antes"));
-  const grant = await boveda.otorgar({ project_id: "p1", agent_id: "a1", credential_id: credencial.id });
+  const grant = await boveda.otorgar({ concedido_por: "operadora-de-prueba", project_id: "p1", agent_id: "a1", credential_id: credencial.id });
   const motivo = motivoDePrueba({ grant_id: grant.id });
   const antes = await boveda.huella(credencial.ref_boveda);
 
@@ -174,16 +175,18 @@ test("EL INVARIANTE: rotar cambia la huella y conserva los grants", async () => 
 
 test("EL INVARIANTE: la vista inversa no devuelve grants revocados ni expirados", async () => {
   const { boveda, credencial } = await conCredencial();
-  const vigente = await boveda.otorgar({ project_id: "p1", agent_id: "a1", credential_id: credencial.id });
+  const vigente = await boveda.otorgar({ concedido_por: "operadora-de-prueba", project_id: "p1", agent_id: "a1", credential_id: credencial.id });
   const expirado = await boveda.otorgar({
+    concedido_por: "operadora-de-prueba",
     project_id: "p2",
     agent_id: "a2",
     credential_id: credencial.id,
     vigenciaHasta: new Date(Date.now() - HORA).toISOString(),
   });
-  const revocado = await boveda.otorgar({ project_id: "p3", agent_id: "a3", credential_id: credencial.id });
+  const revocado = await boveda.otorgar({ concedido_por: "operadora-de-prueba", project_id: "p3", agent_id: "a3", credential_id: credencial.id });
   await boveda.revocar(revocado.id);
   const futuro = await boveda.otorgar({
+    concedido_por: "operadora-de-prueba",
     project_id: "p4",
     agent_id: "a4",
     credential_id: credencial.id,

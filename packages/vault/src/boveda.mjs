@@ -238,11 +238,21 @@ export function crearBoveda({ backend, repositorio, auditoria, sal = salPorDefec
       auditoria.registrar({ tipo: "credencial_borrada", resultado: "ok", ref });
     },
 
-    /** @param {{ project_id: string, agent_id: string, credential_id: string, vigenciaHasta?: string|null }} datos */
+    /** @param {{ project_id: string, agent_id: string, credential_id: string, concedido_por: string, vigenciaHasta?: string|null, id?: string }} datos */
     async otorgar(datos) {
       const grant = crearGrant({ ...datos, ahora: reloj() });
       repositorio.guardarGrant(grant);
-      auditoria.registrar({ tipo: "grant_otorgado", resultado: "ok", grant_id: grant.id, credential_id: grant.credential_id });
+      // El autor va en el evento, no solo en la fila. Una auditoria que dice
+      // "se otorgo un grant" sin decir quien lo otorgo obliga a ir a buscar la
+      // fila — y si la fila se borra con el proyecto, ya no hay donde mirar.
+      // El registro append-only es lo unico que sobrevive a un borrado.
+      auditoria.registrar({
+        tipo: "grant_otorgado",
+        resultado: "ok",
+        grant_id: grant.id,
+        credential_id: grant.credential_id,
+        concedido_por: grant.concedido_por,
+      });
       return grant;
     },
 

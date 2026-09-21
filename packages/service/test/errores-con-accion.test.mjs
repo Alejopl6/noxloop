@@ -15,9 +15,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { CATALOGO, deExcepcion } from "../src/errores.mjs";
 import { arrancar } from "../src/servidor.mjs";
-import { homeTemporal, ORIGEN, TOKEN } from "./ayuda.mjs";
+import { carpetaDePrueba, homeTemporal, ORIGEN, repoDePrueba, TOKEN } from "./ayuda.mjs";
 
 /**
  * Como se provoca cada error del catalogo, de verdad. No se fabrica el objeto:
@@ -62,8 +65,92 @@ const PROVOCADORES = {
     }
   },
 
+  cuerpo_invalido: async (svc) =>
+    (await (await pedirJson(svc, "/v1/projects", "POST", "{ esto no es json")).json()).error,
+
+  no_es_repositorio: async (svc) => {
+    const ruta = carpetaDePrueba();
+    const r = await pedirJson(svc, "/v1/projects", "POST", { origen: "local", nombre: "Sin Git", ruta_local: ruta });
+    return (await r.json()).error;
+  },
+
+  destino_no_vacio: async (svc) => {
+    const ruta = carpetaDePrueba();
+    writeFileSync(join(ruta, "algo.txt"), "trabajo de alguien\n");
+    const r = await pedirJson(svc, "/v1/projects", "POST", { origen: "nuevo", nombre: "Encima", ruta_local: ruta });
+    return (await r.json()).error;
+  },
+
+  proyecto_desconocido: async (svc) =>
+    (await (await pedirJson(svc, "/v1/projects/no-existe", "GET")).json()).error,
+
+  recurso_desconocido: async (svc) =>
+    (await (await pedirJson(svc, "/v1/scans/no-existe", "DELETE")).json()).error,
+
+  // Se provoca por el camino REAL: dos agentes del mismo proyecto, el revisor
+  // con el runtime del implementador. FR-034 lo corta al guardar.
+  revisor_comparte_runtime: async (svc) => {
+    const proyecto = await proyectoDePrueba(svc, "Revisor Duplicado");
+    const agente = (rol, runtime) => ({ nombre: `el ${rol}`, rol, runtime, modelo: "un-modelo" });
+    await pedirJson(svc, `/v1/projects/${proyecto.id}/agents`, "POST", agente("implementador", "compartido"));
+    const r = await pedirJson(svc, `/v1/projects/${proyecto.id}/agents`, "POST", agente("revisor", "compartido"));
+    return (await r.json()).error;
+  },
+
+  proyecto_no_activo: async (svc) => {
+    const proyecto = await proyectoDePrueba(svc, "Sin Activar");
+    const r = await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { item: "T-1" });
+    return (await r.json()).error;
+  },
+
+  // Sin frase de paso no hay boveda, y registrar una credencial lo dice en vez
+  // de inventar una frase y guardarla junto al archivo que cifra.
+  pieza_ausente: async (svc) => {
+    const r = await pedirJson(svc, "/v1/credentials", "POST", {
+      nombre: "x",
+      proveedor: "y",
+      tipo: "api_token",
+      alcance_declarado: "z",
+      valor: "un valor cualquiera",
+    });
+    return (await r.json()).error;
+  },
+
+  estado_obsoleto: async (svc) => {
+    const proyecto = await proyectoDePrueba(svc, "Dos Ventanas");
+    const r = await fetch(`${svc.url}/v1/projects/${proyecto.id}`, {
+      method: "PATCH",
+      headers: {
+        "x-noxloop-token": TOKEN,
+        "content-type": "application/json",
+        "if-match": '"un-etag-de-otra-lectura"',
+      },
+      body: JSON.stringify({ nombre: "La segunda ventana" }),
+    });
+    return (await r.json()).error;
+  },
+
   fallo_interno: async () => deExcepcion(new Error("una excepcion que nadie previo")).error,
 };
+
+/** Una peticion con token, sin origen: como la hace la CLI. */
+function pedirJson(svc, ruta, metodo, cuerpo) {
+  return fetch(`${svc.url}${ruta}`, {
+    method: metodo,
+    headers: { "x-noxloop-token": TOKEN, "content-type": "application/json" },
+    ...(cuerpo === undefined ? {} : { body: typeof cuerpo === "string" ? cuerpo : JSON.stringify(cuerpo) }),
+  });
+}
+
+/** Un proyecto local dado de alta, para los provocadores que necesitan uno. */
+async function proyectoDePrueba(svc, nombre) {
+  const r = await pedirJson(svc, "/v1/projects", "POST", {
+    origen: "local",
+    nombre,
+    ruta_local: repoDePrueba(),
+  });
+  return (await r.json()).proyecto;
+}
 
 test("todo codigo del catalogo tiene una forma de provocarlo", () => {
   const sinProvocador = Object.keys(CATALOGO).filter((c) => !PROVOCADORES[c]);

@@ -85,8 +85,9 @@ export function tokenDe(req, url) {
  *
  * @param {string|null} origen
  * @param {boolean} [preflight]
+ * @param {readonly string[]|null} [metodos] los que acepta ESA ruta, si se conocen
  */
-export function cabecerasCors(origen, preflight = false) {
+export function cabecerasCors(origen, preflight = false, metodos = null) {
   // `Vary: Origin` va siempre, tambien cuando no hay origen: sin el, una cache
   // intermedia puede servirle a una pestaña la respuesta que se calculo para
   // otra con otro origen.
@@ -94,8 +95,16 @@ export function cabecerasCors(origen, preflight = false) {
   if (!origen) return cabeceras;
   cabeceras["access-control-allow-origin"] = origen;
   if (preflight) {
-    cabeceras["access-control-allow-methods"] = "GET, HEAD, OPTIONS";
-    cabeceras["access-control-allow-headers"] = `${CABECERA_TOKEN}, authorization, content-type, last-event-id`;
+    // Se anuncian los metodos de ESA ruta y no una lista fija. Con una lista
+    // fija hay dos formas de equivocarse y las dos son caras: de menos, el
+    // navegador bloquea un `PATCH` que el servicio si acepta y el sintoma es
+    // una pantalla que no guarda sin ningun error; de mas, se anuncia un
+    // `DELETE` sobre una ruta que contesta 405, y quien lee el preflight cree
+    // que existe una superficie de borrado que no existe — que es exactamente
+    // lo que FR-049 no quiere que se lea sobre `/v1/audit`.
+    cabeceras["access-control-allow-methods"] = [...new Set([...(metodos ?? ["GET", "HEAD"]), "OPTIONS"])].join(", ");
+    cabeceras["access-control-allow-headers"] =
+      `${CABECERA_TOKEN}, authorization, content-type, last-event-id, if-match`;
     cabeceras["access-control-max-age"] = "600";
   }
   return cabeceras;

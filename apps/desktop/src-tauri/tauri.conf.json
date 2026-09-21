@@ -39,7 +39,16 @@
     "resources": {
       "../../../packages/service/package.json": "servicio/package.json",
       "../../../packages/service/bin/**/*": "servicio/bin/",
-      "../../../packages/service/src/**/*": "servicio/src/"
+      "../../../packages/service/src/**/*": "servicio/src/",
+
+      "../../../packages/store/package.json": "store/package.json",
+      "../../../packages/store/src/**/*": "store/src/",
+      "../../../packages/vault/package.json": "vault/package.json",
+      "../../../packages/vault/src/**/*": "vault/src/",
+      "../../../packages/scanner/package.json": "scanner/package.json",
+      "../../../packages/scanner/src/**/*": "scanner/src/",
+      "../../../packages/core/package.json": "core/package.json",
+      "../../../packages/core/src/**/*": "core/src/"
     }
   }
 }

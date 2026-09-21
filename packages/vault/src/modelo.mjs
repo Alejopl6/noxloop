@@ -121,21 +121,49 @@ export function crearCredencial({
  * @property {string} project_id
  * @property {string} agent_id
  * @property {string} credential_id
+ * @property {string} concedido_por  quien lo concedio. SIEMPRE una persona: sin autor, la auditoria no reconstruye quien autorizo
  * @property {string} otorgadoEn
  * @property {string|null} vigenciaHasta  `null` es sin caducidad, no "para siempre sin control": se revoca
  * @property {string|null} revocadoEn
  */
 
 /**
- * @param {{ project_id: string, agent_id: string, credential_id: string, vigenciaHasta?: string|null, id?: string, ahora?: number }} datos
+ * @param {{ project_id: string, agent_id: string, credential_id: string, concedido_por: string, vigenciaHasta?: string|null, id?: string, ahora?: number }} datos
  * @returns {Grant}
  */
-export function crearGrant({ project_id, agent_id, credential_id, vigenciaHasta = null, id, ahora = Date.now() }) {
+export function crearGrant({
+  project_id,
+  agent_id,
+  credential_id,
+  concedido_por,
+  vigenciaHasta = null,
+  id,
+  ahora = Date.now(),
+}) {
+  // `concedido_por` es obligatorio y SIEMPRE es una persona.
+  //
+  // Se descartaba en silencio: los parametros no lo aceptaban, asi que quien
+  // cableaba el servicio lo mandaba y desaparecia. Lo descubrio ese cableado,
+  // no una revision, y mientras tanto el inventario no podia contestar quien
+  // autorizo un acceso.
+  //
+  // Y es la pregunta que hace util a la auditoria. "Este agente alcanzo esta
+  // credencial" sin "y quien se lo concedio" no reconstruye nada: la cadena de
+  // responsabilidad se corta justo donde empieza la decision humana, que es la
+  // unica parte que el sistema no puede tomar por su cuenta.
+  if (!concedido_por) {
+    throw new Error(
+      "un grant sin `concedido_por` no se puede otorgar.\n" +
+        "  Causa:  el grant es una decision humana, y sin su autor la auditoria no puede reconstruir quien autorizo el acceso.\n" +
+        "  Accion: pasa `concedido_por` con quien concede. Nunca un valor de sistema: si no hubo persona, no hubo decision.",
+    );
+  }
   return Object.freeze({
     id: id ?? nuevoIdDeCredencial(),
     project_id,
     agent_id,
     credential_id,
+    concedido_por,
     otorgadoEn: new Date(ahora).toISOString(),
     vigenciaHasta,
     revocadoEn: null,

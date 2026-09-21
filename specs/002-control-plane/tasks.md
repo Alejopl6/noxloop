@@ -119,15 +119,15 @@ funcione.
 
 ### B.3 · Endpoints y pantallas
 
-- [ ] T080 [B] `POST /v1/projects` con los tres orígenes; `no_es_repositorio` y `destino_no_vacio` con su acción
-- [ ] T081 [B] `POST /v1/projects/:id/scan` + `DELETE /v1/scans/:id`; progreso y hallazgos por SSE
-- [ ] T082 [B] `PATCH` de hallazgo y `POST /accept` → `DISCOVERED`
+- [X] T080 [B] `POST /v1/projects` con los tres orígenes; `no_es_repositorio` y `destino_no_vacio` con su acción
+- [X] T081 [B] `POST /v1/projects/:id/scan` + `DELETE /v1/scans/:id`; progreso y hallazgos por SSE
+- [X] T082 [B] `PATCH` de hallazgo y `POST /accept` → `DISCOVERED`
 - [X] T083 [P] [B] `packages/ui`: `Entity`, `EmptyState`, `Description`, `StatusDot` — los que shadcn no trae
-- [ ] T084 [P] [B] Pantalla de lista de proyectos. **No es una grilla de tarjetas** (FR-061)
-- [ ] T085 [B] Asistente de alta con selector de carpeta (`tauri-plugin-dialog`) y adaptador web
-- [ ] T086 [B] Pantalla de snapshot: hallazgos agrupados, **origen visible en cada uno**, corregir y descartar
-- [ ] T087 [P] [B] Plantillas de proyecto nuevo
-- [ ] T088 [B] CI: el paso "el scanner no escribe" sobre repositorios reales
+- [X] T084 [P] [B] Pantalla de lista de proyectos. **No es una grilla de tarjetas** (FR-061)
+- [X] T085 [B] Asistente de alta con selector de carpeta (`tauri-plugin-dialog`) y adaptador web
+- [X] T086 [B] Pantalla de snapshot: hallazgos agrupados, **origen visible en cada uno**, corregir y descartar
+- [X] T087 [P] [B] Plantillas de proyecto nuevo
+- [X] T088 [B] CI: el paso "el scanner no escribe" sobre repositorios reales
 
 ---
 
@@ -147,7 +147,7 @@ funcione.
 - [X] T113 [C] Aplicar, personalizar, omitir — con registro de la decisión y su motivo
 - [X] T114 [C] Test primero: una recomendación que contradice la constitution no se propone sin declarar el conflicto (FR-028)
 - [X] T115 [P] [C] `packages/ui`: `Fieldset`, `JSON View`, `File Tree`
-- [ ] T116 [C] Pantallas de constitution, guidelines y bootstrap
+- [X] T116 [C] Pantallas de constitution, guidelines y bootstrap
 - [X] T117 [C] **Test de aceptación**: bootstrap sobre este repositorio detecta ≥90% del setup existente (SC-005)
 
 ---
@@ -170,13 +170,13 @@ funcione.
 - [X] T137 [D] Test primero: `reach` no devuelve grants revocados ni expirados (vista inversa, FR-045)
 - [X] T138 [D] Test primero: rotar cambia la huella y **conserva** los grants
 - [X] T139 [D] Redactor: carga huellas, busca **por valor** y reemplaza por `[redactado:<nombre>]`
-- [ ] T140 [D] Test primero: el evidence packet **en disco** nunca contuvo el centinela — sobre el archivo escrito, no sobre el objeto en memoria
-- [ ] T141 [D] Auditoría append-only con hash encadenado. Test: no existe ruta en la API que la edite o borre
+- [X] T140 [D] Test primero: el evidence packet **en disco** nunca contuvo el centinela — sobre el archivo escrito, no sobre el objeto en memoria
+- [X] T141 [D] Auditoría append-only con hash encadenado. Test: no existe ruta en la API que la edite o borre
 - [X] T142 [D] Test primero: el entorno del subproceso contiene **exactamente** lo declarado, ni una variable heredada de más
 - [X] T143 [D] Test primero: ningún valor aparece en `argv` del proceso lanzado
-- [ ] T144 [D] `DangerPolicy`: test de que ninguna ruta crea una habilitada (FR-051)
+- [X] T144 [D] `DangerPolicy`: test de que ninguna ruta crea una habilitada (FR-051)
 - [X] T145 [D] SSH: huella de host fijada, allowlist de lectura, bitácora de **cada comando**, sin `ForwardAgent`
-- [ ] T146 [D] **Test de suite**: el centinela no aparece en ninguna respuesta de **ningún** endpoint, errores incluidos (NFR-004)
+- [X] T146 [D] **Test de suite**: el centinela no aparece en ninguna respuesta de **ningún** endpoint, errores incluidos (NFR-004)
 
 ### D.2 · Conexiones
 
@@ -193,9 +193,9 @@ funcione.
 - [X] T160 [D] Test primero: con el adaptador caído, las conexiones existentes siguen y las nuevas fallan con causa; la aplicación no se cae
 - [X] T161 [D] Declarar la licencia ELv2 en `LICENSE` y `README`, con lo que implica para quien redistribuya
 - [X] T162 [P] [D] `packages/ui`: `SecretValue`, `Destructive Action Modal`
-- [ ] T163 [D] Pantallas de conexiones, inventario de credenciales, grants y vista inversa
-- [ ] T164 [D] Pantalla de auditoría, solo lectura
-- [ ] T165 [D] CI: las 12 pruebas de no filtración, en cada commit
+- [X] T163 [D] Pantallas de conexiones, inventario de credenciales, grants y vista inversa
+- [X] T164 [D] Pantalla de auditoría, solo lectura
+- [X] T165 [D] CI: las 12 pruebas de no filtración, en cada commit
 
 ---
 
@@ -203,16 +203,16 @@ funcione.
 
 **Criterio de salida**: con el proveedor `fake`, un proyecto establecido en la aplicación llega a PR abierto de punta a punta, sin intervención (SC-009).
 
-- [ ] T180 [E] Formalizar `AgentAdapter` sobre la costura real (`driver.mjs:641`), con el campo `env` nuevo
-- [ ] T181 [E] Suite de contrato de adaptadores, 11 pruebas según `contracts/agent-adapter.md`
-- [ ] T182 [P] [E] Adaptador `fake`
-- [ ] T183 [P] [E] Adaptador `claude-agent-sdk`, formalizando lo que v1 ya hace
-- [ ] T184 [E] **Adaptador `codex`**. Su función no es solo existir: si añadirlo obliga a tocar `driver.mjs`, el contrato está mal y lo descubrimos ahora
-- [ ] T185 [E] Test primero: `phase: 'REVIEW'` nunca recibe `resume` distinto de `null` — el revisor no hereda el razonamiento del implementador
-- [ ] T186 [E] Test primero: `activate` rechaza con `revisor_comparte_runtime` (FR-034)
-- [ ] T187 [E] `Agent` con rol, runtime, modelo, skills, tools, MCP, permisos, presupuesto y contexto → `ACTIVE`
-- [ ] T188 [E] **Pantalla de flota (etapa 07)**, y el botón que lleva a ella desde un proyecto `CONNECTED`
-- [ ] T189 [E] Lanzar un ciclo desde un proyecto `ACTIVE`, con el 409 que nombra la etapa que falta pintado como acción
+- [X] T180 [E] Formalizar `AgentAdapter` sobre la costura real (`driver.mjs:641`), con el campo `env` nuevo
+- [X] T181 [E] Suite de contrato de adaptadores, 11 pruebas según `contracts/agent-adapter.md`
+- [X] T182 [P] [E] Adaptador `fake`
+- [X] T183 [P] [E] Adaptador `claude-agent-sdk`, formalizando lo que v1 ya hace
+- [X] T184 [E] **Adaptador `codex`**. Su función no es solo existir: si añadirlo obliga a tocar `driver.mjs`, el contrato está mal y lo descubrimos ahora
+- [X] T185 [E] Test primero: `phase: 'REVIEW'` nunca recibe `resume` distinto de `null` — el revisor no hereda el razonamiento del implementador
+- [X] T186 [E] Test primero: `activate` rechaza con `revisor_comparte_runtime` (FR-034)
+- [X] T187 [E] `Agent` con rol, runtime, modelo, skills, tools, MCP, permisos, presupuesto y contexto → `ACTIVE`
+- [X] T188 [E] **Pantalla de flota (etapa 07)**, y el botón que lleva a ella desde un proyecto `CONNECTED`
+- [X] T189 [E] Lanzar un ciclo desde un proyecto `ACTIVE`, con el 409 que nombra la etapa que falta pintado como acción
 
 > **T188 y T189 se añadieron después de escribir este documento.** El desglose
 > original cubría el modelo de flota (T187) y ninguna pantalla para él, así que
@@ -225,15 +225,15 @@ funcione.
 > Vale anotarlo porque es un fallo del desglose, no de la implementación: una
 > etapa del ciclo tenía dominio y no tenía superficie, y ninguna tarea lo decía.
 
-- [ ] T190 [P] [E] `InboxEntry` con causa textual **completa**, no resumen generado (FR-062)
-- [ ] T191 [E] `GET /v1/dashboard`: indicadores agregados. Test: <1s con 20 proyectos (NFR-002)
-- [ ] T192 [E] Pantalla de inicio con la bandeja como **único elemento accionable**, y el estado "bandeja vacía" explícito
-- [ ] T193 [E] Test primero: `POST /runs` sobre un proyecto no `ACTIVE` devuelve 409 **nombrando la etapa que falta** (FR-064)
-- [ ] T194 [E] Context compiler: constitution + guidelines + diseño + work item → contexto del run
-- [ ] T195 [E] Test primero, al estilo del que ya protege el board: se mide el disco antes y después de un `GET /runs` y **no cambió nada**
+- [X] T190 [P] [E] `InboxEntry` con causa textual **completa**, no resumen generado (FR-062)
+- [X] T191 [E] `GET /v1/dashboard`: indicadores agregados. Test: <1s con 20 proyectos (NFR-002)
+- [X] T192 [E] Pantalla de inicio con la bandeja como **único elemento accionable**, y el estado "bandeja vacía" explícito
+- [X] T193 [E] Test primero: `POST /runs` sobre un proyecto no `ACTIVE` devuelve 409 **nombrando la etapa que falta** (FR-064)
+- [X] T194 [E] Context compiler: constitution + guidelines + diseño + work item → contexto del run
+- [X] T195 [E] Test primero, al estilo del que ya protege el board: se mide el disco antes y después de un `GET /runs` y **no cambió nada**
 - [ ] T196 [E] **Test de punta a punta**: proyecto establecido en la aplicación → PR abierto con el proveedor `fake` (SC-009)
 - [X] T197 [P] [E] `packages/ui`: `Command Menu` (⌘K) para NFR-005
-- [ ] T198 [E] Recorrido completo de teclado y tema claro/oscuro (NFR-005)
+- [X] T198 [E] Recorrido completo de teclado y tema claro/oscuro (NFR-005)
 
 ---
 
@@ -241,9 +241,9 @@ funcione.
 
 - [ ] T200 [F] `quickstart.md`: cómo se levanta y cómo se verifica, con los comandos que el CI va a correr
 - [ ] T201 [F] Actualizar `README.md` y `CHANGELOG.md`
-- [ ] T202 [F] `docs/`: bóveda, conexiones y el sistema de diseño
-- [ ] T203 [F] CI: los comandos que la documentación nueva manda correr, corridos — el listón que ya existe
-- [ ] T204 [F] `tauri build` en las tres plataformas, en etiquetas
+- [X] T202 [F] `docs/`: bóveda, conexiones y el sistema de diseño
+- [X] T203 [F] CI: los comandos que la documentación nueva manda correr, corridos — el listón que ya existe
+- [X] T204 [F] `tauri build` en las tres plataformas, en etiquetas
 - [ ] T205 [F] **Test de aceptación de SC-001**: repositorio real desde "abrir la app" hasta `ACTIVE` en menos de 15 minutos, sin editar un archivo a mano y sin leer documentación
 
 ---

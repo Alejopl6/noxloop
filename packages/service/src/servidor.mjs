@@ -20,35 +20,23 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { capacidades } from "./capacidades.mjs";
 import { crearBus } from "./eventos.mjs";
-import { CABECERAS_JSON, ErrorDeServicio, deExcepcion, estadoDe, problema } from "./errores.mjs";
+import { CABECERAS_JSON, ErrorDeServicio, describir, problema } from "./errores.mjs";
 import { RECURSO, tomarHome } from "./lock.mjs";
 import { ORIGENES_POR_DEFECTO, cabecerasCors, revisar } from "./puerta.mjs";
-import { VERSION } from "./version.mjs";
+import { TABLA } from "./tabla.mjs";
+import { emparejar } from "./rutas.mjs";
+import { abrirDependencias, VARIABLE_DE_FRASE } from "./dependencias.mjs";
 import { vigilarAlPadre } from "./watchdog.mjs";
 
 /** Version de la forma de las respuestas. Un cambio incompatible la sube. */
-export const ESQUEMA = 1;
+export { ESQUEMA } from "./esquema-de-respuesta.mjs";
 
 /** El recurso que se bloquea: un home, un escritor. */
 export const RECURSO_DEL_LOCK = RECURSO;
 
-/**
- * Las rutas de la fase A, con lo que acepta cada una. Se declaran en una tabla
- * porque el 405 y el 404 tienen que poder decir QUE se acepta, y eso no se
- * puede reconstruir desde una cadena de `if`.
- *
- * @type {Record<string, {metodos: string[], publica?: boolean}>}
- */
-const RUTAS = {
-  // `/v1/health` es lo primero que pide la interfaz y lo unico publico: si
-  // exigiera token, una interfaz sin token no podria ni diagnosticar por que no
-  // tiene token, y el operador se queda con una pantalla en blanco.
-  "/v1/health": { metodos: ["GET", "HEAD"], publica: true },
-  "/v1/capabilities": { metodos: ["GET", "HEAD"] },
-  "/v1/events": { metodos: ["GET"] },
-};
+/** Cuanto cuerpo se acepta. Mas que esto no es una peticion, es un intento de tumbar el proceso. */
+const CUERPO_MAXIMO = 4 * 1024 * 1024;
 
 function json(res, codigo, cuerpo, extra = {}) {
   const texto = JSON.stringify(cuerpo);
@@ -64,30 +52,88 @@ function json(res, codigo, cuerpo, extra = {}) {
 }
 
 /**
- * @param {{home: string, token: string, arranque: string, origenes: readonly string[], bus: any}} estado
+ * Lee el cuerpo UNA vez y lo devuelve como JSON.
+ *
+ * POR QUE CON UN TOPE. Sin el, una peticion con un cuerpo infinito se come la
+ * memoria del proceso y el servicio se cae para todas las ventanas. El tope se
+ * comprueba mientras llega, no al final: comprobarlo despues significa que ya
+ * se acumulo.
+ *
+ * @param {import("node:http").IncomingMessage} req
+ */
+function leerCuerpo(req) {
+  return new Promise((resolve, reject) => {
+    /** @type {Buffer[]} */
+    const trozos = [];
+    let total = 0;
+    req.on("data", (t) => {
+      total += t.length;
+      if (total > CUERPO_MAXIMO) {
+        reject(
+          new ErrorDeServicio("cuerpo_invalido", {
+            detalle: `supera los ${Math.round(CUERPO_MAXIMO / 1024)} KB que este servicio acepta`,
+          }),
+        );
+        req.destroy();
+        return;
+      }
+      trozos.push(t);
+    });
+    req.on("error", reject);
+    req.on("end", () => {
+      const texto = Buffer.concat(trozos).toString("utf8").trim();
+      if (!texto) return resolve({});
+      try {
+        const valor = JSON.parse(texto);
+        if (valor === null || typeof valor !== "object" || Array.isArray(valor)) {
+          // Un cuerpo que es un numero o una lista no se puede leer por campos,
+          // y el `undefined` que saldria de cada lectura se persiste como un
+          // hueco sin que nadie lo vea.
+          return reject(
+            new ErrorDeServicio("cuerpo_invalido", { detalle: "el cuerpo es JSON pero no es un objeto con campos" }),
+          );
+        }
+        resolve(valor);
+      } catch (e) {
+        reject(new ErrorDeServicio("cuerpo_invalido", { detalle: `no es JSON valido (${e.message})` }));
+      }
+    });
+  });
+}
+
+/**
+ * @param {{home: string, token: string, arranque: string, origenes: readonly string[], bus: any, dep: any}} estado
  */
 export function crearServidor(estado) {
   return createServer((req, res) => {
-    let origen = null;
-    try {
-      origen = typeof req.headers.origin === "string" ? req.headers.origin : null;
-      manejar(estado, req, res);
-    } catch (e) {
-      // Un camino que nadie previo sale con el mismo formato que el resto: un
-      // 500 vacio deja al operador sin causa y sin accion, que es justo lo que
-      // NFR-006 prohibe.
+    const origen = typeof req.headers.origin === "string" ? req.headers.origin : null;
+    // Un camino que nadie previo sale con el mismo formato que el resto: un
+    // 500 vacio deja al operador sin causa y sin accion, que es justo lo que
+    // NFR-006 prohibe.
+    const caer = (e) => {
+      if (res.writableEnded) return;
       if (!res.headersSent) {
-        const cuerpo = deExcepcion(e);
+        const { cuerpo, estado: codigo } = describir(e);
         const cors = estado.origenes.includes(origen ?? "") ? cabecerasCors(origen) : cabecerasCors(null);
-        json(res, estadoDe(cuerpo), cuerpo, cors);
+        // Tambien los errores. El principio IX nombra los mensajes de error
+        // explicitamente entre los sitios donde el valor no puede estar, y el
+        // camino real es corto: la credencial viaja en una URL y el 404 la
+        // repite dentro de su causa porque nombrar la ruta es lo que hace util
+        // a ese 404.
+        json(res, codigo, estado.dep.redactarSalida(cuerpo), cors);
       } else {
         res.end();
       }
+    };
+    try {
+      Promise.resolve(manejar(estado, req, res)).catch(caer);
+    } catch (e) {
+      caer(e);
     }
   });
 }
 
-function manejar(estado, req, res) {
+async function manejar(estado, req, res) {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const ruta = url.pathname.replace(/\/+$/, "") || "/";
   const metodo = (req.method || "GET").toUpperCase();
@@ -97,17 +143,19 @@ function manejar(estado, req, res) {
 
   const fallar = (codigo, datos) => {
     const cuerpo = problema(codigo, datos);
-    json(res, estadoDe(cuerpo), cuerpo, cors);
+    const { estado: http } = describir(new ErrorDeServicio(codigo, datos));
+    json(res, http, estado.dep.redactarSalida(cuerpo), cors);
   };
 
-  const declarada = RUTAS[ruta];
+  const encontrada = emparejar(TABLA, ruta);
+  const declarada = encontrada ? encontrada.entrada : null;
 
   // El preflight se contesta antes que nada y sin token: el navegador no le
   // pone credenciales a un OPTIONS, asi que exigirselas rompe toda peticion
   // con cabecera propia desde el navegador.
   if (metodo === "OPTIONS") {
     if (origen && !permitido) return fallar("origen_no_permitido", { origen, permitidos: [...estado.origenes] });
-    res.writeHead(204, cabecerasCors(permitido ? origen : null, true));
+    res.writeHead(204, cabecerasCors(permitido ? origen : null, true, declarada ? declarada.metodos : null));
     return res.end();
   }
 
@@ -125,41 +173,54 @@ function manejar(estado, req, res) {
     return fallar("metodo_no_permitido", { metodo, ruta, permitidos: declarada.metodos });
   }
 
-  if (ruta === "/v1/health") {
-    return json(res, 200, {
-      version: VERSION,
-      esquema: ESQUEMA,
-      home: estado.home,
-      // El principio VIII no es una promesa del diseño si la interfaz no lo
-      // puede comprobar al conectarse: sin esto, una ventana no distingue el
-      // servicio de control de cualquier otra cosa escuchando en ese puerto.
-      escritorUnico: true,
-      arranque: estado.arranque,
-    }, cors);
-  }
+  /** @type {any} */
+  let cuerpoLeido;
+  const cuerpo = async () => {
+    if (cuerpoLeido === undefined) cuerpoLeido = await leerCuerpo(req);
+    return cuerpoLeido;
+  };
 
-  if (ruta === "/v1/capabilities") return json(res, 200, capacidades(), cors);
+  const peticion = {
+    estado,
+    dep: estado.dep,
+    // `encontrada` no puede ser null aqui: si lo fuera, el `if (!declarada)` de
+    // arriba ya habria contestado el 404. Se dice para el typecheck, que no
+    // puede seguir esa cadena.
+    parametros: /** @type {any} */ (encontrada).parametros,
+    url,
+    metodo,
+    cuerpo,
+    req,
+    res,
+    cors,
+  };
 
-  if (ruta === "/v1/events") {
-    res.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-      connection: "keep-alive",
-      // Sin esto, un proxy que vaya en medio acumula el stream en un buffer y
-      // la interfaz no recibe nada hasta que hay varios kilobytes.
-      "x-accel-buffering": "no",
+  const crudo = await declarada.manejar(peticion);
+
+  // LA ULTIMA PUERTA (NFR-004). Todo lo que sale pasa por el redactor de la
+  // boveda, aqui y no en cada manejador: una garantia que dice "ninguna
+  // respuesta de ningun endpoint" no se sostiene revisando cuarenta
+  // manejadores, se sostiene si hay un unico punto por el que todos pasan.
+  const salida = crudo === undefined ? crudo : { ...crudo, cuerpo: estado.dep.redactarSalida(crudo.cuerpo) };
+  // Una ruta `crudo` —el canal de eventos— ya escribio por su cuenta. Volver a
+  // escribirle encima es un `ERR_HTTP_HEADERS_SENT` que se lleva la conexion.
+  if (declarada.crudo || salida === undefined) return;
+
+  // `HEAD` lleva las mismas cabeceras que el `GET` y ningun cuerpo: es lo que
+  // hace que un cliente pueda preguntar "¿esto existe?" sin descargarlo.
+  if (metodo === "HEAD") {
+    const texto = JSON.stringify(salida.cuerpo ?? {});
+    res.writeHead(salida.codigo ?? 200, {
+      ...CABECERAS_JSON,
+      "x-frame-options": "DENY",
+      "content-length": Buffer.byteLength(texto),
       ...cors,
+      ...(salida.cabeceras ?? {}),
     });
-    // `Last-Event-ID` lo manda EventSource solo al reconectar. El parametro de
-    // query es para el cliente que reconecta a mano despues de un cierre.
-    const desde = req.headers["last-event-id"] ?? url.searchParams.get("ultimo_evento");
-    estado.bus.suscribir(res, /** @type {any} */ (desde));
-    return;
+    return res.end();
   }
 
-  // Inalcanzable mientras RUTAS y este bloque digan lo mismo. Si se separan,
-  // el fallo sale con causa en vez de colgar la peticion para siempre.
-  return fallar("ruta_desconocida", { metodo, ruta });
+  return json(res, salida.codigo ?? 200, salida.cuerpo ?? {}, { ...cors, ...(salida.cabeceras ?? {}) });
 }
 
 /** Escritura atomica y solo para el duenio. El token esta adentro. */
@@ -184,6 +245,8 @@ function escribirSesion(home, datos) {
  *   origenes?: readonly string[], parentPid?: number, watchdogMs?: number,
  *   capacidadEventos?: number, latidoMs?: number,
  *   alQuedarHuerfano?: () => void,
+ *   frase?: string|null, backendDeSecretos?: any, proveedorDeConexiones?: any,
+ *   reloj?: () => number,
  * }} opts
  */
 export async function arrancar(opts) {
@@ -209,7 +272,33 @@ export async function arrancar(opts) {
   const arranqueISO = new Date().toISOString();
   const origenes = opts.origenes && opts.origenes.length ? [...opts.origenes] : [...ORIGENES_POR_DEFECTO];
 
-  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, bus });
+  // El almacen se abre DESPUES del lock y no antes: abrirlo antes significa
+  // que dos procesos tocan el mismo archivo de base de datos durante el
+  // instante en que el segundo descubre que no le toca arrancar.
+  let dep;
+  try {
+    dep = await abrirDependencias({
+      home,
+      frase: opts.frase ?? process.env[VARIABLE_DE_FRASE] ?? null,
+      backendDeSecretos: opts.backendDeSecretos,
+      proveedorDeConexiones: opts.proveedorDeConexiones,
+      reloj: opts.reloj,
+    });
+  } catch (e) {
+    lock.release();
+    throw e;
+  }
+
+  // El canal de eventos pasa por el mismo redactor que las respuestas. Es la
+  // tercera salida de este servicio —respuesta, error y evento— y NFR-004 no
+  // distingue entre ellas: un evento con el valor adentro llega a todas las
+  // ventanas abiertas a la vez, que es peor que una respuesta a quien la pidio.
+  const canal = {
+    ...bus,
+    emitir: (tipo, datos, extra) => bus.emitir(tipo, dep.redactarSalida(datos ?? {}), extra),
+  };
+
+  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, bus: canal, dep });
 
   try {
     await new Promise((resolve, reject) => {
@@ -217,6 +306,7 @@ export async function arrancar(opts) {
       srv.listen(opts.port ?? 0, "127.0.0.1", () => resolve(null));
     });
   } catch (e) {
+    dep.cerrar();
     lock.release();
     throw e;
   }
@@ -232,6 +322,21 @@ export async function arrancar(opts) {
     if (cerrando) return cerrando;
     cerrando = (async () => {
       if (perro) perro.detener();
+
+      // Los escaneos EN VUELO se matan ANTES que nada. Cada uno corre en su
+      // hilo y termina escribiendo el snapshot en el almacen: si el almacen se
+      // cierra primero, el hilo escribe sobre una base cerrada y el fallo sale
+      // como un `uncaughtException` con "database is not open" —fuera de toda
+      // peticion, sin causa que lo relacione con nada— y se lleva el proceso.
+      for (const [, escaneo] of dep.escaneos) {
+        try {
+          await escaneo.hilo.terminate();
+        } catch {
+          /* un hilo que ya murio no impide apagar el resto */
+        }
+      }
+      dep.escaneos.clear();
+
       bus.cerrarTodo();
       await new Promise((resolve) => {
         srv.close(() => resolve(null));
@@ -245,6 +350,15 @@ export async function arrancar(opts) {
         rmSync(sesion, { force: true });
       } catch {
         /* si no se puede borrar, el lock que se suelta abajo ya dice la verdad */
+      }
+      // El almacen se cierra ANTES de soltar el lock: al reves hay un instante
+      // en el que otro servicio ya puede tomar el home y este todavia tiene la
+      // base abierta — o sea, dos escritores, que es lo que el lock existe para
+      // impedir.
+      try {
+        dep.cerrar();
+      } catch {
+        /* una base que no cierra no puede impedir que el proceso termine */
       }
       lock.release();
     })();
@@ -276,6 +390,7 @@ export async function arrancar(opts) {
     sesion,
     srv,
     bus,
+    dep,
     emitir: (tipo, datos, extra) => bus.emitir(tipo, datos, extra),
     ultimoId: () => bus.ultimoId(),
     detener,
