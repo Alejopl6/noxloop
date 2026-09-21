@@ -130,3 +130,696 @@ export interface EventoServicio<D = unknown> {
   project_id?: string | null
   datos: D
 }
+
+/* ==========================================================================
+   Etapas 00-07. Todo lo de aqui es la forma de lo que el servicio DEVUELVE.
+   --------------------------------------------------------------------------
+   Estos tipos se escriben contra `contracts/control-api.md` y
+   `data-model.md`, NO contra lo que el servicio responde hoy: hoy solo
+   contesta `/v1/health`, `/v1/capabilities` y `/v1/events`. Construir contra
+   el contrato es lo unico que permite que los dos frentes avancen a la vez
+   sin que uno espere al otro, y lo unico que convierte una discrepancia en un
+   fallo localizable: si el servicio manda otra cosa, la diferencia esta entre
+   estos tipos y el contrato, no repartida por doce pantallas.
+
+   Casi todo lo opcional lo es a proposito. Un campo que el contrato no
+   promete y esta pantalla exige se convierte en una pantalla en blanco el dia
+   que el servicio no lo manda.
+   ========================================================================== */
+
+/* --- Etapa 00 · Proyectos ------------------------------------------------ */
+
+/** La maquina de estados de `data-model.md`. No retrocede nunca. */
+export type EstadoProyecto =
+  | 'CREATED'
+  | 'DISCOVERED'
+  | 'CONSTITUTED'
+  | 'BOOTSTRAPPED'
+  | 'CONNECTED'
+  | 'ACTIVE'
+
+export type OrigenProyecto = 'nuevo' | 'local' | 'remoto'
+
+export interface Proyecto {
+  id: string
+  nombre: string
+  slug?: string
+  origen: OrigenProyecto
+  ruta_local?: string | null
+  remoto?: string | null
+  estado: EstadoProyecto
+  creado: string
+  actualizado?: string | null
+  /** Lo que el contrato llama "contadores". Todo opcional: son agregados. */
+  contadores?: {
+    entradas_bandeja?: number
+    agentes?: number
+    conexiones?: number
+    credenciales?: number
+    runs_en_curso?: number
+  }
+}
+
+export const ETIQUETA_ESTADO_PROYECTO: Record<EstadoProyecto, string> = {
+  CREATED: 'Creado',
+  DISCOVERED: 'Analizado',
+  CONSTITUTED: 'Con constitution',
+  BOOTSTRAPPED: 'Con setup resuelto',
+  CONNECTED: 'Conectado',
+  ACTIVE: 'Activo',
+}
+
+/**
+ * Que etapa le falta a un proyecto para poder lanzar un ciclo (FR-064).
+ *
+ * Vive aqui y no en cada pantalla porque es la misma respuesta en tres sitios
+ * —la lista, el detalle y el rechazo al lanzar— y tres copias de esta frase
+ * divergen a la primera.
+ */
+export interface EtapaPendiente {
+  /** La seccion a la que lleva el boton. */
+  etapa: string
+  /** Que falta, dicho entero. */
+  causa: string
+  /** Que hacer. Siempre. */
+  accion: string
+}
+
+export const ETAPA_PENDIENTE: Record<EstadoProyecto, EtapaPendiente | null> = {
+  CREATED: {
+    etapa: 'Discovery',
+    causa: 'El proyecto esta en CREATED: todavia no tiene un snapshot aceptado, asi que no hay lectura tecnica de la que derivar su constitution.',
+    accion: 'Corre el analisis del proyecto y acepta el snapshot, o declaralo proyecto nuevo si no hay codigo que escanear.',
+  },
+  DISCOVERED: {
+    etapa: 'Constitution',
+    causa: 'El proyecto tiene snapshot aceptado pero no tiene constitution fijada: el runtime no tiene reglas que consultar cuando una decision sea ambigua.',
+    accion: 'Revisa la constitution propuesta y fijala.',
+  },
+  CONSTITUTED: {
+    etapa: 'Bootstrap',
+    causa: 'La constitution esta fijada pero el bootstrap no se ha resuelto: hay recomendaciones sin decidir, y ninguna se escribe sin tu decision.',
+    accion: 'Resuelve cada recomendacion (aplicar, personalizar u omitir) y cierra el bootstrap.',
+  },
+  BOOTSTRAPPED: {
+    etapa: 'Conexiones',
+    causa: 'El setup esta resuelto pero el proyecto no tiene ninguna conexion viva: sin tracker ni SCM, un ciclo no tiene de donde sacar el work item ni donde abrir el pull request.',
+    accion: 'Conecta al menos un proveedor desde Conexiones.',
+  },
+  CONNECTED: {
+    etapa: 'Flota',
+    causa: 'El proyecto esta conectado pero no tiene flota declarada: no hay ningun agente con rol, runtime y presupuesto definidos.',
+    accion: 'Declara al menos un implementador y un revisor con runtimes distintos.',
+  },
+  ACTIVE: null,
+}
+
+/** `POST /v1/projects`. Lo que la pantalla de alta envia al servicio. */
+export interface AltaDeProyecto {
+  origen: OrigenProyecto
+  nombre: string
+  ruta_local?: string
+  remoto?: string
+  plantilla?: string
+}
+
+/**
+ * `GET /v1/templates`.
+ *
+ * NO ESTA EN EL CONTRATO. El contrato declara que `POST /v1/projects` acepta
+ * `plantilla`, pero no declara donde se enumeran las plantillas disponibles.
+ * Esta interfaz la pide aqui y, si el servicio no la conoce, lo dice y deja
+ * declarar el identificador a mano — que es lo honesto: una lista inventada
+ * en el cliente seria la interfaz decidiendo producto.
+ */
+export interface Plantilla {
+  id: string
+  nombre: string
+  descripcion: string
+  stack?: string
+  arquitectura?: string
+  testing?: string
+  etiquetas?: string[]
+}
+
+/* --- Etapa 01 · Snapshot ------------------------------------------------- */
+
+export type CategoriaDeHallazgo =
+  | 'stack'
+  | 'arquitectura'
+  | 'patrones'
+  | 'testing'
+  | 'ci'
+  | 'dependencias'
+  | 'guidelines'
+  | 'agentes'
+  | 'riesgos'
+
+export const ETIQUETA_CATEGORIA: Record<CategoriaDeHallazgo, string> = {
+  stack: 'Stack',
+  arquitectura: 'Arquitectura',
+  patrones: 'Patrones',
+  testing: 'Testing',
+  ci: 'CI/CD',
+  dependencias: 'Dependencias',
+  guidelines: 'Guidelines existentes',
+  agentes: 'Configuracion de agentes',
+  riesgos: 'Riesgos',
+}
+
+/** El orden en que se pintan los grupos. Riesgos al final: se lee despues. */
+export const ORDEN_DE_CATEGORIAS: readonly CategoriaDeHallazgo[] = [
+  'stack',
+  'arquitectura',
+  'patrones',
+  'testing',
+  'ci',
+  'dependencias',
+  'guidelines',
+  'agentes',
+  'riesgos',
+] as const
+
+/** `declarado` no sale del scanner: lo produce el operador al corregir. */
+export type OrigenDeHallazgo = 'detectado' | 'inferido' | 'declarado'
+export type ConfianzaDeHallazgo = 'alta' | 'media' | 'baja'
+export type DecisionDeHallazgo = 'pendiente' | 'aceptado' | 'corregido' | 'descartado'
+
+export interface EvidenciaDeHallazgo {
+  ruta: string
+  linea?: number
+  /**
+   * Fragmento del archivo. NUNCA el valor de un secreto: el contrato del
+   * scanner prohibe copiarlo ni truncado ni ofuscado, y un hallazgo de
+   * `riesgos` llega con ruta y linea y sin extracto.
+   */
+  extracto?: string
+}
+
+export interface Hallazgo {
+  id: string
+  snapshot_id?: string
+  categoria: CategoriaDeHallazgo
+  /** `runtime.node`, `testing.runner`, `ci.workflow`. Identificador operativo. */
+  clave: string
+  valor: unknown
+  origen: OrigenDeHallazgo
+  /** Obligatoria cuando `origen === 'detectado'` (FR-013). */
+  evidencia?: EvidenciaDeHallazgo[]
+  confianza: ConfianzaDeHallazgo
+  decision: DecisionDeHallazgo
+  valor_corregido?: unknown
+}
+
+export type EstadoDeSnapshot = 'en_curso' | 'completo' | 'cancelado'
+
+export interface Snapshot {
+  id: string
+  project_id: string
+  commit?: string | null
+  creado: string
+  estado: EstadoDeSnapshot
+  duracion_ms?: number | null
+  hallazgos: Hallazgo[]
+}
+
+export type FaseDeScan =
+  | 'inventario'
+  | 'manifiestos'
+  | 'estructura'
+  | 'testing'
+  | 'ci'
+  | 'agentes'
+  | 'guidelines'
+  | 'riesgos'
+
+export const ETIQUETA_FASE: Record<FaseDeScan, string> = {
+  inventario: 'Inventariando archivos',
+  manifiestos: 'Leyendo manifiestos',
+  estructura: 'Reconociendo la estructura',
+  testing: 'Buscando como prueba',
+  ci: 'Buscando que corre en CI',
+  agentes: 'Buscando configuracion de agentes',
+  guidelines: 'Buscando guidelines',
+  riesgos: 'Buscando riesgos',
+}
+
+/** Datos del evento `scan.progreso`. */
+export interface ProgresoDeScan {
+  fase: FaseDeScan | string
+  archivos_vistos: number
+  total_estimado: number
+}
+
+/* --- Etapas 02-04 · Constitution y guidelines ---------------------------- */
+
+/** Como en el snapshot, pero con `vacio`: el hueco declarado como hueco. */
+export type OrigenDeApartado = 'detectado' | 'inferido' | 'vacio'
+
+export interface ApartadoDeConstitution {
+  id: string
+  titulo: string
+  /** Vacio de verdad cuando `origen === 'vacio'`. No se rellena con lo probable. */
+  contenido: string
+  origen: OrigenDeApartado
+  evidencia?: EvidenciaDeHallazgo[]
+  confianza?: ConfianzaDeHallazgo
+}
+
+export interface Enmienda {
+  id: string
+  version_anterior: string
+  version_nueva: string
+  principio: string
+  fallo_que_motiva: string
+  que_se_rompe_si_no: string
+  fecha: string
+}
+
+export interface Constitution {
+  id?: string
+  project_id: string
+  version: string
+  ruta_en_repo: string
+  /** Markdown completo. Es lo que se escribe en el repositorio. */
+  contenido?: string
+  apartados?: ApartadoDeConstitution[]
+  ratificada?: string | null
+  enmendada?: string | null
+  vigente?: boolean
+  enmiendas?: Enmienda[]
+}
+
+/** `POST /v1/projects/:id/constitution/amend`. Sin los tres campos, 400. */
+export interface PeticionDeEnmienda {
+  principio: string
+  fallo_que_motiva: string
+  que_se_rompe_si_no: string
+}
+
+export type AreaDeGuideline =
+  | 'frontend'
+  | 'backend'
+  | 'testing'
+  | 'git'
+  | 'seguridad'
+  | 'agentes'
+  | 'diseno'
+
+export const ETIQUETA_AREA: Record<AreaDeGuideline, string> = {
+  frontend: 'Frontend',
+  backend: 'Backend',
+  testing: 'Testing',
+  git: 'Git',
+  seguridad: 'Seguridad',
+  agentes: 'Agentes',
+  diseno: 'Diseno',
+}
+
+export const AREAS_DE_GUIDELINE: readonly AreaDeGuideline[] = [
+  'frontend',
+  'backend',
+  'testing',
+  'git',
+  'seguridad',
+  'agentes',
+  'diseno',
+] as const
+
+export interface Guideline {
+  project_id?: string
+  area: AreaDeGuideline
+  ruta_en_repo?: string
+  contenido: string
+  reglas_aplicables?: string[]
+}
+
+/* --- Etapa 05 · Bootstrap ------------------------------------------------ */
+
+export type TipoDeRecomendacion =
+  | 'hook'
+  | 'skill'
+  | 'mcp'
+  | 'tool'
+  | 'subagente'
+  | 'validacion'
+  | 'ci'
+  | 'instrucciones'
+  | 'documentacion'
+
+export const ETIQUETA_TIPO_RECOMENDACION: Record<TipoDeRecomendacion, string> = {
+  hook: 'Hook',
+  skill: 'Skill',
+  mcp: 'Servidor MCP',
+  tool: 'Tool',
+  subagente: 'Subagente',
+  validacion: 'Validacion',
+  ci: 'CI',
+  instrucciones: 'Instrucciones',
+  documentacion: 'Documentacion',
+}
+
+export type DecisionDeRecomendacion = 'pendiente' | 'aplicada' | 'personalizada' | 'omitida'
+
+/** Un archivo del diff, con su contenido exacto. */
+export interface ArchivoDeRecomendacion {
+  ruta: string
+  estado: 'anadido' | 'modificado' | 'eliminado'
+  /** El diff unificado de ESTE archivo. */
+  diff?: string
+  /** El contenido resultante, cuando el servicio lo manda estructurado. */
+  contenido?: unknown
+}
+
+export interface Recomendacion {
+  id: string
+  project_id?: string
+  tipo: TipoDeRecomendacion
+  titulo: string
+  justificacion: string
+  /**
+   * El diff EXACTO que se escribira (FR-026). `apply` no recalcula: si el
+   * arbol cambio, falla con `diff_obsoleto`. Por eso esta pantalla no
+   * reconstruye nada a partir de el, solo lo ensena.
+   */
+  diff: string
+  /** Desglose por archivo, cuando el servicio lo manda. Alimenta el arbol. */
+  archivos?: ArchivoDeRecomendacion[]
+  /** Con valor, la recomendacion se propone MARCADA con el conflicto (FR-028). */
+  conflicto_constitution?: string | null
+  decision: DecisionDeRecomendacion
+  motivo_decision?: string | null
+  decidida?: string | null
+}
+
+/* --- Etapa 06 · Conexiones, credenciales y grants ------------------------ */
+
+export type ClaseDeConexion = 'tracker' | 'scm' | 'infra' | 'integracion'
+
+export const ETIQUETA_CLASE_CONEXION: Record<ClaseDeConexion, string> = {
+  tracker: 'Gestor de tickets',
+  scm: 'Gestor de repositorios',
+  infra: 'Infraestructura',
+  integracion: 'Integracion',
+}
+
+export type EstadoDeLaConexion = 'pendiente' | 'viva' | 'expirada' | 'revocada' | 'fallida'
+
+export const ETIQUETA_ESTADO_CONEXION: Record<EstadoDeLaConexion, string> = {
+  pendiente: 'Pendiente de autorizar',
+  viva: 'Viva',
+  expirada: 'Expirada',
+  revocada: 'Revocada',
+  fallida: 'Fallida',
+}
+
+export interface Conexion {
+  id: string
+  project_id: string
+  clase: ClaseDeConexion
+  proveedor: string
+  id_externo?: string | null
+  estado: EstadoDeLaConexion
+  credential_id?: string | null
+  capacidades?: Record<string, unknown>
+  /** Por que fallo, cuando `estado === 'fallida'`. Texto completo. */
+  causa?: string | null
+}
+
+/** `POST /v1/projects/:id/connections/authorize`. */
+export interface AutorizacionDeConexion {
+  url_autorizacion: string
+  session_token: string
+  expira: string
+}
+
+export type TipoDeCredencial = 'api_token' | 'tracker' | 'scm' | 'modelo' | 'ssh'
+export type AmbitoDeCredencial = 'global' | 'proyecto'
+export type EstadoDeCredencial = 'activa' | 'por_expirar' | 'expirada' | 'revocada'
+
+export const ETIQUETA_ESTADO_CREDENCIAL: Record<EstadoDeCredencial, string> = {
+  activa: 'Activa',
+  por_expirar: 'Por expirar',
+  expirada: 'Expirada',
+  revocada: 'Revocada',
+}
+
+/**
+ * El inventario. NO TIENE CAMPO PARA EL VALOR, y no es un olvido: el contrato
+ * prohibe que ningun endpoint lo devuelva, asi que un campo `valor` aqui seria
+ * una promesa que el servicio no puede cumplir y una invitacion a rellenarla.
+ */
+export interface Credencial {
+  id: string
+  nombre: string
+  proveedor: string
+  tipo: TipoDeCredencial
+  ambito: AmbitoDeCredencial
+  project_id?: string | null
+  alcance_declarado: string
+  /** Lo unico que la boveda entrega sobre el secreto. */
+  huella: string
+  /** `keychain_so` o `archivo_cifrado`. Se declara, nunca se supone. */
+  backend?: string
+  creada: string
+  expira?: string | null
+  aviso_dias_antes?: number | null
+  estado: EstadoDeCredencial
+}
+
+export interface Grant {
+  id: string
+  project_id: string
+  agent_id: string
+  credential_id: string
+  vigencia_desde?: string | null
+  vigencia_hasta?: string | null
+  concedido_por: string
+  concedido_en: string
+  revocado_en?: string | null
+}
+
+/**
+ * `GET /v1/credentials/:id/reach` — la vista inversa (FR-045).
+ *
+ * Contesta "que agentes y proyectos alcanzan esta credencial HOY", no "que
+ * filas de grant existen": un grant revocado o fuera de vigencia no alcanza
+ * nada, y mostrarlo aqui seria la respuesta a otra pregunta.
+ */
+export interface AlcanceDeCredencial {
+  credential_id: string
+  agentes: Array<{
+    agent_id: string
+    nombre: string
+    rol?: string
+    runtime?: string
+    project_id: string
+    proyecto: string
+    grant_id: string
+    vigencia_hasta?: string | null
+  }>
+  proyectos: Array<{
+    project_id: string
+    nombre: string
+    agentes: number
+  }>
+  /** Cuando el servicio lo calcula: cuando se evaluo esta respuesta. */
+  calculado?: string
+}
+
+/* --- Etapa 07 · Flota ---------------------------------------------------- */
+
+export type RolDeAgente = 'implementador' | 'revisor' | 'planificador' | 'verificador'
+
+export interface Agente {
+  id: string
+  project_id: string
+  nombre: string
+  rol: RolDeAgente
+  runtime: string
+  modelo?: string
+  skills?: string[]
+  tools?: string[]
+  mcps?: string[]
+  permisos?: Record<string, unknown>
+  presupuesto?: Record<string, unknown>
+  contexto?: Record<string, unknown>
+}
+
+/** El orden del recorrido de un ciclo: quien planifica, quien escribe, quien revisa, quien verifica. */
+export const ROLES_DE_AGENTE: readonly RolDeAgente[] = [
+  'planificador',
+  'implementador',
+  'revisor',
+  'verificador',
+] as const
+
+export const ETIQUETA_ROL_AGENTE: Record<RolDeAgente, string> = {
+  planificador: 'Planificador',
+  implementador: 'Implementador',
+  revisor: 'Revisor',
+  verificador: 'Verificador',
+}
+
+/**
+ * Que decide cada rol, escrito para el operador.
+ *
+ * No es adorno de la pantalla: el rol no es una etiqueta, decide que contexto
+ * se le compila al agente y contra que regla se valida la flota (FR-034 solo
+ * mira `implementador` y `revisor`). Elegir el rol a ciegas es elegir a ciegas
+ * la unica separacion que sostiene la revision.
+ */
+export const QUE_HACE_EL_ROL: Record<RolDeAgente, string> = {
+  planificador:
+    'Descompone el work item en tareas y dependencias. No escribe codigo de produccion.',
+  implementador:
+    'Escribe la prueba, la ve fallar, y escribe el codigo que la pone en verde. Es quien toca el arbol.',
+  revisor:
+    'Busca lo que el implementador no vio. Por eso NO puede compartir runtime con el: con el mismo runtime y el mismo contexto, la revision confirma en vez de romper.',
+  verificador:
+    'Corre los gates del repositorio y lee su codigo de salida. No opina sobre el codigo: lo ejecuta.',
+}
+
+/**
+ * `GET /v1/grants?agent_id=:id` — la vista inversa de la inversa (FR-045).
+ *
+ * NO ESTA DECLARADA EN EL CONTRATO, y se declara aqui igual que se declaro el
+ * hueco de `/v1/templates`. El contrato publica `GET /v1/grants` como "la
+ * tripleta" y `GET /v1/credentials/:id/reach` como la vista inversa, que
+ * contesta "quien alcanza esta credencial". La pantalla de flota necesita la
+ * pregunta girada —"que alcanza este agente"— y esa no tiene endpoint propio
+ * en el contrato.
+ *
+ * Se modela con la forma simetrica de `AlcanceDeCredencial` a proposito: es la
+ * misma consulta con el criterio cambiado, y darle otra forma obligaria a
+ * escribir dos lectores para una sola pregunta. Si el servicio publica otra,
+ * la diferencia esta aqui y no repartida por la pantalla.
+ *
+ * Como en la vista inversa: son los grants VIGENTES HOY, no las filas de la
+ * tabla. Un grant revocado no alcanza nada.
+ */
+export interface AlcanceDeAgente {
+  agent_id: string
+  credenciales: Array<{
+    credential_id: string
+    nombre: string
+    proveedor?: string
+    alcance_declarado?: string
+    huella?: string
+    estado?: EstadoDeCredencial
+    grant_id: string
+    project_id: string
+    vigencia_hasta?: string | null
+    concedido_por?: string
+  }>
+  /** Cuando el servicio lo calcula: cuando se evaluo esta respuesta. */
+  calculado?: string
+}
+
+/* --- Handoff al motor · runs --------------------------------------------- */
+
+/**
+ * Los estados de una tarea dentro de un run, tal como los declara el motor.
+ *
+ * ESTA LISTA NO SE INVENTA NI SE ORDENA A OJO: es `STATUSES` de
+ * `packages/engine/src/state.mjs`, en su orden, que es el orden de las aristas
+ * permitidas. `blocked` va al final porque no es un paso del recorrido, es su
+ * interrupcion.
+ */
+export type EstadoDeTarea =
+  | 'pending'
+  | 'in_progress'
+  | 'red'
+  | 'green'
+  | 'gated'
+  | 'reviewed'
+  | 'queued'
+  | 'integrated'
+  | 'blocked'
+
+export const ETIQUETA_ESTADO_TAREA: Record<EstadoDeTarea, string> = {
+  pending: 'Sin empezar',
+  in_progress: 'Worktree listo',
+  red: 'Prueba en rojo',
+  green: 'Prueba en verde',
+  gated: 'Gate en verde',
+  reviewed: 'Revisada',
+  queued: 'En la cola de integracion',
+  integrated: 'Integrada',
+  blocked: 'Bloqueada',
+}
+
+export interface TareaDeRun {
+  id: string
+  title?: string
+  status: EstadoDeTarea | string
+  /** Cuantas vueltas lleva cada lazo. El motor lo escribe; aqui solo se lee. */
+  attempts?: { red?: number; green?: number; gate?: number; review?: number }
+  redVerified?: boolean
+  branch?: string | null
+  worktree?: string | null
+  /** El ultimo fallo, con su texto completo. Nunca un resumen. */
+  lastFailure?: string | null
+  integratedAt?: string | null
+}
+
+/**
+ * `GET /v1/projects/:id/runs` y `GET /v1/runs/:id`.
+ *
+ * ES LA PROYECCION DE UN ARCHIVO QUE ESCRIBE EL MOTOR (FR-002, principio VIII).
+ * Por eso casi todo es opcional: un run de la v1 no trae `project_id`, y uno
+ * recien creado no trae ni rama ni PR. Exigir aqui un campo que el archivo no
+ * tiene convierte un run antiguo en una pantalla en blanco.
+ */
+export interface Run {
+  item: {
+    id: string
+    title?: string
+    url?: string | null
+    branch?: string | null
+    pr?: string | null
+  }
+  project_id?: string | null
+  tasks?: TareaDeRun[]
+  createdAt?: string | null
+  updatedAt?: string | null
+  milestoneId?: string | null
+  spent?: { usd?: number; calls?: number }
+  /**
+   * El archivo existe y no se pudo leer. El motor lo marca asi en vez de
+   * omitirlo: un run que desaparece de la lista se lee como un run que nunca
+   * existio, y es justo al reves — existe y esta roto.
+   */
+  corrupto?: boolean
+}
+
+/* --- Auditoria ----------------------------------------------------------- */
+
+export type ResultadoDeAuditoria = 'permitido' | 'denegado' | 'error'
+
+export const ETIQUETA_RESULTADO_AUDITORIA: Record<ResultadoDeAuditoria, string> = {
+  permitido: 'Permitido',
+  denegado: 'Denegado',
+  error: 'Error',
+}
+
+export interface EventoDeAuditoria {
+  id: number | string
+  instante: string
+  actor: string
+  /** `grant.concedido`, `credencial.rotada`, `ssh.comando`. */
+  accion: string
+  objeto_tipo?: string | null
+  objeto_id?: string | null
+  resultado: ResultadoDeAuditoria
+  /** Ya redactado contra la boveda antes de escribirse (FR-050). */
+  detalle?: Record<string, unknown> | null
+  hash?: string | null
+  hash_anterior?: string | null
+}
+
+export interface PaginaDeAuditoria {
+  eventos: EventoDeAuditoria[]
+  total?: number
+  siguiente_cursor?: string | null
+}

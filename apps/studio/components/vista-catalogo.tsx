@@ -26,6 +26,7 @@ import { ModalDeAccionDestructiva } from '@/components/ui/modal-de-accion-destru
 import { VistaJSON } from '@/components/ui/vista-json'
 import { ArbolDeArchivos, type NodoDeArchivo } from '@/components/ui/arbol-de-archivos'
 import { MenuDeComandos, useMenuDeComandos, type Comando } from '@/components/ui/menu-de-comandos'
+import { CatalogoDePantallas } from '@/components/catalogo-de-pantallas'
 import type { Ruta } from '@/lib/ruta'
 
 /**
@@ -575,6 +576,21 @@ export function VistaDeCatalogo({ navegar }: { navegar: (destino: Ruta) => void 
           Abrir menu de comandos
         </Button>
       </Seccion>
+
+      <hr className="border-ds-gray-400" />
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-heading-24 text-ds-gray-1000">Pantallas de establecimiento</h2>
+        <p className="max-w-2xl text-copy-14 text-ds-gray-900">
+          Las pantallas de las etapas 00-07, en sus estados, con datos locales y sin
+          pedirle nada al servicio. Estan aqui por la misma razon que los componentes: la
+          version con datos se mira veinte veces mientras se escribe, y la vacia, la de
+          error y la de «todavia cargando» no se miran nunca — que son las tres que el
+          operador ve el primer dia y el peor dia.
+        </p>
+      </div>
+
+      <CatalogoDePantallas navegar={navegar} />
 
       <MenuDeComandos comandos={comandos} abierto={menu.abierto} alCerrar={menu.cerrar} />
     </div>

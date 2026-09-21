@@ -31,6 +31,48 @@ flowchart LR
 
 **Por qué token y no "es localhost, da igual":** cualquier página web que el operador tenga abierta puede hacer peticiones a `127.0.0.1`. Sin token, un anuncio en otra pestaña enumera sus proyectos y sus credenciales. El fallo tiene nombre y ya ocurrió en otros productos de escritorio con servidor local.
 
+## Forma de las colecciones
+
+Toda ruta que devuelve varios elementos devuelve **el mismo sobre**, siempre:
+
+```json
+{
+  "items": [ ... ],
+  "cursor": null,
+  "avisos": []
+}
+```
+
+`cursor` es `null` cuando no hay más páginas. `avisos` es una lista de
+`{ codigo, causa, accion }` — vacía casi siempre.
+
+**Por qué un sobre y no el array desnudo.** Esto se decidió tarde y a la fuerza:
+el servicio había elegido envolver con una clave por recurso (`{agentes: [...]}`)
+y la interfaz había elegido arrays desnudos, cada lado razonablemente, porque el
+contrato no decía nada. Once pantallas y catorce rutas después, la diferencia
+apareció al juntarlos.
+
+Los tres motivos por los que gana el sobre:
+
+1. **`avisos` lleva algo que no tiene otra casa.** Cuando el servicio lee runs y
+   un archivo de estado está ilegible, eso tiene que **verse**: es degradación
+   visible, que es lo que este producto exige en todas partes. Con un array
+   desnudo, la única salida es omitir la fila en silencio — y una lista a la que
+   le faltan elementos sin decirlo es peor que un error.
+2. **`/v1/audit` ya lo necesitaba.** Declara `cursor` y `filtros_aplicados`, y
+   ninguno cabe en un array.
+3. **Un solo lector y un solo paginador.** Con una clave distinta por recurso
+   (`agentes`, `runs`, `credenciales`), un cliente genérico necesita una tabla
+   de traducción que hay que mantener sincronizada con las rutas.
+
+**Cada elemento se devuelve completo.** Nada de arrays de identificadores con
+tablas de consulta al lado: a la escala de este producto —un operador, veinte
+proyectos— normalizar la respuesta solo traslada el trabajo de unir al cliente,
+y lo hace en doce sitios en vez de uno.
+
+Una ruta con datos extra propios los pone **junto** a `items`, no dentro:
+`/v1/audit` añade `filtros_aplicados`.
+
 ## Forma de los errores
 
 Un único formato, siempre, porque NFR-006 exige que todo error nombre la causa y la acción siguiente.
@@ -148,8 +190,14 @@ Las dos, y no solo el markdown, porque **el origen de cada apartado no se puede 
 | `POST` | `/v1/credentials/:id/rotate` | Nueva huella, grants conservados (FR-047) |
 | `GET` | `/v1/credentials/:id/reach` | **Vista inversa** (FR-045): agentes y proyectos que la alcanzan hoy |
 | `DELETE` | `/v1/credentials/:id` | Revoca |
-| `GET/POST` | `/v1/grants` | La tripleta |
+| `GET/POST` | `/v1/grants` | La tripleta. Filtrable por `?agent_id=`, `?project_id=` y `?credential_id=` |
 | `DELETE` | `/v1/grants/:id` | |
+
+**Las dos direcciones de la misma pregunta.** `/v1/credentials/:id/reach` contesta *"qué agentes y proyectos alcanzan esta credencial hoy"* — es la vista inversa de FR-045, y es la que se mira cuando la pregunta es si un secreto está más expuesto de lo que se creía.
+
+`GET /v1/grants?agent_id=` contesta la girada: *"qué alcanza este agente"*. Es la que se mira al configurar la flota, antes de dejarlo correr. Las dos hacen falta porque se hacen en momentos distintos y con intenciones distintas; publicar solo una obliga a que la otra se resuelva filtrando en el cliente, y un filtro en el cliente sobre datos de autorización es un filtro que alguien puede quitar.
+
+Ambas respetan vigencia y revocación: un grant revocado existe como fila y **no alcanza nada**.
 | `GET` | `/v1/audit` | Paginado, filtrable. **Solo lectura. No existe POST, PATCH ni DELETE** (FR-049) |
 
 **Los parámetros de `/v1/audit`**, nombrados aquí porque "filtrable" no es una especificación: `?desde=` y `?hasta=` (instantes ISO), `?actor=`, `?accion=` (prefijo, para que `grant.` traiga todas las de grants), `?objeto_tipo=`, `?resultado=` (`permitido|denegado|error`), `?cursor=` y `?limite=`.
@@ -181,7 +229,7 @@ Un parámetro que el servicio no reconozca se **ignora**, y la respuesta declara
 
 | Método | Ruta | Notas |
 |---|---|---|
-| `POST` | `/v1/projects/:id/runs` | Lanza un ciclo. `409` si el proyecto no está `ACTIVE`, nombrando la etapa que falta (FR-064) |
+| `POST` | `/v1/projects/:id/runs` | Lanza un ciclo. Cuerpo: `{ item?: string }`. `409` si el proyecto no está `ACTIVE`, nombrando la etapa que falta (FR-064) |
 | `GET` | `/v1/projects/:id/runs` | **Lectura del estado en archivos.** El servicio no lo escribe |
 | `GET` | `/v1/runs/:id` | |
 

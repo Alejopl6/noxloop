@@ -3,8 +3,9 @@
 import { useLectura } from '@/lib/lectura'
 import { useBandeja, ListaDeBandeja } from '@/components/bandeja'
 import { Button } from '@/components/ui/button'
+import { FalloDeLectura } from '@/components/pantalla'
 import { INDICADORES_EN_CERO, type Indicadores } from '@/lib/tipos'
-import type { Ruta } from '@/lib/ruta'
+import type { Navegar } from '@/lib/ruta'
 
 /**
  * Vista de inicio.
@@ -42,7 +43,7 @@ function Indicador({ etiqueta, valor }: { etiqueta: string; valor: number }) {
   )
 }
 
-export function VistaDeInicio({ navegar }: { navegar: (destino: Ruta) => void }) {
+export function VistaDeInicio({ navegar }: { navegar: Navegar }) {
   const indicadores = useLectura<Indicadores>('/v1/dashboard', {
     relerEn: EVENTOS_DE_INDICADORES,
   })
@@ -82,18 +83,17 @@ export function VistaDeInicio({ navegar }: { navegar: (destino: Ruta) => void })
 
         <p className="text-label-13 text-ds-gray-700">
           {valores.proyectos_registrados === 0
-            ? 'No hay proyectos todavia. Nada de lo de arriba tiene de donde salir hasta que registres el primero.'
+            ? 'No hay proyectos todavia. Nada de lo de arriba tiene de donde salir hasta que registres el primero, y eso se hace desde Proyectos.'
             : `${valores.proyectos_registrados} ${
                 valores.proyectos_registrados === 1 ? 'proyecto' : 'proyectos'
-              } registrados.`}
+              } registrados. Estan en Proyectos, uno por fila.`}
         </p>
 
-        {indicadores.error ? (
-          <div className="flex flex-col gap-1">
-            <p className="text-copy-13 text-ds-gray-900">{indicadores.error.causa}</p>
-            <p className="text-copy-13 text-ds-gray-1000">{indicadores.error.accion}</p>
-          </div>
-        ) : null}
+        {/* El fallo lleva causa, accion y codigo, como en el resto de la
+            consola. Los indicadores de arriba siguen en pantalla: lo que no se
+            puede hacer es pintarlos como frescos, y de eso se encarga el
+            banner de la cascara. */}
+        <FalloDeLectura error={indicadores.error} />
       </section>
 
       {/* Una linea, no una caja. Es lo unico que separa "se lee" de "se hace". */}
@@ -126,12 +126,7 @@ export function VistaDeInicio({ navegar }: { navegar: (destino: Ruta) => void })
           onAbrir={(id) => navegar({ seccion: 'bandeja', id })}
         />
 
-        {bandeja.error ? (
-          <div className="flex flex-col gap-1">
-            <p className="text-copy-13 text-ds-gray-900">{bandeja.error.causa}</p>
-            <p className="text-copy-13 text-ds-gray-1000">{bandeja.error.accion}</p>
-          </div>
-        ) : null}
+        <FalloDeLectura error={bandeja.error} />
       </section>
     </div>
   )

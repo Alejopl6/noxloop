@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
+import type { EstadoProyecto } from '@/lib/tipos'
+
 /**
  * Enrutado en cliente (T011).
  *
@@ -31,11 +33,67 @@ import { useCallback, useEffect, useState } from 'react'
  * pantalla de producto para ello. Por eso no aparece en la navegacion y solo
  * se alcanza escribiendo `?vista=catalogo`.
  */
-export type Seccion = 'inicio' | 'bandeja' | 'catalogo'
+export type Seccion =
+  | 'inicio'
+  | 'bandeja'
+  | 'proyectos'
+  | 'proyecto-nuevo'
+  | 'snapshot'
+  | 'constitution'
+  | 'bootstrap'
+  | 'conexiones'
+  | 'flota'
+  | 'runs'
+  | 'credenciales'
+  | 'auditoria'
+  | 'catalogo'
+
+/**
+ * Como se llama el identificador de cada seccion en la direccion.
+ *
+ * NO ES COSMETICA. El identificador significa cosas distintas segun la
+ * seccion —una entrada de bandeja, un proyecto, una credencial— y un
+ * `?id=` generico produce direcciones que se pueden pegar de una seccion a
+ * otra y recargan en un sitio que no tiene nada que ver con lo que se estaba
+ * mirando. Con el nombre puesto, esa direccion sencillamente no analiza.
+ *
+ * Una seccion sin entrada aqui no lleva identificador, y el que traiga se
+ * descarta al construir la direccion.
+ */
+const PARAMETRO_DE_ID: Partial<Record<Seccion, string>> = {
+  bandeja: 'entrada',
+  snapshot: 'proyecto',
+  constitution: 'proyecto',
+  bootstrap: 'proyecto',
+  conexiones: 'proyecto',
+  flota: 'proyecto',
+  runs: 'proyecto',
+  credenciales: 'credencial',
+}
+
+const SECCIONES: readonly Seccion[] = [
+  'inicio',
+  'bandeja',
+  'proyectos',
+  'proyecto-nuevo',
+  'snapshot',
+  'constitution',
+  'bootstrap',
+  'conexiones',
+  'flota',
+  'runs',
+  'credenciales',
+  'auditoria',
+  'catalogo',
+] as const
+
+function esSeccion(valor: string | null): valor is Seccion {
+  return valor !== null && (SECCIONES as readonly string[]).includes(valor)
+}
 
 export interface Ruta {
   seccion: Seccion
-  /** Identificador dentro de la seccion, cuando lo hay. */
+  /** Identificador dentro de la seccion, cuando la seccion tiene uno. */
   id: string | null
 }
 
@@ -44,23 +102,46 @@ export const RUTA_INICIAL: Ruta = { seccion: 'inicio', id: null }
 export function analizarRuta(busqueda: string): Ruta {
   const parametros = new URLSearchParams(busqueda)
   const vista = parametros.get('vista')
-  if (vista === 'bandeja') {
-    return { seccion: 'bandeja', id: parametros.get('entrada') }
-  }
-  if (vista === 'catalogo') {
-    return { seccion: 'catalogo', id: null }
-  }
-  return RUTA_INICIAL
+  if (!esSeccion(vista) || vista === 'inicio') return RUTA_INICIAL
+
+  const nombre = PARAMETRO_DE_ID[vista]
+  return { seccion: vista, id: nombre ? parametros.get(nombre) : null }
 }
 
 export function construirRuta(ruta: Ruta): string {
   if (ruta.seccion === 'inicio') return '/'
   const parametros = new URLSearchParams({ vista: ruta.seccion })
-  // El identificador solo significa algo dentro de la bandeja. Arrastrarlo a
-  // otra seccion produciria una direccion que recarga a un sitio distinto del
-  // que se estaba mirando.
-  if (ruta.seccion === 'bandeja' && ruta.id) parametros.set('entrada', ruta.id)
+  const nombre = PARAMETRO_DE_ID[ruta.seccion]
+  if (nombre && ruta.id) parametros.set(nombre, ruta.id)
   return `/?${parametros.toString()}`
+}
+
+/** Navegador: lo que recibe toda pantalla para moverse. Un solo tipo, un solo nombre. */
+export type Navegar = (destino: Ruta) => void
+
+/**
+ * A que pantalla lleva la etapa que le falta a un proyecto.
+ *
+ * ESTA TABLA VIVE AQUI Y NO EN LA PANTALLA DE PROYECTOS porque ya se usa en
+ * tres sitios —la fila de la lista, el rechazo al lanzar un ciclo, y el aviso
+ * de la flota sin activar— y la cabecera de `ETAPA_PENDIENTE` en `tipos.ts`
+ * dice exactamente eso: tres copias de esta respuesta divergen a la primera.
+ * `tipos.ts` no la puede tener porque no conoce `Seccion`; `ruta.ts` si.
+ *
+ * `ACTIVE` lleva a `runs` y no es una excepcion al patron: un proyecto activo
+ * no tiene etapa pendiente, tiene un sitio al que ir — lanzar. Antes de que
+ * existiera esa pantalla, `CONNECTED` y `ACTIVE` valian `null` y la fila se
+ * quedaba sin boton, que es lo correcto mientras el destino no existe: un
+ * boton que no lleva a ningun sitio hace creer al operador que el camino esta
+ * y que el no lo encuentra.
+ */
+export const DESTINO_DE_ETAPA: Record<EstadoProyecto, Seccion> = {
+  CREATED: 'snapshot',
+  DISCOVERED: 'constitution',
+  CONSTITUTED: 'bootstrap',
+  BOOTSTRAPPED: 'conexiones',
+  CONNECTED: 'flota',
+  ACTIVE: 'runs',
 }
 
 export function useRuta(): { ruta: Ruta; navegar: (destino: Ruta) => void } {
