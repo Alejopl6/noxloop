@@ -15,6 +15,7 @@ import {
   comoErrorDelServicio,
   crearCliente,
   resolverOrigen,
+  tomarTokenDeLaDireccion,
   type ClienteServicio,
   type ErrorDelServicio,
 } from '@/lib/daemon'
@@ -129,6 +130,13 @@ export function ProveedorDeServicio({ children }: { children: ReactNode }) {
 
     const conectar = async () => {
       try {
+        // El token de `?token=` se toma ANTES de resolver el origen, porque el
+        // origen lo incluye: leerlo despues dejaria el primer intento sin token
+        // y el operador veria un 401 antes del primer reintento. Se borra de la
+        // direccion en cuanto se lee — un token en la barra sobrevive en el
+        // historial y se copia al compartir el enlace.
+        tomarTokenDeLaDireccion()
+
         const origen = await resolverOrigen()
 
         let elCliente = clienteVigente.current

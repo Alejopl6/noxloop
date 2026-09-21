@@ -227,6 +227,7 @@ export function bovedaDelAlmacenParaLaBoveda(almacen) {
  *   frase?: string|null,
  *   backendDeSecretos?: any,
  *   proveedorDeConexiones?: any,
+ *   adaptadores?: any,
  *   reloj?: () => number,
  * }} opts
  */
@@ -337,6 +338,33 @@ export async function abrirDependencias(opts) {
     escaneos: new Map(),
     ausenciaDeLaBoveda,
     backend: eleccion.backend,
+    /**
+     * El registro de runtimes de agente, INYECTADO.
+     *
+     * POR QUE NO SE CONSTRUYE AQUI. Construir un adaptador es donde se deciden
+     * el binario, los hooks y el home — cosas que este servicio no sabe y que
+     * dependen de la maquina del operador. Un registro armado aqui con valores
+     * supuestos prometeria runtimes que nadie arranco, que es exactamente lo
+     * que `/v1/capabilities` declara hoy que NO hace.
+     *
+     * Y SU AUSENCIA SE DECLARA en vez de sustituirse por un registro vacio: uno
+     * vacio hace que la sugerencia de flota devuelva «no se puede sugerir
+     * ningun rol», que se lee como «este proyecto no puede tener agentes» — una
+     * conclusion que nadie saco.
+     */
+    adaptadores: opts.adaptadores ?? null,
+    ausenciaDeAdaptadores: opts.adaptadores
+      ? null
+      : {
+          porque:
+            "no hay ningun registro de runtimes de agente montado en este servicio: los adaptadores se " +
+            "inyectan al arrancar, porque construirlos decide el binario, los hooks y el home de cada uno, y " +
+            "eso depende de la maquina del operador y no de este proceso.",
+          comoConseguirlo:
+            "Arranca el servicio con el registro de adaptadores inyectado (`arrancar({ adaptadores })`). " +
+            "Mientras tanto puedes dar de alta los agentes a mano por `POST /v1/projects/:id/agents`.",
+        },
+
     conexiones: opts.proveedorDeConexiones ?? null,
     ausenciaDeConexiones: opts.proveedorDeConexiones
       ? null

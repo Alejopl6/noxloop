@@ -23,6 +23,7 @@ import {
   analizar,
   aplicar,
   aplicarEnmienda,
+  aplicarLote,
   arbolDeDisco,
   AREAS,
   crearGuideline,
@@ -33,6 +34,7 @@ import {
   omitir,
   omitirDiseno,
   personalizar,
+  proponerBootstrap,
   proponerConstitution,
   RUTA_POR_DEFECTO,
   rutaDeGuideline,
@@ -77,6 +79,89 @@ function snapshotDelNucleo(dep, proyecto) {
 
 /** @param {any} proyecto */
 const arbolDe = (proyecto) => arbolDeDisco(proyecto.ruta_local);
+
+/**
+ * Los invariantes declarados al fijar la constitution, por `constitution_id`.
+ *
+ * POR QUE ESTAN AQUI Y NO EN EL ALMACEN, Y POR QUE IMPORTA MAS QUE LOS
+ * APARTADOS. Por el mismo motivo: la tabla `constitution` guarda el documento y
+ * no tiene columna para ellos. Pero el precio es mayor. Los invariantes son el
+ * dato contra el que el bootstrap contrasta cada recomendacion (FR-028); sin
+ * ellos, `invariantesDe` solo puede derivar el implicito —que el bootstrap no
+ * reescriba la propia constitution— y CUALQUIER otro conflicto declarado por el
+ * operador deja de detectarse. No falla: propone la recomendacion sin marcarla,
+ * que es exactamente el caso que FR-028 existe para impedir.
+ *
+ * Leerlos de aqui los mantiene vivos mientras vive el proceso, que es lo unico
+ * que este paquete puede hacer sin decidir el esquema de otro. La columna que
+ * falta va en el informe de esta tarea, igual que la de los apartados.
+ *
+ * @type {Map<string, any[]>}
+ */
+const invariantesPorConstitution = new Map();
+
+/**
+ * La constitution vigente con sus invariantes, si se declararon en esta sesion.
+ *
+ * @param {any} dep
+ * @param {string} project_id
+ */
+function constitutionParaElBootstrap(dep, project_id) {
+  const vigente = dep.nucleo.constitutionVigente(project_id);
+  if (!vigente) return null;
+  const invariantes = invariantesPorConstitution.get(vigente.id);
+  return invariantes ? { ...vigente, invariantes } : vigente;
+}
+
+/**
+ * El bootstrap, analizado SOLO en cuanto la constitution queda fijada.
+ *
+ * POR QUE SE DISPARA AQUI Y NO SE ESPERA A QUE LO PIDAN. Porque pedir el
+ * analisis nunca fue una decision: es trabajo. Todo lo que hace falta para
+ * calcularlo —el snapshot, el arbol y la constitution— ya esta sobre la mesa
+ * justo en este instante, y el operador no tiene forma de saber que existe una
+ * pantalla que hay que ir a buscar. Lo que se automatiza es el calculo.
+ *
+ * LO QUE ESTO NO HACE, Y ES LA MITAD QUE IMPORTA: no escribe. `analizar` no
+ * toca el arbol —ni un archivo, ni un temporal, ni una cache— y esta ruta
+ * tampoco. FR-026 sigue entero: la propuesta llega calculada y espera una
+ * aprobacion explicita con el diff exacto delante.
+ *
+ * POR QUE NO SE PROPAGA EL ERROR SI NO HAY SNAPSHOT. Porque el `PUT` que lo
+ * llamo venia a fijar la constitution y eso ya se hizo y se escribio. Tumbar la
+ * respuesta por una etapa que ni siquiera se habia pedido dejaria al operador
+ * creyendo que la constitution no quedo fijada, que es falso y peor. Se
+ * devuelve el aviso con la causa y la accion.
+ *
+ * @param {any} p
+ * @param {any} proyecto
+ * @returns {{propuesta: any}|{aviso: any}}
+ */
+function analizarSolo(p, proyecto) {
+  try {
+    const analisis = analizar({
+      snapshot: snapshotDelNucleo(p.dep, proyecto),
+      arbol: arbolDe(proyecto),
+      constitution: constitutionParaElBootstrap(p.dep, proyecto.id),
+      project_id: proyecto.id,
+      repositorio: p.dep.nucleo,
+    });
+    return { propuesta: proponerBootstrap(analisis) };
+  } catch (e) {
+    const error = /** @type {any} */ (e);
+    return {
+      aviso: {
+        codigo: "bootstrap_no_analizado",
+        causa:
+          "la constitution quedo fijada, pero el bootstrap no se pudo analizar solo: " +
+          `${error.causa ?? error.message}`,
+        accion:
+          error.accion ??
+          "Corre el escaneo del proyecto y acepta el snapshot; despues pide `GET /v1/projects/:id/bootstrap/proposal`.",
+      },
+    };
+  }
+}
 
 /** @param {import("./rutas.mjs").Peticion} p */
 export async function proponer(p) {
@@ -183,12 +268,34 @@ export async function constitution(p) {
   });
 
   if (apartados) apartadosPorConstitution.set(salida.constitution.id, apartados);
+  // Los invariantes viajan con la constitution al nucleo, pero el almacen no
+  // tiene donde guardarlos. Ver la cabecera de `invariantesPorConstitution`:
+  // sin esto, FR-028 solo detectaria el conflicto implicito.
+  if (Array.isArray(salida.constitution.invariantes) && salida.constitution.invariantes.length > 0) {
+    invariantesPorConstitution.set(salida.constitution.id, [...salida.constitution.invariantes]);
+  }
 
   p.estado.bus.emitir(
     "proyecto.estado",
     { estado: salida.proyecto.estado, motivo: `constitution ${salida.constitution.version} fijada` },
     { project_id: proyecto.id },
   );
+
+  // El bootstrap se analiza SOLO. Ver la cabecera de `analizarSolo`.
+  const automatico = analizarSolo(p, proyecto);
+  if ("propuesta" in automatico) {
+    p.estado.bus.emitir(
+      "bootstrap.propuesta",
+      {
+        snapshot_id: automatico.propuesta.snapshot_id,
+        decisiones: automatico.propuesta.decisiones,
+        en_bloque: automatico.propuesta.lote.recomendaciones.length,
+        aparte: automatico.propuesta.aparte.length,
+        preguntas: automatico.propuesta.preguntas.length,
+      },
+      { project_id: proyecto.id },
+    );
+  }
 
   return {
     cuerpo: {
@@ -198,6 +305,10 @@ export async function constitution(p) {
         markdown: salida.constitution.contenido,
         ...(apartados ? { apartados } : {}),
       },
+      // O la propuesta, o el aviso de por que no la hay. Nunca las dos ni
+      // ninguna: una respuesta muda aqui se lee como «el bootstrap no aplica a
+      // este proyecto», que es una conclusion que nadie saco.
+      ...("propuesta" in automatico ? { propuesta: automatico.propuesta } : { avisos: [automatico.aviso] }),
     },
   };
 }
@@ -351,12 +462,95 @@ export async function analizarBootstrap(p) {
   const analisis = analizar({
     snapshot,
     arbol: arbolDe(proyecto),
-    constitution: p.dep.nucleo.constitutionVigente(proyecto.id),
+    constitution: constitutionParaElBootstrap(p.dep, proyecto.id),
     project_id: proyecto.id,
     repositorio: p.dep.nucleo,
   });
 
   return { cuerpo: { analisis } };
+}
+
+/**
+ * La propuesta completa: el bloque que se aprueba de una vez, lo que se decide
+ * solo, lo que hay que preguntar y lo que ya estaba.
+ *
+ * VUELVE A ANALIZAR, y no reusa lo guardado, por el mismo motivo por el que
+ * `apply` no recalcula: el diff que se muestra tiene que ser el diff contra el
+ * arbol de AHORA. Una propuesta armada con recomendaciones de hace dos horas se
+ * ve igual de bien y choca contra `diff_obsoleto` al aprobarla — o peor, deja
+ * de chocar el dia que alguien "optimice" la comprobacion.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function propuestaDeBootstrap(p) {
+  const proyecto = exigirProyecto(p.dep, p.parametros.id);
+  const analisis = analizar({
+    snapshot: snapshotDelNucleo(p.dep, proyecto),
+    arbol: arbolDe(proyecto),
+    constitution: constitutionParaElBootstrap(p.dep, proyecto.id),
+    project_id: proyecto.id,
+    repositorio: p.dep.nucleo,
+  });
+  return { cuerpo: { propuesta: proponerBootstrap(analisis) } };
+}
+
+/**
+ * Aprueba el bloque entero: UNA decision del operador, todas sus escrituras.
+ *
+ * LOS IDS SON OBLIGATORIOS Y NO ES BUROCRACIA. Un «aplica todo lo pendiente»
+ * aplica tambien lo que se calculo DESPUES de que el operador mirara la
+ * pantalla: otra ventana, otro analisis, una recomendacion que el no vio. Lo
+ * que se escribe tiene que ser lo que se mostro, y los ids son la unica forma
+ * de decir cual fue.
+ *
+ * LAS TRES GUARDAS VIVEN EN EL NUCLEO. `aplicarLote` comprueba que ninguna
+ * exige mirarse (FR-028), que ninguna pisa a otra, y que el arbol no se movio
+ * bajo NINGUNA antes de escribir la primera. Este archivo traduce; no decide.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function aprobarBootstrap(p) {
+  const proyecto = exigirProyecto(p.dep, p.parametros.id);
+  const cuerpo = await p.cuerpo();
+  const ids = cuerpo.recomendaciones ?? cuerpo.ids;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new ErrorDeServicio("cuerpo_invalido", {
+      detalle:
+        "`recomendaciones` tiene que traer los ids que la propuesta mostro. No hay «aplica todo lo pendiente»: " +
+        "eso aplicaria tambien lo que se calculo despues de que el operador mirara la pantalla —otra ventana, " +
+        "otro analisis— y lo que se escribe tiene que ser exactamente lo que se mostro",
+      campos: ["recomendaciones"],
+    });
+  }
+
+  const recomendaciones = ids.map((/** @type {string} */ id) => {
+    const guardada = p.dep.nucleo.recomendacion(id);
+    if (!guardada) throw noEsta("recomendacion", id, DONDE_SE_ANALIZA);
+    if (guardada.project_id !== proyecto.id) {
+      // Un id de otro proyecto dentro del bloque escribiria en un repositorio
+      // que esta aprobacion no menciona.
+      throw noEsta("recomendacion", id, DONDE_SE_ANALIZA, `el proyecto \`${proyecto.nombre}\``);
+    }
+    return guardada;
+  });
+
+  const salida = aplicarLote(
+    { lote: { recomendaciones } },
+    { arbol: arbolDe(proyecto), repositorio: p.dep.nucleo, motivo: cuerpo.motivo ?? null },
+  );
+
+  p.estado.bus.emitir(
+    "bootstrap.lote.aplicado",
+    {
+      recomendaciones: salida.aplicadas.map((/** @type {any} */ r) => r.id),
+      escrituras: salida.escrituras,
+      sin_cambios: salida.sin_cambios,
+    },
+    { project_id: proyecto.id },
+  );
+
+  return { cuerpo: salida };
 }
 
 /** @param {import("./rutas.mjs").Peticion} p */

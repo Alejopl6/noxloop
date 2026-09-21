@@ -22,6 +22,7 @@ import { SECCIONES_DE_PROYECTO, type Seccion } from '@/lib/ruta'
  */
 export const ETIQUETA_DE_SECCION: Record<Seccion, string> = {
   inicio: 'Inicio',
+  asistente: 'Asistente',
   bandeja: 'Bandeja',
   proyectos: 'Proyectos',
   'proyecto-nuevo': 'Anadir proyecto',
@@ -46,11 +47,32 @@ export const ETIQUETA_DE_SECCION: Record<Seccion, string> = {
  */
 export const SECCIONES_DEL_WORKSPACE: readonly Seccion[] = [
   'inicio',
+  'asistente',
   'bandeja',
   'proyectos',
   'credenciales',
   'auditoria',
 ]
+
+/**
+ * Las secciones que se pintan SIN el rail de navegacion.
+ *
+ * EL FALLO CONCRETO: el asistente existe para que haya UNA decision en
+ * pantalla. Con el rail montado al lado hay once destinos compitiendo con
+ * ella, y el paso que dice "decide estos 57 hallazgos" queda a la misma
+ * distancia visual que "Auditoria". Lo que se corrige no es el ancho: es que
+ * la pantalla siga ofreciendo salida por once sitios cuando lo que pide es
+ * atencion en uno.
+ *
+ * NO ES UNA CARCEL. La cabecera se queda entera —migas, conmutador de
+ * proyecto, ⌘K— y el asistente pinta su propia salida al modo consola en cada
+ * paso. Lo que desaparece es el menu permanente, no la puerta.
+ */
+export const SECCIONES_SIN_RAIL: readonly Seccion[] = ['asistente']
+
+export function pintaRail(seccion: Seccion): boolean {
+  return !SECCIONES_SIN_RAIL.includes(seccion)
+}
 
 /**
  * Nivel dos: las etapas del proyecto abierto, en el orden en que se recorren.

@@ -79,17 +79,25 @@ test("dos homes distintos conviven: dos proyectos abiertos a la vez no son un er
  * que estar declarado alli como recurso del sidecar, y lo que no este en ella
  * no puede importarse desde aqui.
  */
-const PAQUETES_QUE_VIAJAN = ["store", "vault", "scanner", "core", "connections"];
+// `engine` entro el ultimo, y por una razon concreta: el binario monta los
+// runtimes CON las guardas del TDD, y `buildHookSettings` vive ahi. Montarlos
+// sin ellas hacia que la sugerencia de flota se negara a proponer un
+// implementador —correctamente: sin el hook, el paso RED depende de que el
+// prompt se acuerde— asi que el servicio necesita esa funcion de verdad.
+//
+// No es gratuito ademas por lo que viene: `POST /runs` lanza el motor, y hoy
+// devuelve `pieza_ausente` justamente porque no lo tiene a mano.
+const PAQUETES_QUE_VIAJAN = ["store", "vault", "scanner", "core", "connections", "adapters", "engine"];
 
-test("el servicio solo importa los cinco paquetes que viajan con el al escritorio", () => {
+test("el servicio solo importa los paquetes que viajan con el al escritorio", () => {
   // EL FALLO QUE EVITA, Y YA OCURRIO UNA VEZ CON EL LOCK. El escritorio
   // empaqueta recursos declarados y nada mas. Un import relativo que salga del
   // paquete resuelve perfectamente en el repositorio y revienta al abrir la
   // aplicacion instalada, con un `ERR_MODULE_NOT_FOUND` que el operador ve como
   // una ventana que no abre y sin ningun mensaje que lo explique.
   //
-  // POR QUE ESTE TEST YA NO DICE "NINGUNO" Y AHORA DICE "ESTOS CINCO". Porque
-  // cablear los seis paquetes ES el trabajo de este servicio: prohibir del todo
+  // POR QUE ESTE TEST YA NO DICE "NINGUNO" Y AHORA DICE "ESTOS". Porque
+  // cablear paquetes ES el trabajo de este servicio: prohibir del todo
   // los imports de fuera solo dejaba dos salidas, y las dos peores —copiar el
   // almacen aqui dentro, o importarlo por nombre de paquete
   // (`@noxloop/store`), que resuelve por `node_modules` y por tanto PASA este
@@ -97,10 +105,12 @@ test("el servicio solo importa los cinco paquetes que viajan con el al escritori
   // contrario: deja el cableado a la vista y convierte el requisito de
   // empaquetado en algo que se puede leer y comprobar.
   //
-  // LO QUE ESTE TEST NO PUEDE COMPROBAR, y por eso se dice aqui: que esos cinco
-  // esten declarados en `apps/desktop/src-tauri/tauri.conf.json`. Ese archivo
-  // esta fuera de este paquete. Si falta uno, el sintoma es el mismo que el del
-  // lock, y el sitio donde mirar es esta lista.
+  // LO QUE ESTE TEST NO COMPRUEBA, y por eso se dice aqui: que esos paquetes
+  // esten declarados en `apps/desktop/src-tauri/tauri.conf.json`, y que
+  // aterricen donde el import los busca. Eso lo mide
+  // `recursos-del-escritorio.test.mjs`, que lee ese archivo y ata las dos
+  // listas en las dos direcciones. Esta lista es la intencion declarada;
+  // aquella es la comprobacion. Agregar uno aqui obliga a declararlo alli.
   const dir = new URL("../src/", import.meta.url).pathname;
   const bin = new URL("../bin/", import.meta.url).pathname;
   const permitidos = new Set(PAQUETES_QUE_VIAJAN.map((p) => `../../${p}/`));

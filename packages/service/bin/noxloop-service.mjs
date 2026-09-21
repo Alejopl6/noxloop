@@ -10,9 +10,75 @@
 // POR QUE STDOUT SOLO LLEVA ESA LINEA. Todo lo demas va a stderr. Un log
 // informativo en stdout se mete en medio del parseo del shell.
 
+import {
+  crearAdaptadorClaude,
+  crearAdaptadorCodex,
+  registroDeAdaptadores,
+} from "../../adapters/src/index.mjs";
+import { buildHookSettings, validateHookSettings } from "../../engine/src/session-settings.mjs";
+
 import { resolverHome } from "../src/home.mjs";
 import { ErrorDeServicio } from "../src/errores.mjs";
 import { arrancar } from "../src/servidor.mjs";
+
+/**
+ * El registro de runtimes que este binario monta.
+ *
+ * POR QUE VIVE AQUI Y NO EN EL SERVICIO. Construir un adaptador decide el
+ * binario que se lanza, sus hooks y su home — cosas de la maquina del operador,
+ * no del proceso. El servicio los recibe inyectados a proposito, y ese diseño
+ * es correcto.
+ *
+ * EL HUECO QUE ESTO CIERRA. Nadie los inyectaba. `GET /agents/suggest`
+ * devolvia 503 `pieza_ausente` con un mensaje impecable —nombraba la pieza, el
+ * porque y la alternativa— y era inalcanzable desde el producto: Tauri lanza
+ * ESTE binario como sidecar, asi que la aplicacion de escritorio recibia el
+ * mismo 503. La sugerencia de flota existia, estaba probada, y no habia forma
+ * de llegar a ella.
+ *
+ * Es el fallo de las costuras otra vez: dos piezas correctas y nadie
+ * conectandolas. Salio al levantar el servicio para mirarlo, no de un test —
+ * cada lado pasaba los suyos.
+ *
+ * NO SE COMPRUEBA SI ESTAN INSTALADOS. Registrar no es prometer: cada adaptador
+ * declara en `capabilities()` lo que sabe hacer y `preflight()` contesta si
+ * puede aqui y ahora. Sondearlos al arrancar significaria lanzar procesos antes
+ * de escuchar en ningun puerto, y retrasar el `NOXLOOP_READY` que la cascara
+ * espera.
+ *
+ * SE MONTAN CON LAS GUARDAS PUESTAS, y esto no es un detalle de configuracion.
+ * La primera version los construia desnudos y el resultado fue instructivo: la
+ * sugerencia de flota devolvia `sugerida: false` y se negaba a proponer un
+ * implementador, diciendo que ningun runtime declara `hooks: true` y que sin
+ * hooks no se puede correr la guarda del paso RED dentro del subproceso.
+ *
+ * Tenia razon. Un implementador sin el hook del TDD depende de que el prompt se
+ * acuerde, y el principio I ya lo midio: un prompt funciona en las dos primeras
+ * iteraciones y deja de funcionar en la tercera. El rechazo era el
+ * comportamiento correcto ante un montaje incorrecto.
+ *
+ * `validateHookSettings` corta si los hooks declarados no estan en disco. Se
+ * prefiere no registrar a registrar sin guardas: un runtime que dice poder
+ * implementar y no puede hacer cumplir el rojo es peor que ninguno.
+ *
+ * @param {string} home
+ */
+function registroDeRuntimes(home) {
+  const guardas = buildHookSettings();
+  const v = validateHookSettings(guardas);
+  if (!v.ok) {
+    aviso(
+      "runtimes sin registrar: las guardas de los hooks no validan" +
+        (v.missing?.length ? ` (faltan en disco: ${v.missing.join(", ")})` : "") +
+        ". La sugerencia de flota lo dira con su causa en vez de proponer agentes sin guardas.",
+    );
+    return null;
+  }
+  return registroDeAdaptadores([
+    crearAdaptadorClaude({ home, hooks: guardas, directoriosExtra: [home] }),
+    crearAdaptadorCodex(),
+  ]);
+}
 
 const AYUDA = `noxloop-service — el servicio de control: unico escritor del almacen.
 
@@ -99,6 +165,7 @@ async function main() {
     parentPid: numero(flags, "parent-pid"),
     watchdogMs: numero(flags, "watchdog-ms"),
     origenes: textos(flags, "origen"),
+    adaptadores: registroDeRuntimes(home),
   });
 
   aviso(`home: ${svc.home} (de ${de})`);

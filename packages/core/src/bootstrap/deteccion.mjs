@@ -59,6 +59,18 @@ export function tieneSustancia(h) {
   if (v === null || v === undefined) return false;
   if (Array.isArray(v) && v.length === 0) return false;
   if (typeof v === "string" && v.trim().length === 0) return false;
+  // Un objeto SIN CLAVES esta tan vacio como un array sin elementos, y faltaba.
+  //
+  // El caso real que lo destapo: el scanner devuelve
+  // `testing.umbral_cobertura: {}` cuando el proyecto no declara ninguno. Con
+  // esta linea ausente, el bootstrap contaba esa capacidad como PRESENTE y no
+  // la proponia — o sea, el operador nunca recibia la sugerencia de declarar un
+  // umbral de cobertura, precisamente porque no tenia ninguno.
+  //
+  // Es el fallo de los huecos invertido: en vez de rellenar un hueco con lo
+  // probable, se leia un hueco como si estuviera lleno. Las dos formas acaban
+  // en lo mismo — una decision que el operador nunca llega a tomar.
+  if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
   return true;
 }
 

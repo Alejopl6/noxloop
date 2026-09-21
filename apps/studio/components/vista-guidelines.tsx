@@ -51,7 +51,21 @@ export function PanelDeGuidelines({
 }) {
   const guideline = lectura.datos
   // Un 404 aqui no es un fallo: es "esta area todavia no tiene guideline".
-  const noExiste = lectura.error?.codigo === 'recurso_inexistente'
+  //
+  // SE MIRA EL ESTADO HTTP Y NO EL CODIGO, y la diferencia se pagaba en
+  // pantalla. Esto comparaba contra `recurso_inexistente`, un codigo que
+  // `daemon.ts` solo inventa cuando el 404 llega SIN cuerpo del contrato — y el
+  // servicio siempre lo manda, con `recurso_desconocido`. Asi que la
+  // comparacion nunca era cierta: entrar a un area sin guideline no decia
+  // "todavia no tiene, guardar la crea", decia un error que habla de que otra
+  // ventana pudo borrar el recurso. El operador leia una alarma donde habia un
+  // estado normal.
+  //
+  // El estado HTTP es el hecho; el codigo es el vocabulario, y hay dos
+  // vocabularios en juego —el del servicio y el que el cliente fabrica cuando
+  // no recibe ninguno—. Comparar contra uno de los dos funciona hasta que llega
+  // el otro.
+  const noExiste = lectura.error?.estadoHttp === 404
   const cargando = guideline === null && lectura.error === null
 
   return (

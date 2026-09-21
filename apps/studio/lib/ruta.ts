@@ -35,6 +35,7 @@ import type { EstadoProyecto } from '@/lib/tipos'
  */
 export type Seccion =
   | 'inicio'
+  | 'asistente'
   | 'bandeja'
   | 'proyectos'
   | 'proyecto-nuevo'
@@ -75,8 +76,32 @@ export const SECCIONES_DE_PROYECTO = [
 
 export type SeccionDeProyecto = (typeof SECCIONES_DE_PROYECTO)[number]
 
-export function esSeccionDeProyecto(seccion: Seccion): seccion is SeccionDeProyecto {
-  return (SECCIONES_DE_PROYECTO as readonly Seccion[]).includes(seccion)
+/**
+ * Todo lo que VIAJA CON UN IDENTIFICADOR DE PROYECTO, que ya no es lo mismo
+ * que las seis etapas.
+ *
+ * `asistente` no es una etapa: es el recorrido entero, y por eso no entra en
+ * `SECCIONES_DE_PROYECTO` —esa lista la consume la navegacion de segundo nivel
+ * y el orden de sus seis entradas ES la maquina de estados—. Pero si lleva
+ * `?proyecto=`, y el fallo que separar las dos listas evita es exactamente el
+ * que ya describe la cabecera de `PARAMETRO_DE_ID`: sin entrada ahi, la
+ * direccion del asistente se construye sin el proyecto, todo funciona hasta
+ * que el operador recarga, y al recargar el asistente dice que no sabe de que
+ * proyecto habla.
+ *
+ * El asistente SIN proyecto es legitimo —es su primer paso, elegir o crear
+ * uno— asi que aqui lo que se declara es que el parametro EXISTE, no que sea
+ * obligatorio.
+ */
+export const SECCIONES_CON_PROYECTO = [
+  'asistente',
+  ...SECCIONES_DE_PROYECTO,
+] as const satisfies readonly Seccion[]
+
+export type SeccionConProyecto = (typeof SECCIONES_CON_PROYECTO)[number]
+
+export function esSeccionDeProyecto(seccion: Seccion): seccion is SeccionConProyecto {
+  return (SECCIONES_CON_PROYECTO as readonly Seccion[]).includes(seccion)
 }
 
 /**
@@ -94,11 +119,12 @@ export function esSeccionDeProyecto(seccion: Seccion): seccion is SeccionDeProye
 const PARAMETRO_DE_ID: Partial<Record<Seccion, string>> = {
   bandeja: 'entrada',
   credenciales: 'credencial',
-  ...Object.fromEntries(SECCIONES_DE_PROYECTO.map((seccion) => [seccion, 'proyecto'])),
+  ...Object.fromEntries(SECCIONES_CON_PROYECTO.map((seccion) => [seccion, 'proyecto'])),
 }
 
 const SECCIONES: readonly Seccion[] = [
   'inicio',
+  'asistente',
   'bandeja',
   'proyectos',
   'proyecto-nuevo',
@@ -121,9 +147,28 @@ export interface Ruta {
   seccion: Seccion
   /** Identificador dentro de la seccion, cuando la seccion tiene uno. */
   id: string | null
+  /**
+   * EN QUE PASO DEL ASISTENTE. Solo lo lleva `asistente`; en cualquier otra
+   * seccion se descarta al construir la direccion, igual que el `id`.
+   *
+   * POR QUE ES UN CAMPO APARTE Y NO EL `id`. El `id` de `asistente` ya es el
+   * proyecto, y meter los dos en el mismo hueco obliga a inventar una sintaxis
+   * (`proyecto:paso`) que hay que analizar y de la que nadie se acuerda.
+   *
+   * POR QUE EXISTE, SI EL PASO SE DEDUCE DEL ESTADO DEL PROYECTO. Porque hay
+   * pasos que el servicio NO publica: guidelines y diseno viven los tres
+   * dentro de `CONSTITUTED`, asi que la deduccion no puede distinguirlos. Sin
+   * este parametro, el operador que esta editando las guidelines recarga y
+   * aparece en el bootstrap. `null` significa "deducelo", que es lo correcto
+   * al entrar de nuevas y lo correcto tras crear un proyecto.
+   */
+  paso?: string | null
 }
 
 export const RUTA_INICIAL: Ruta = { seccion: 'inicio', id: null }
+
+/** Como se llama el paso del asistente en la direccion. */
+const PARAMETRO_DE_PASO = 'paso'
 
 export function analizarRuta(busqueda: string): Ruta {
   const parametros = new URLSearchParams(busqueda)
@@ -131,7 +176,11 @@ export function analizarRuta(busqueda: string): Ruta {
   if (!esSeccion(vista) || vista === 'inicio') return RUTA_INICIAL
 
   const nombre = PARAMETRO_DE_ID[vista]
-  return { seccion: vista, id: nombre ? parametros.get(nombre) : null }
+  return {
+    seccion: vista,
+    id: nombre ? parametros.get(nombre) : null,
+    paso: vista === 'asistente' ? parametros.get(PARAMETRO_DE_PASO) : null,
+  }
 }
 
 export function construirRuta(ruta: Ruta): string {
@@ -139,6 +188,9 @@ export function construirRuta(ruta: Ruta): string {
   const parametros = new URLSearchParams({ vista: ruta.seccion })
   const nombre = PARAMETRO_DE_ID[ruta.seccion]
   if (nombre && ruta.id) parametros.set(nombre, ruta.id)
+  if (ruta.seccion === 'asistente' && ruta.paso) {
+    parametros.set(PARAMETRO_DE_PASO, ruta.paso)
+  }
   return `/?${parametros.toString()}`
 }
 

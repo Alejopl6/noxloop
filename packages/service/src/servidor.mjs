@@ -246,6 +246,7 @@ function escribirSesion(home, datos) {
  *   capacidadEventos?: number, latidoMs?: number,
  *   alQuedarHuerfano?: () => void,
  *   frase?: string|null, backendDeSecretos?: any, proveedorDeConexiones?: any,
+ *   adaptadores?: any,
  *   reloj?: () => number,
  * }} opts
  */
@@ -282,6 +283,7 @@ export async function arrancar(opts) {
       frase: opts.frase ?? process.env[VARIABLE_DE_FRASE] ?? null,
       backendDeSecretos: opts.backendDeSecretos,
       proveedorDeConexiones: opts.proveedorDeConexiones,
+      adaptadores: opts.adaptadores,
       reloj: opts.reloj,
     });
   } catch (e) {

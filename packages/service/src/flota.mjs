@@ -20,6 +20,7 @@
 // la consulta luego ya no lo arregla.
 
 import { ENUMS } from "../../store/src/index.mjs";
+import { sugerirFlota } from "../../adapters/src/index.mjs";
 
 import { coleccion, conJson, exigir, exigirProyecto, noEsta } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
@@ -105,6 +106,93 @@ export async function agentesDelProyecto(p) {
   });
 
   return { codigo: 201, cuerpo: { agente: conJson(agente, JSON_DEL_AGENTE) } };
+}
+
+/**
+ * La flota PROPUESTA a partir del snapshot: nueve campos por agente, cada uno
+ * diciendo de donde sale, y lo que no se puede saber declarado pendiente.
+ *
+ * ESTO NO GUARDA NADA, y es la mitad que importa. Devuelve una propuesta; quien
+ * la confirma es el operador por `POST /v1/projects/:id/agents`, campo por
+ * campo si quiere. Una sugerencia que se guarda sola deja de ser una
+ * sugerencia: es configuracion que nadie escribio, ejecutandose miles de veces.
+ *
+ * LOS AGENTES YA GUARDADOS VIAJAN COMO `existentes`. FR-034 es relacional y
+ * nadie monta la flota de una sentada: el caso normal es que el implementador
+ * ya este dado de alta cuando se pide el resto. Una sugerencia que solo mira lo
+ * que ella misma propone coloca al revisor encima del runtime del implementador
+ * guardado — y este mismo servicio la rechaza al guardarla, despues de que el
+ * operador ya la haya aceptado.
+ *
+ * SIN REGISTRO DE RUNTIMES NO SE CONTESTA UNA FLOTA VACIA. Con cero runtimes la
+ * sugerencia solo puede decir «ningun rol se puede sugerir», y eso se lee como
+ * «este proyecto no puede tener agentes» — una conclusion que nadie saco. Se
+ * nombra la pieza que falta y como conseguirla.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function sugerenciaDeFlota(p) {
+  const proyecto = exigirProyecto(p.dep, p.parametros.id);
+
+  if (!p.dep.adaptadores) {
+    throw new ErrorDeServicio("pieza_ausente", {
+      pieza: "el registro de runtimes de agente",
+      porque: p.dep.ausenciaDeAdaptadores.porque,
+      comoConseguirlo: p.dep.ausenciaDeAdaptadores.comoConseguirlo,
+    });
+  }
+
+  const snapshot = snapshotDelProyecto(p.dep, proyecto);
+
+  // Se leen tal cual estan guardados: lo que importa de un existente para
+  // FR-034 son `rol` y `runtime`, que son columnas, no JSON.
+  const existentes = p.dep.almacen.agentes.porProyecto(proyecto.id);
+
+  return {
+    cuerpo: {
+      sugerencia: sugerirFlota({
+        snapshot,
+        adaptadores: p.dep.adaptadores,
+        project_id: proyecto.id,
+        existentes,
+      }),
+    },
+  };
+}
+
+/**
+ * El snapshot completo del proyecto con sus hallazgos, en la forma que el
+ * modelo de flota espera.
+ *
+ * `valor_corregido` GANA cuando lo hay, por lo mismo que en el nucleo: lo que
+ * vale es lo que el operador corrigio. Derivar la flota del valor original
+ * despues de que alguien lo arreglo a mano es ignorar la unica correccion
+ * humana que hubo en todo el recorrido.
+ *
+ * @param {any} dep
+ * @param {any} proyecto
+ */
+function snapshotDelProyecto(dep, proyecto) {
+  const fila = dep.almacen.base.consultarUno(
+    "SELECT * FROM project_snapshot WHERE project_id = ? AND estado = 'completo' ORDER BY creado DESC LIMIT 1",
+    [proyecto.id],
+  );
+  if (!fila) {
+    throw noEsta("snapshot completo", proyecto.id, "`POST /v1/projects/:id/scan`", `el proyecto \`${proyecto.nombre}\``);
+  }
+  return {
+    ...fila,
+    estado: "completo",
+    hallazgos: dep.almacen.snapshots.hallazgos(fila.id).map((/** @type {any} */ h) => ({
+      categoria: h.categoria,
+      clave: h.clave,
+      valor: h.valor_corregido === null ? JSON.parse(String(h.valor)) : JSON.parse(String(h.valor_corregido)),
+      origen: h.origen,
+      evidencia: JSON.parse(String(h.evidencia)),
+      confianza: h.confianza,
+      motivo: h.motivo ?? undefined,
+    })),
+  };
 }
 
 /** @param {import("./rutas.mjs").Peticion} p */

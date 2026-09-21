@@ -27,6 +27,16 @@ const config: NextConfig = {
   // (constitution, principio VIII; FR-002).
   output: 'export',
 
+  // Next 16 genera `AGENTS.md` y `CLAUDE.md` en cada arranque de `dev`.
+  //
+  // EL FALLO QUE ESTO EVITA, y es especifico de ESTE producto: el scanner de
+  // noxloop detecta `AGENTS.md` como instrucciones de agente del proyecto. Con
+  // esto encendido, noxloop escaneandose a si mismo encuentra un archivo que
+  // escribio su propio servidor de desarrollo y lo reporta como contexto que
+  // alguien redacto. Es exactamente el hallazgo inventado que prohibe el
+  // principio X, fabricado por una herramienta en vez de por un modelo.
+  agentRules: false,
+
   // Sin servidor no hay optimizador de imagenes.
   images: { unoptimized: true },
 

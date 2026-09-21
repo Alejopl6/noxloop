@@ -50,11 +50,31 @@ export function capacidades(p) {
     ? { valor: { adaptador: dep.conexiones.id }, origen: "detectado", evidencia: `adaptador \`${dep.conexiones.id}\`` }
     : { valor: null, origen: "vacio", motivo: dep.ausenciaDeConexiones.porque };
 
+  // LOS RUNTIMES, POR EL MISMO MOTIVO Y CON LA MISMA TRAMPA EVITADA. Lo que se
+  // declara es lo que esta REGISTRADO —un hecho comprobable: el registro valida
+  // el contrato de cada adaptador al admitirlo— y no lo que se haya conseguido
+  // arrancar, que es lo que responde `preflight` y no se puede preguntar desde
+  // aqui sin lanzar procesos en un `GET`. Por eso la evidencia dice "registrados"
+  // y no "disponibles": prometer un binario que quiza no esta instalado manda al
+  // operador a montar una flota que falla en la primera fase.
+  //
+  // Y SIN REGISTRO SIGUE SIENDO UN HUECO DECLARADO, no una lista vacia muda:
+  // `[]` a secas se lee como "se miro y no hay ninguno", cuando lo que pasa es
+  // que nadie inyecto el registro.
+  const runtimes = dep.adaptadores
+    ? {
+        valor: dep.adaptadores.ids(),
+        origen: "detectado",
+        evidencia: `registro de adaptadores inyectado al arrancar: ${dep.adaptadores.ids().join(", ")}`,
+      }
+    : { valor: [], origen: "vacio", motivo: dep.ausenciaDeAdaptadores.porque };
+
   return {
     cuerpo: {
       ...base,
       boveda,
       conexiones,
+      runtimes,
       almacen: {
         valor: { version_esquema: dep.almacen.version, workspace: dep.workspace.id },
         origen: "detectado",

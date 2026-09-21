@@ -114,6 +114,37 @@ export function tokenDeSesion(): string | null {
   return tokenDeSesionEnMemoria
 }
 
+/**
+ * Toma el token de `?token=` si viene en la direccion, y LO BORRA DE LA URL.
+ *
+ * POR QUE EXISTE. En modo web el token no se persiste —ver arriba, y es la
+ * decision correcta— pero no habia ninguna forma de introducirlo: la pantalla
+ * que lo pide quedo como hueco declarado, asi que la app web solo sabia
+ * ensenar "el servicio no esta corriendo" aunque estuviera corriendo. Esto es
+ * el camino minimo que la hace utilizable, no la pantalla definitiva.
+ *
+ * POR QUE SE BORRA DE LA URL EN CUANTO SE LEE. Un token en la barra de
+ * direcciones sobrevive en el historial, se copia al compartir el enlace y lo
+ * ve cualquiera que mire la pantalla. `replaceState` lo quita sin anadir una
+ * entrada al historial, asi que el "atras" del navegador tampoco lo recupera.
+ * Vive en memoria desde ese instante, como el que se pega a mano.
+ *
+ * Lo que esto NO es: una forma de recordar la sesion. Al recargar hay que
+ * volver a traerlo. Es el coste de no guardarlo en ningun sitio legible.
+ */
+export function tomarTokenDeLaDireccion(): boolean {
+  if (typeof window === 'undefined') return false
+
+  const direccion = new URL(window.location.href)
+  const token = direccion.searchParams.get('token')
+  if (!token) return false
+
+  establecerTokenDeSesion(token)
+  direccion.searchParams.delete('token')
+  window.history.replaceState(null, '', `${direccion.pathname}${direccion.search}${direccion.hash}`)
+  return true
+}
+
 /* -------------------------------------------------------------------------- */
 /* Resolucion del origen                                                      */
 /* -------------------------------------------------------------------------- */

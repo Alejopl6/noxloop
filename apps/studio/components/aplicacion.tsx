@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Boxes,
+  Compass,
   FileSearch,
   Inbox,
   KeyRound,
@@ -24,6 +25,7 @@ import { SelectorDeTema } from '@/components/selector-tema'
 import { Marco } from '@/components/marco/marco'
 import { anchoDelLienzo } from '@/components/marco/lienzo'
 import { ETIQUETA_DE_SECCION, SECCIONES_DE_LA_ETAPA } from '@/components/marco/secciones'
+import { Asistente } from '@/components/asistente/asistente'
 import { VistaDeInicio } from '@/components/vista-inicio'
 import { VistaDeBandeja } from '@/components/vista-bandeja'
 import { VistaDeCatalogo } from '@/components/vista-catalogo'
@@ -120,6 +122,11 @@ function FaltaElProyecto({ seccion, navegar }: { seccion: string; navegar: Naveg
 /** Que pantalla corresponde a la ruta. Un solo sitio donde mirarlo. */
 function Contenido({ ruta, navegar }: { ruta: Ruta; navegar: Navegar }) {
   switch (ruta.seccion) {
+    // El asistente es LA unica seccion que no exige identificador de proyecto
+    // aun llevandolo: su primer paso es conseguirlo. Por eso no pasa por
+    // `FaltaElProyecto` como las seis etapas.
+    case 'asistente':
+      return <Asistente ruta={ruta} navegar={navegar} />
     case 'bandeja':
       return <VistaDeBandeja entradaAbierta={ruta.id} navegar={navegar} />
     case 'proyectos':
@@ -200,6 +207,21 @@ function comandosDeNavegacion(navegar: Navegar, proyectoId: string | null): Coma
     : []
 
   return [
+    // EL RECORRIDO GUIADO VA EL PRIMERO, y no por cortesia: es el camino por
+    // defecto del producto. Con proyecto abierto lleva a SU recorrido, y sin
+    // el lleva al primer paso, que es elegir o crear uno — la misma entrada
+    // significando lo mismo en los dos casos.
+    {
+      id: 'ir-asistente',
+      etiqueta: proyectoId ? 'Continuar el asistente' : 'Abrir el asistente',
+      descripcion: proyectoId
+        ? 'Retoma el recorrido del proyecto abierto en la etapa que le falta'
+        : 'El recorrido guiado: crear el proyecto y establecerlo paso a paso',
+      grupo: 'Navegacion',
+      palabrasClave: ['guiado', 'recorrido', 'wizard', 'establecer', 'empezar'],
+      icono: <Compass />,
+      ejecutar: ir({ seccion: 'asistente', id: proyectoId }),
+    },
     ...deEtapa,
     {
       id: 'ir-inicio',

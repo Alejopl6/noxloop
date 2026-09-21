@@ -41,3 +41,4 @@ export { conflictoDe, invariantesDe, efectosDe, EFECTOS } from "./bootstrap/conf
 export { CATALOGO_POR_DEFECTO, TIPOS } from "./bootstrap/catalogo.mjs";
 export { analizar } from "./bootstrap/motor.mjs";
 export { aplicar, personalizar, omitir, DECISIONES } from "./bootstrap/decision.mjs";
+export { aplicarLote, fueraDelLote, proponerBootstrap, MOTIVOS_FUERA_DEL_LOTE } from "./bootstrap/propuesta.mjs";

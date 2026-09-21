@@ -6,8 +6,8 @@ import { cn } from '@/lib/utils'
 import { useLectura } from '@/lib/lectura'
 import type { Proyecto } from '@/lib/tipos'
 import { esSeccionDeProyecto, type Navegar, type Ruta } from '@/lib/ruta'
-import { ETIQUETA_DE_SECCION, SECCION_PADRE } from '@/components/marco/secciones'
-import { anchoDelLienzo } from '@/components/marco/lienzo'
+import { ETIQUETA_DE_SECCION, SECCION_PADRE, pintaRail } from '@/components/marco/secciones'
+import { alineacionDelLienzo, anchoDelLienzo } from '@/components/marco/lienzo'
 import { Migas, type Miga } from '@/components/marco/migas'
 import { NavegacionLateral } from '@/components/marco/navegacion-lateral'
 import { ConmutadorDeProyecto } from '@/components/marco/conmutador-de-proyecto'
@@ -149,18 +149,24 @@ export function Marco({
       </header>
 
       <div className="flex flex-1 flex-col lg:flex-row">
-        <NavegacionLateral ruta={ruta} navegar={navegar} />
+        {/* El rail desaparece en el recorrido guiado, y solo ahi. El motivo
+            concreto esta en `SECCIONES_SIN_RAIL`: un asistente que pide UNA
+            decision con once destinos permanentes al lado no la esta pidiendo.
+            La cabecera se queda entera, asi que la salida sigue estando. */}
+        {pintaRail(ruta.seccion) ? <NavegacionLateral ruta={ruta} navegar={navegar} /> : null}
 
         <div className="flex min-w-0 flex-1 flex-col">
           {aviso}
 
-          {/* Sin `mx-auto`: ver `lienzo.ts`. Todas las pantallas arrancan en la
-              misma columna vertical, sea cual sea su ancho maximo. */}
+          {/* El centrado sale de `lienzo.ts` y no de aqui: lo que se crea o se
+              edita va al centro, lo que se inventaria va a la izquierda. La
+              regla entera, con el porque de cada mitad, esta alli. */}
           <main
             id="contenido"
             className={cn(
               'w-full flex-1 px-4 py-8 sm:px-6 lg:px-8',
               anchoDelLienzo(ruta.seccion),
+              alineacionDelLienzo(ruta.seccion),
             )}
           >
             <ProveedorDeMarco>{children}</ProveedorDeMarco>

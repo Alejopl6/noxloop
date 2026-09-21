@@ -57,7 +57,15 @@ test("la boveda llega inyectada, no importada: es la unica forma de que este paq
   const hallazgos = [];
   for (const archivo of fuentes(SRC)) {
     const texto = readFileSync(archivo, "utf8").replace(/^\s*\/\/.*$/gm, "");
-    if (/vault|\/boveda\.mjs/.test(texto)) hallazgos.push(archivo);
+    // LO QUE SE BUSCA ES UNA RUTA, NO LA PALABRA. La version anterior era
+    // `/vault/` a secas y empezo a fallar el dia que el catalogo empotrado de
+    // Nango trajo `veeva-vault` y `veeva-vault-oauth`, que son dos proveedores
+    // reales de otra empresa: la prueba acusaba a un archivo de datos de
+    // alcanzar la boveda porque un cliente de Veeva se llama asi. El invariante
+    // no cambia —lo que esta prohibido es llegar a `packages/vault` por su
+    // ruta— y las dos formas de hacerlo siguen cubiertas: un import relativo
+    // (`../../vault/...`) y una ruta escrita a mano (`packages/vault`).
+    if (/[./]vault\/|packages\/vault|\/boveda\.mjs/.test(texto)) hallazgos.push(archivo);
   }
   assert.deepEqual(hallazgos, [], `una fuente alcanza la boveda por su ruta:\n${hallazgos.join("\n")}`);
 });

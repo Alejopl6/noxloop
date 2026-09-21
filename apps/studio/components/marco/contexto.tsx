@@ -33,3 +33,29 @@ export function ProveedorDeMarco({ children }: { children: ReactNode }) {
 export function useHayMigas(): boolean {
   return useContext(ContextoDeMarco)
 }
+
+/**
+ * Si el contenido se esta pintando DENTRO del recorrido guiado.
+ *
+ * EL FALLO CONCRETO, encontrado leyendo el HTML generado. El asistente pinta
+ * el titulo del paso en un `<h1>` —es el titulo de la pagina— y despues monta
+ * la vista de la etapa, que pinta el suyo con `Encabezado`, tambien en `<h1>`.
+ * Resultado: dos `<h1>` en la misma pagina, uno debajo del otro, con dos
+ * tamanos distintos y sin jerarquia entre ellos. Para un lector de pantalla
+ * que navega por encabezados son dos titulos de pagina en una pagina; para el
+ * ojo es un encabezado repetido.
+ *
+ * Con esto, `Encabezado` baja a `<h2>` dentro del asistente: el titulo de la
+ * pagina es el paso, y el de la vista es la seccion de dentro. No hubo que
+ * tocar ninguna de las seis vistas, que es la misma razon por la que existe
+ * `useHayMigas` justo arriba.
+ */
+const ContextoDeAsistente = createContext(false)
+
+export function ProveedorDeAsistente({ children }: { children: ReactNode }) {
+  return <ContextoDeAsistente.Provider value={true}>{children}</ContextoDeAsistente.Provider>
+}
+
+export function useDentroDelAsistente(): boolean {
+  return useContext(ContextoDeAsistente)
+}

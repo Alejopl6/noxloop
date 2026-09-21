@@ -28,6 +28,7 @@ export { crearAdaptadorCodex } from "./adaptadores/codex.mjs";
 
 export { ROLES, activarFlota, crearAgente, guardarAgente, validarFlota } from "./flota/agente.mjs";
 export { repositorioDeFlotaEnMemoria } from "./flota/repositorio.mjs";
+export { CAMPOS, ORIGENES, sugerirFlota } from "./flota/sugerencia.mjs";
 
 export {
   ESTADOS_DE_ENTRADA,

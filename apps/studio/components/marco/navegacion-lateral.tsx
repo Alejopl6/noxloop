@@ -45,6 +45,31 @@ interface GrupoDeNavegacion {
   id: string | null
 }
 
+/**
+ * El identificador con el que sale cada entrada, que casi siempre es el del
+ * grupo — y una excepcion.
+ *
+ * LA EXCEPCION ES `asistente`, Y EL FALLO QUE EVITA ES CONCRETO. El recorrido
+ * guiado vive en el nivel uno porque tambien se usa SIN proyecto: su primer
+ * paso es elegir o crear uno. Pero con un proyecto abierto, ese mismo destino
+ * sin identificador lleva al operador a la pantalla de "elige un proyecto"
+ * teniendo uno delante — y el proyecto que tenia abierto desaparece de la
+ * cabecera al llegar. Lo que corresponde es que "Asistente" signifique
+ * siempre lo mismo: el recorrido, del proyecto que tengas abierto si tienes
+ * uno.
+ *
+ * La alternativa era meterlo tambien en el nivel dos, y entonces la misma
+ * palabra aparece dos veces en la navegacion con dos significados distintos.
+ */
+function idDeLaEntrada(
+  seccion: Seccion,
+  grupo: GrupoDeNavegacion,
+  proyectoId: string | null,
+): string | null {
+  if (seccion === 'asistente') return proyectoId
+  return grupo.id
+}
+
 export function NavegacionLateral({
   ruta,
   navegar,
@@ -111,7 +136,9 @@ export function NavegacionLateral({
                       <button
                         type="button"
                         aria-current={esLaActiva ? 'page' : undefined}
-                        onClick={() => navegar({ seccion, id: grupo.id })}
+                        onClick={() =>
+                          navegar({ seccion, id: idDeLaEntrada(seccion, grupo, proyectoId) })
+                        }
                         // Sin `cn()`: `twMerge` no conoce `text-button-14` y la
                         // borra al ver el `text-ds-gray-*` que viene detras.
                         // Comprobado en el HTML generado — las once entradas

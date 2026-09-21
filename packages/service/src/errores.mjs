@@ -114,6 +114,24 @@ export const CATALOGO = {
     },
   },
 
+  // EL HERMANO DE `cuerpo_invalido` PARA LA QUERY, Y NO ES DUPLICACION. Un
+  // filtro no se manda en el cuerpo, se manda en la URL: un error que dice "el
+  // cuerpo de la peticion no sirve" manda a quien lo lee a revisar un cuerpo
+  // que no existe. Y el fallo de fondo es peor que el mensaje: un `?clase=trackr`
+  // ACEPTADO devuelve la lista entera con un 200 y con aspecto de respuesta
+  // buena. Quien la mira cree que filtro, lee lo que no pidio, y no hay nada en
+  // la respuesta que le permita darse cuenta.
+  parametro_invalido: {
+    estado: 400,
+    causa: (d) =>
+      `El parametro de consulta \`${d.parametro}\` vale \`${d.valor}\`, que no es ninguno de los valores que ` +
+      "existen. Se rechaza en vez de ignorarse: un filtro ignorado devuelve otra lista, con 200 y sin ninguna " +
+      "senal de que el filtro no se aplico.",
+    accion: (d) =>
+      `Repite la peticion con \`${d.parametro}\` en uno de estos valores: ` +
+      `${(d.opciones || []).map((/** @type {string} */ o) => `\`${o}\``).join(", ")}.`,
+  },
+
   // Escenario 4 de US1. La accion es LA que resuelve —inicializar el
   // repositorio— y no "elige otra carpeta": quien apunto ahi sabe que carpeta
   // quiere, lo que no sabe es que le falta `git init`.

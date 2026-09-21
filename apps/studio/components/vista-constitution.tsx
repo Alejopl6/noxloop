@@ -281,6 +281,27 @@ export function PanelDeConstitution({
   const [contenidos, setContenidos] = useState<Record<string, string>>({})
   const [markdown, setMarkdown] = useState('')
 
+  /**
+   * Un 404 aqui no es un fallo: es "este proyecto todavia no tiene
+   * constitution", que es el estado NORMAL de un proyecto recien creado.
+   *
+   * SE MIRA EL ESTADO HTTP Y NO EL CODIGO, y la diferencia se pagaba en
+   * pantalla. Esto comparaba tres veces contra `recurso_inexistente`, un codigo
+   * que `daemon.ts` solo inventa cuando el 404 llega SIN cuerpo del contrato —
+   * y el servicio siempre lo manda, con `recurso_desconocido`. Asi que las tres
+   * comparaciones eran siempre ciertas y el estado normal se pintaba como
+   * "No Se Pudo Cargar La Constitution", con la causa hablando de un recurso
+   * que otra ventana pudo borrar. Alarma donde no habia nada roto.
+   *
+   * El estado HTTP es el hecho; el codigo es el vocabulario, y hay DOS en
+   * juego: el del servicio y el que el cliente fabrica cuando no recibe
+   * ninguno. Comparar contra uno funciona hasta que llega el otro.
+   *
+   * Y va en una sola constante porque estaba repetida tres veces: tres copias
+   * de la misma comparacion son tres sitios donde arreglarla a medias.
+   */
+  const esUnFalloDeVerdad = error !== null && error.estadoHttp !== 404
+
   // El borrador del operador se rehace cuando llega otra constitution, no en
   // cada render: si se recalculara siempre, cada relectura por SSE borraria lo
   // que estuviera escribiendo.
@@ -317,14 +338,12 @@ export function PanelDeConstitution({
 
       {!cargando && !constitution ? (
         <EmptyState
-          modo={error && error.codigo !== 'recurso_inexistente' ? 'error' : 'primero'}
+          modo={esUnFalloDeVerdad ? 'error' : 'primero'}
           titulo={
-            error && error.codigo !== 'recurso_inexistente'
-              ? 'No Se Pudo Cargar La Constitution'
-              : 'Sin Constitution Todavia'
+            esUnFalloDeVerdad ? 'No Se Pudo Cargar La Constitution' : 'Sin Constitution Todavia'
           }
           descripcion={
-            error && error.codigo !== 'recurso_inexistente'
+            esUnFalloDeVerdad
               ? error.causa
               : 'El borrador se deriva del snapshot: cada apartado sale de lo que el scanner leyo, de lo que infirio, o se declara vacio. Proponerlo sin haber leido el proyecto produce un documento generico que nadie respeta.'
           }

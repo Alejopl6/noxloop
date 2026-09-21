@@ -25,6 +25,22 @@ export {
   congelar,
 } from "./modelo.mjs";
 export { CATALOGO_POR_DEFECTO, catalogoPorModo } from "./catalogo.mjs";
+export { PROCEDENCIA, PROVEEDORES_DE_NANGO } from "./catalogo-nango.mjs";
+export {
+  MODO_POR_MODO_DE_NANGO,
+  MOTIVO_DEL_MODO_NO_ATENDIDO,
+  ADAPTADOR_POR_MODO,
+  SCM_DECLARADO,
+  CLASE_POR_CATEGORIA,
+  CLASE_POR_DEFECTO,
+  CLASES_DEL_CICLO,
+  ESTANTES,
+  LIMITE_POR_DEFECTO,
+  adaptadorDe,
+  urlDeDocs,
+  construirCatalogoConsultable,
+  consultar,
+} from "./catalogo-consultable.mjs";
 export { VIGENCIA_MAXIMA_MS, VIGENCIA_POR_DEFECTO_MS, acotarVigencia } from "./vigencia.mjs";
 export { PUERTO_DE_CALLBACK, HOST_DE_CALLBACK, sondearPuertoConNet, problemaDePuertoOcupado } from "./preflight.mjs";
 export { arrancar } from "./arranque.mjs";

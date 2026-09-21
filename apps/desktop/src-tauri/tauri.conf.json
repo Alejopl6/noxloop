@@ -48,7 +48,13 @@
       "../../../packages/scanner/package.json": "scanner/package.json",
       "../../../packages/scanner/src/**/*": "scanner/src/",
       "../../../packages/core/package.json": "core/package.json",
-      "../../../packages/core/src/**/*": "core/src/"
+      "../../../packages/core/src/**/*": "core/src/",
+      "../../../packages/connections/package.json": "connections/package.json",
+      "../../../packages/connections/src/**/*": "connections/src/",
+      "../../../packages/adapters/package.json": "adapters/package.json",
+      "../../../packages/adapters/src/**/*": "adapters/src/",
+      "../../../packages/engine/package.json": "engine/package.json",
+      "../../../packages/engine/src/**/*": "engine/src/"
     }
   }
 }

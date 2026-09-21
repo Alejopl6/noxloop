@@ -38,6 +38,77 @@ coste sin contrapartida.
 Elastic License 2.0: no OSI, no compatible con GPL/AGPL, y viaja dentro del
 binario distribuido.
 
+## Los dos catálogos
+
+Son dos porque hacen dos trabajos distintos, y mezclarlos rompe uno de los dos.
+
+| | Qué es | Cuántos | Para qué sirve |
+|---|---|---|---|
+| **`CATALOGO_POR_DEFECTO`** (`src/catalogo.mjs`) | Escrito a mano y verificado contra la documentación oficial. Trae `campos`, `entorno` y `api` | 7 | **Conectar.** Es lo único que se le puede pasar a `crearProveedorDeConexiones` |
+| **`PROVEEDORES_DE_NANGO`** (`src/catalogo-nango.mjs`) | Generado desde el catálogo público de Nango. Trae slug, nombre, modo y categorías | 1012 | **Mirar.** Qué existe, cómo se autentica, y qué adaptador lo atendería |
+
+`construirCatalogoConsultable()` los junta en una sola lista consultable, y **lo
+propio manda**: la entrada escrita a mano gana sobre la derivada, porque es la
+que está verificada y la única que sabe qué pedirle al operador.
+
+### El catálogo de Nango viaja empotrado
+
+**«¿Qué puedo conectar?» es una pregunta de solo lectura y no puede exigir
+levantar tres contenedores para contestarse.** El adaptador `local` existe justo
+para quien no puede o no quiere levantar Docker; si la lista necesitara Nango
+corriendo, ese operador no podría ni *mirar* qué hay. Y la fuente no es el Nango
+del operador: es una página de documentación en internet, así que pedirla en
+tiempo de ejecución tampoco sería «preguntarle a tu Nango».
+
+El coste se acepta entero: **esto envejece**. Lo que lo hace sostenible es que
+se regenera con una orden y el diff se revisa:
+
+```
+node packages/connections/scripts/generar-catalogo-nango.mjs
+```
+
+La cabecera de `src/catalogo-nango.mjs` dice de qué URL salió, en qué fecha y con
+qué `sha256` — el mismo patrón que los tokens de Geist en `globals.css`, que
+existe porque escribirlos de memoria salió caro.
+
+Refrescarlo en caliente contra Nango es una **mejora declarada**, no el camino
+por defecto: tendría que caer al dato empotrado cuando no hay red, que es el
+caso normal de este producto.
+
+### El modo de Nango no es el modo del contrato
+
+Nango publica **17 modos** distintos; este contrato tiene cinco. La traducción
+vive en `MODO_POR_MODO_DE_NANGO`, es **total y sin default**, y lo que no se
+sabe atender se marca apagado **con su motivo**:
+
+| Nango | Aquí | Adaptador |
+|---|---|---|
+| `OAUTH2` (353) | `oauth2` | `nango` |
+| `API_KEY` (332) | `api_key` | `local` |
+| `BASIC` (98) | `basic` | `local` |
+| `APP` (1) | `app` | `local` |
+| los otros 13, y la fila sin modo (228) | — | ninguno, y se dice por qué |
+
+Un `?? "oauth2"` para lo que sobra convertiría 228 proveedores en 228 pestañas
+de navegador que no llevan a ningún sitio. No es hipotético: el catálogo real
+trae una fila **sin modo declarado**, y `OAUTH2_CC` no tiene nada que autorizar
+en un navegador.
+
+### Mil elementos no son una interfaz
+
+`consultar()` sin texto y sin filtros **no devuelve el catálogo entero**:
+devuelve lo que el ciclo 00–07 necesita —tracker, SCM e infraestructura— más los
+siete propios. El resto no está escondido: `total_catalogo` sigue diciendo
+cuántos hay, las facetas los cuentan, y cualquier búsqueda o filtro los alcanza.
+
+Cada entrada dice **qué adaptador la va a atender**, y eso cambia el trabajo del
+operador: `nango` es levantar tres contenedores y registrar una aplicación OAuth
+propia; `local` es pegar un token. Saberlo antes de elegir es la diferencia
+entre una tarde y cinco minutos.
+
+El servicio lo expone en `GET /v1/connections/catalog`, y esa ruta **no
+necesita ni proyecto ni adaptador montado**.
+
 ## Agregar un adaptador
 
 1. **Escribí el motor.** Ocho funciones: `requisitos`, `salud`, `iniciar`,

@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/esqueleto'
-import { useHayMigas } from '@/components/marco/contexto'
+import { useDentroDelAsistente, useHayMigas } from '@/components/marco/contexto'
 import { cn } from '@/lib/utils'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import type { Lectura } from '@/lib/lectura'
@@ -60,6 +60,12 @@ export function Encabezado({
 }) {
   const hayMigas = useHayMigas()
 
+  // Dentro del recorrido guiado, el `<h1>` de la pagina es el titulo del paso
+  // y este encabezado es la seccion de dentro. La explicacion entera, con el
+  // fallo que se vio en el HTML generado, esta en `marco/contexto.tsx`.
+  const enAsistente = useDentroDelAsistente()
+  const Titulo = enAsistente ? 'h2' : 'h1'
+
   return (
     <div className="flex flex-col gap-2">
       {volver && navegar && !hayMigas ? (
@@ -77,7 +83,17 @@ export function Encabezado({
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h1 className="text-heading-24 text-ds-gray-1000">{titulo}</h1>
+            {/* Sin `cn()`: la tipografia de Geist y un color `--ds-*` no
+                sobreviven juntos a `twMerge`. Ver `marco/migas.tsx`. */}
+            <Titulo
+              className={
+                enAsistente
+                  ? 'text-heading-20 text-ds-gray-1000'
+                  : 'text-heading-24 text-ds-gray-1000'
+              }
+            >
+              {titulo}
+            </Titulo>
             {identificador ? (
               <span className="fuente-operativa text-label-12 text-ds-gray-700">
                 {identificador}

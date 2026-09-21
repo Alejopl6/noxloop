@@ -95,3 +95,22 @@ export function directorioDePrueba(t, prefijo = "noxloop-core-") {
 /** El motivo minimo aceptable, para no repetir parrafos en cada prueba. */
 export const MOTIVO_LARGO =
   "se busco en las rutas donde vive y no hay ninguna, asi que el apartado queda declarado como hueco";
+
+/**
+ * Devuelve el error que `fn` lanzo.
+ *
+ * `assert.throws` NO devuelve el error —devuelve undefined— y una prueba que
+ * escribe `const e = assert.throws(...)` y despues mira `e.codigo` revienta con
+ * un TypeError que se lee como si el error no se hubiera lanzado, cuando lo que
+ * pasa es lo contrario.
+ *
+ * @param {() => any} fn
+ */
+export function capturar(fn) {
+  try {
+    fn();
+  } catch (e) {
+    return /** @type {any} */ (e);
+  }
+  throw new Error("no lanzo nada, y se esperaba un error");
+}

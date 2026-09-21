@@ -55,7 +55,7 @@ const MAXIMOS_COMANDOS = 120;
  */
 function comandosDe(ctx, ruta) {
   const lineas = ctx.lineas(ruta);
-  /** @type {Array<{ruta: string, linea: number, comando: string}>} */
+  /** @type {Array<{ruta: string, linea: number, comando: string, lineas_del_bloque?: number}>} */
   const comandos = [];
 
   for (let i = 0; i < lineas.length; i++) {
@@ -65,14 +65,52 @@ function comandosDe(ctx, ruta) {
     const resto = m[2].trim();
 
     if (resto === "|" || resto === ">" || resto === "|-" || resto === ">-") {
+      // UN BLOQUE `run: |` ES UN COMANDO, NO UNO POR LINEA.
+      //
+      // Esto empujaba CADA linea del bloque como si fuera un comando distinto.
+      // Medido sobre el CI de este repositorio: 179 "comandos", de los cuales
+      // 27 eran lineas de comentario (`# El glob era ...`), 18 eran control de
+      // shell suelto (`fi`, `done`, `else`) y el resto, cuerpo de heredoc —
+      // JavaScript dentro de un `node -e`, contado como si CI lo invocara.
+      //
+      // No es ruido que se pueda filtrar: es un modelo equivocado. CI ejecuta
+      // ese bloque como UN paso, y partirlo en lineas inventa catorce comandos
+      // donde hay uno. Filtrar comentarios solo bajaba a 134 — seguia mintiendo,
+      // solo que menos.
+      //
+      // Por que importa mas de lo que parece: este hallazgo alimenta el
+      // contexto del agente verificador. Con el modelo viejo, ese agente recibia
+      // "el proyecto declara 137 comandos de verificacion" y entre ellos frases
+      // en castellano de un comentario. Es contexto inventado con forma de dato
+      // — el principio X, fabricado por un parser en vez de por un modelo.
+      //
+      // LO QUE SE PIERDE, y se declara: los comandos sueltos de dentro del
+      // bloque. Recuperarlos exige interpretar shell —heredocs, continuaciones,
+      // control de flujo— y un parser de shell a medias produce exactamente la
+      // basura de arriba. El paso, que es la unidad que CI ejecuta, se puede
+      // leer entero por su ruta y su linea.
+      const cuerpo = [];
+      let ultima = i;
       for (let j = i + 1; j < lineas.length; j++) {
         const linea = lineas[j];
         if (!linea.trim()) continue;
         const sangriaActual = linea.length - linea.trimStart().length;
         if (sangriaActual <= sangria) break;
-        comandos.push({ ruta, linea: j + 1, comando: linea.trim() });
-        i = j;
+        cuerpo.push(linea.trim());
+        ultima = j;
       }
+      if (cuerpo.length > 0) {
+        // La primera linea con contenido nombra el paso: es lo que alguien
+        // leeria para saber que hace. El resto se alcanza por ruta y linea.
+        const primera = cuerpo.find((l) => !l.startsWith("#")) ?? cuerpo[0];
+        comandos.push({
+          ruta,
+          linea: i + 1,
+          comando: primera,
+          lineas_del_bloque: cuerpo.length,
+        });
+      }
+      i = ultima;
       continue;
     }
     if (resto) comandos.push({ ruta, linea: i + 1, comando: resto.replace(/^["']|["']$/g, "") });
@@ -112,7 +150,7 @@ function detectar(ctx) {
     detectado("ci", "ci.workflows", workflows, workflows.map((ruta) => ({ ruta }))),
   ];
 
-  /** @type {Array<{ruta: string, linea: number, comando: string}>} */
+  /** @type {Array<{ruta: string, linea: number, comando: string, lineas_del_bloque?: number}>} */
   const comandos = [];
   for (const ruta of workflows) comandos.push(...comandosDe(ctx, ruta));
 

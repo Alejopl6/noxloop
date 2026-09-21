@@ -70,17 +70,27 @@ import type { Navegar } from '@/lib/ruta'
 /* Lecturas de mentira                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Lo comun a las tres: sin avisos y sin cursor.
+ *
+ * `avisos` y `cursor` llegaron a `Lectura` al desenvolver el sobre del
+ * contrato en `useLectura`. Se declaran aqui en un solo sitio para que anadir
+ * el siguiente campo del sobre sea una linea y no tres — que es justo el tipo
+ * de duplicacion que deja un doble de prueba desincronizado del de verdad.
+ */
+const SIN_SOBRE = { avisos: [] as const, cursor: null, releer: () => undefined }
+
 function conDatos<T>(datos: T): Lectura<T> {
-  return { datos, error: null, cargando: false, releer: () => undefined }
+  return { ...SIN_SOBRE, datos, error: null, cargando: false }
 }
 
 /** Ni datos ni error: es exactamente lo que ve una pantalla recien montada. */
 function cargando<T>(): Lectura<T> {
-  return { datos: null, error: null, cargando: true, releer: () => undefined }
+  return { ...SIN_SOBRE, datos: null, error: null, cargando: true }
 }
 
 function conError<T>(error: ErrorDelServicio): Lectura<T> {
-  return { datos: null, error, cargando: false, releer: () => undefined }
+  return { ...SIN_SOBRE, datos: null, error, cargando: false }
 }
 
 const SIN_SERVICIO = new ErrorDelServicio({

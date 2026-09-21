@@ -130,6 +130,12 @@ const PROVOCADORES = {
     return (await r.json()).error;
   },
 
+  // Un filtro con un valor que no existe. Va por el camino real —la ruta del
+  // catalogo de conexiones— porque es donde el fallo importa: aceptarlo
+  // devolveria los 1012 proveedores con 200 y quien lo mira creeria que filtro.
+  parametro_invalido: async (svc) =>
+    (await (await pedirJson(svc, "/v1/connections/catalog?clase=trackr", "GET")).json()).error,
+
   fallo_interno: async () => deExcepcion(new Error("una excepcion que nadie previo")).error,
 };
 

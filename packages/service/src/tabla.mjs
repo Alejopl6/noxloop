@@ -19,6 +19,7 @@ import * as proyectos from "./proyectos.mjs";
 import * as escaneo from "./escaneo.mjs";
 import * as nucleo from "./nucleo.mjs";
 import * as credenciales from "./credenciales.mjs";
+import * as catalogo from "./catalogo-de-conexiones.mjs";
 import * as flota from "./flota.mjs";
 import * as runs from "./runs.mjs";
 
@@ -53,6 +54,11 @@ export const TABLA = crearTabla([
 
   // ---- Bootstrap · etapa 05 -----------------------------------------------
   { patron: "/v1/projects/:id/bootstrap/analyze", metodos: ["POST"], manejar: nucleo.analizarBootstrap },
+  // La propuesta completa —el bloque, lo que se decide solo, las preguntas y lo
+  // que ya estaba— y su aprobacion en UNA decision. `analyze` sigue existiendo
+  // para quien quiera el analisis crudo; esto es lo que la pantalla pide.
+  { patron: "/v1/projects/:id/bootstrap/proposal", metodos: ["GET"], manejar: nucleo.propuestaDeBootstrap },
+  { patron: "/v1/projects/:id/bootstrap/approve", metodos: ["POST"], manejar: nucleo.aprobarBootstrap },
   { patron: "/v1/projects/:id/recommendations", metodos: ["GET"], manejar: nucleo.recomendaciones },
   { patron: "/v1/recommendations/:id/apply", metodos: ["POST"], manejar: nucleo.aplicarRecomendacion },
   { patron: "/v1/recommendations/:id/customize", metodos: ["POST"], manejar: nucleo.personalizarRecomendacion },
@@ -60,6 +66,12 @@ export const TABLA = crearTabla([
   { patron: "/v1/projects/:id/bootstrap/complete", metodos: ["POST"], manejar: nucleo.completarBootstrap },
 
   // ---- Conexiones y credenciales · etapa 06 y §12 -------------------------
+  // El catalogo va ANTES que `/v1/connections/:id` en la lectura, aunque el
+  // orden no importe: la tabla pone lo literal por delante de lo parametrico al
+  // montar. Y es la unica ruta de conexiones que NO necesita un proyecto ni un
+  // adaptador montado — «¿que puedo conectar?» es una pregunta de solo lectura
+  // y no puede exigir tres contenedores levantados para contestarse.
+  { patron: "/v1/connections/catalog", metodos: ["GET", "HEAD"], manejar: catalogo.catalogoDeConexiones },
   { patron: "/v1/projects/:id/connections", metodos: ["GET"], manejar: credenciales.conexionesDelProyecto },
   { patron: "/v1/projects/:id/connections/authorize", metodos: ["POST"], manejar: credenciales.autorizarConexion },
   { patron: "/v1/connections/:id/callback", metodos: ["POST"], manejar: credenciales.callbackDeConexion },
@@ -79,6 +91,10 @@ export const TABLA = crearTabla([
 
   // ---- Flota · etapa 07 ---------------------------------------------------
   { patron: "/v1/projects/:id/agents", metodos: ["GET", "POST"], manejar: flota.agentesDelProyecto },
+  // La flota PROPUESTA desde el snapshot. `GET` y nada mas: sugerir no guarda,
+  // y un `POST` aqui seria la puerta por la que la propuesta se convierte en
+  // configuracion sin que nadie la confirme.
+  { patron: "/v1/projects/:id/agents/suggest", metodos: ["GET"], manejar: flota.sugerenciaDeFlota },
   { patron: "/v1/agents/:id", metodos: ["PATCH", "DELETE"], manejar: flota.unAgente },
   { patron: "/v1/projects/:id/activate", metodos: ["POST"], manejar: flota.activar },
 

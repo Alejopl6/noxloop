@@ -293,3 +293,70 @@ export function rutaFueraDelDiff(id, ruta) {
     400,
   );
 }
+
+// ------------------------------------------- el lote del bootstrap automatico
+
+/**
+ * Una recomendacion que llego dentro de un «aprobar todo» sin poder estar ahi.
+ *
+ * LA GUARDA VIVE AQUI Y NO SOLO EN QUIEN ARMA LA PROPUESTA. Armar un lote y
+ * aplicarlo son dos viajes distintos, y el segundo recibe una lista de ids que
+ * puede venir de cualquier sitio. Una guarda que solo corre al construir la
+ * propuesta se salta mandando la lista a mano — que es exactamente el camino
+ * por el que una recomendacion marcada como conflictiva acabaria escrita sin
+ * que nadie leyera el conflicto.
+ *
+ * @param {string} id
+ * @param {string} motivo el identificador del motivo, para que la pantalla agrupe
+ * @param {string} porque el motivo en texto, que es lo que la persona lee
+ */
+export function recomendacionFueraDelLote(id, motivo, porque) {
+  return new ErrorDeNucleo(
+    "recomendacion_fuera_del_lote",
+    `La recomendacion \`${id}\` llego dentro de una aprobacion en bloque y no puede aprobarse asi: ${porque} ` +
+      "Un bloque existe para quitar el peaje de atencion a lo que no lo merece; meter dentro lo que si lo " +
+      "merece convierte la aprobacion en una firma en blanco, y entonces declarar el motivo no sirve de nada " +
+      "porque nadie lo llega a leer.",
+    `Saca \`${id}\` del bloque y decidela sola —aplicar, personalizar u omitir— viendo su diff y su motivo ` +
+      `(\`${motivo}\`). El resto del bloque se puede aprobar sin ella.`,
+    409,
+    { tipo: "recommendation", id: String(id) },
+  );
+}
+
+/**
+ * Dos recomendaciones del mismo lote escriben el mismo archivo.
+ *
+ * @param {string} ruta
+ * @param {readonly string[]} ids
+ */
+export function rutaRepetidaEnElLote(ruta, ids) {
+  return new ErrorDeNucleo(
+    "ruta_repetida_en_el_lote",
+    `Las recomendaciones ${ids.map((i) => `\`${i}\``).join(", ")} escriben todas \`${ruta}\`. La segunda partiria ` +
+      "de una base que la primera acaba de invalidar, asi que el lote se cortaria por la mitad con la mitad ya " +
+      "en el disco: un estado que el operador no aprobo y que ya no puede revisar contra el diff que vio.",
+    `Decide por separado cual de las recomendaciones tiene que escribir \`${ruta}\`, omite la otra, y aprueba ` +
+      "el resto del bloque.",
+    409,
+  );
+}
+
+/**
+ * Un lote sin recomendaciones.
+ *
+ * NO SE CONTESTA «todo fue bien». Un «aprobar todo» sobre cero recomendaciones
+ * que devuelve exito se lee como que el bootstrap quedo aplicado, y el proyecto
+ * avanza de etapa con la propuesta entera sin decidir.
+ */
+export function loteVacio() {
+  return new ErrorDeNucleo(
+    "lote_vacio",
+    "Se pidio aprobar un bloque que no contiene ninguna recomendacion. Contestar que fue bien haria creer que " +
+      "el bootstrap quedo aplicado, y el proyecto avanzaria de etapa con la propuesta entera sin decidir — que " +
+      "es justo lo que la puerta de aprobacion existe para impedir.",
+    "Vuelve a pedir la propuesta del bootstrap: o el bloque tiene recomendaciones y se aprueban, o lo que " +
+      "queda son preguntas y recomendaciones que se deciden una a una.",
+    400,
+  );
+}
