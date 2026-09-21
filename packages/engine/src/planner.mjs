@@ -20,6 +20,7 @@ import { recorteQueAvisa } from "./prompt.mjs";
 import { join } from "node:path";
 import { validatePlan } from "./plan.mjs";
 import { createRun, loadRun, setTaskFields } from "./state.mjs";
+import { entornoDeFase } from "./wiring.mjs";
 import { validateItem, can } from "../../../providers/contract.mjs";
 
 /**
@@ -84,11 +85,34 @@ export async function planItem(itemId, deps) {
 
   const r = await deps.runPhase({
     phase: "PLAN",
+    // AQUI NO HAY TAREA TODAVIA: las tareas nacen del plan que esta invocacion
+    // produce. El contrato de adaptadores exige `taskId` porque es lo que
+    // identifica la invocacion, no porque exija que sea una tarea — asi que lo
+    // honesto es identificar lo que de verdad se esta planificando.
+    //
+    // POR QUE `plan:<item>` Y NO ALGO CON FORMA DE TAREA. `plan.schema.json`
+    // obliga a que el id de una tarea sea `^T[0-9]{3,}$`, y el prefijo `plan:`
+    // no puede colisionar con ninguno: una bitacora, una sesion retomada o un
+    // worktree que dijeran `T001` en la planificacion serian indistinguibles de
+    // los de una tarea real que todavia no existe. Y lleva el item porque dos
+    // planificaciones concurrentes son dos invocaciones distintas.
+    taskId: `plan:${itemId}`,
+    task: null,
     item,
     cwd: deps.workdir,
+    // Se abre sesion NUEVA. Explicito y no por omision: el contrato distingue
+    // "no retomar" de "no se dijo", y por omision el adaptador tendria que
+    // adivinar cual de las dos era.
+    resume: null,
     prompt: `/noxloop-plan ${itemId} --out ${archivo}`,
     model: deps.model || null,
     effort: deps.effort || "high",
+    // El entorno EXPLICITO, por el mismo motivo que en el driver: heredar el
+    // del motor propagaria al agente toda credencial cargada en el proceso
+    // padre, tenga grant o no. Ver `entornoDeFase`.
+    env: typeof deps.entorno === "function" ? deps.entorno() : entornoDeFase(deps.config || {}),
+    // Cuales de esas variables son secretas; sin declaracion se miran todas.
+    ...(deps.secretos ? { secretos: deps.secretos } : {}),
   });
 
   if (r?.budgetExhausted) {

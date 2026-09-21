@@ -36,6 +36,7 @@
  * @property {string} prompt
  * @property {string} [tier]
  * @property {Record<string, string>} env el entorno, ya construido por la boveda
+ * @property {string[]} [secretos] los nombres de `env` cuyo valor no puede aparecer en argv; sin esto, todos
  */
 
 /**
@@ -58,6 +59,7 @@
 /**
  * @typedef {object} AgentAdapter
  * @property {string} id identificador estable; es lo que guarda `Agent.runtime`
+ * @property {string[]} [requiredEnv] las variables que este runtime necesita recibir en `env`
  * @property {() => AdapterCapabilities} capabilities
  * @property {() => Promise<{ok: boolean, causa?: string, accion?: string}>} preflight
  * @property {(req: PhaseRequest, opts?: {signal?: AbortSignal}) => Promise<PhaseResult>} runPhase
@@ -92,6 +94,19 @@ export function validarAdaptador(adaptador) {
     return { ok: false, problems: ["el adaptador no es un objeto"] };
   }
   if (typeof adaptador.id !== "string" || !adaptador.id) problems.push("falta `id` (string no vacio)");
+
+  // `requiredEnv` ES OPCIONAL Y SE VALIDA SI ESTA. Es como un runtime dice que
+  // variable necesita —su clave, su endpoint— sin que el motor tenga que
+  // nombrarla: el mismo mecanismo que ya usan los proveedores de tickets, y por
+  // el mismo motivo. En cuanto el cableado del motor nombra la variable de un
+  // runtime concreto, soportar el siguiente exige tocar el motor, que es lo que
+  // el principio VI prohibe.
+  if (adaptador.requiredEnv != null) {
+    const bien = Array.isArray(adaptador.requiredEnv)
+      && adaptador.requiredEnv.every((/** @type {any} */ x) => typeof x === "string" && x);
+    if (!bien) problems.push("requiredEnv: tiene que ser una lista de nombres de variable (strings no vacios)");
+  }
+
   for (const fn of ["capabilities", "preflight", "runPhase"]) {
     if (typeof adaptador[fn] !== "function") problems.push(`falta \`${fn}()\``);
   }
@@ -151,6 +166,24 @@ export function validarPeticion(req) {
     for (const [nombre, valor] of Object.entries(req.env)) {
       if (typeof valor !== "string") {
         problems.push(`env.${nombre}: no es texto (el entorno de un proceso solo tiene texto)`);
+      }
+    }
+  }
+
+  // CUALES DE ESAS VARIABLES SON SECRETAS. El campo es opcional y su ausencia
+  // NO es "ninguna": es "no se dijo", y entonces se miran todas. Lo que no
+  // puede es nombrar una variable que no esta en `env` — eso es una
+  // declaracion que no protege nada y se lee como si protegiera.
+  if (req.secretos != null) {
+    if (!Array.isArray(req.secretos) || req.secretos.some((/** @type {any} */ x) => typeof x !== "string" || !x)) {
+      problems.push("secretos: tiene que ser una lista de nombres de variable (strings no vacios)");
+    } else if (req.env && typeof req.env === "object") {
+      const ausentes = req.secretos.filter((/** @type {string} */ n) => !Object.hasOwn(req.env, n));
+      if (ausentes.length) {
+        problems.push(
+          `secretos: ${ausentes.join(", ")} no esta${ausentes.length > 1 ? "n" : ""} en \`env\`. Declarar como ` +
+            "secreta una variable que no viaja es una guarda que se lee puesta y no puede saltar nunca",
+        );
       }
     }
   }
@@ -233,21 +266,26 @@ export function validarResultado(resultado, caps) {
  * La costura: convierte un `AgentAdapter` en la funcion que el motor inyecta
  * como `deps.runPhase`.
  *
- * ES AQUI DONDE SE ATA EL ENTORNO, y es lo que hace que el campo nuevo de v2 no
- * exija tocar el motor. El objeto de fase que construye `driver.mjs` no tiene
- * `env` —no lo tenia en v1— asi que lo pone el cableado, que es donde la boveda
- * ya esta a mano. Se pide POR FASE y no una vez: un grant que caduca a mitad del
- * recorrido tiene que dejar de valer en la fase siguiente, y un entorno
- * capturado al arrancar seguiria valiendo hasta el final.
+ * EL ENTORNO QUE TRAE LA FASE MANDA, y esto cambio. La version anterior
+ * sobreescribia `env` siempre, porque daba por hecho que el objeto de fase de
+ * `driver.mjs` nunca lo traia —en v1 no lo traia—. Desde que los call sites del
+ * motor construyen la peticion completa, sobreescribir en silencio convertiria
+ * la declaracion del llamante en mentira: el motor diria con que entorno quiere
+ * correr la fase y correria con otro, sin que nada lo dijera. Aqui solo se
+ * RELLENA lo que falta.
+ *
+ * Se pide POR FASE y no una vez: un grant que caduca a mitad del recorrido
+ * tiene que dejar de valer en la fase siguiente, y un entorno capturado al
+ * arrancar seguiria valiendo hasta el final.
  *
  * @param {AgentAdapter} adaptador
- * @param {{entorno: Record<string,string> | ((fase: any) => Record<string,string>), signal?: AbortSignal}} opts
+ * @param {{entorno?: Record<string,string> | ((fase: any) => Record<string,string>), signal?: AbortSignal}} [opts]
  * @returns {(fase: any) => Promise<PhaseResult>}
  */
 export function adaptarADriver(adaptador, opts) {
   const { entorno } = opts || {};
   return async (fase) => {
-    const env = typeof entorno === "function" ? entorno(fase) : entorno;
+    const env = fase?.env ?? (typeof entorno === "function" ? entorno(fase) : entorno);
     return adaptador.runPhase({ ...fase, env }, { signal: opts?.signal });
   };
 }

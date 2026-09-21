@@ -11,12 +11,18 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { validateProvider } from "../../../providers/contract.mjs";
+// La capa de runtimes. El motor NO la conocia: `grep -rn adapters` sobre
+// `packages/engine` devolvia una sola linea, y era la guarda de la
+// constitucion. El registro existia y no lo consultaba nadie.
+import { adaptarADriver, crearAdaptadorClaude, registroDeAdaptadores } from "../../adapters/src/index.mjs";
+// El entorno de un subproceso se CONSTRUYE. Ver `entornoDeFase` mas abajo.
+import { construirEntorno } from "../../vault/src/entorno.mjs";
 import { repoRoot } from "./repos.mjs";
 import { runGate, runSingleTest } from "./gate.mjs";
-import { runPhase, sdkAvailable, DEFAULT_ALLOWED_TOOLS } from "./runner.mjs";
 import { createPR } from "./forge.mjs";
 import * as worktree from "./worktree.mjs";
 import { createLogger } from "./log.mjs";
+import { buildHookSettings, validateHookSettings } from "./session-settings.mjs";
 import { validate } from "./schema.mjs";
 
 /**
@@ -189,6 +195,132 @@ export function makeResolve(config, opts) {
 }
 
 /**
+ * Las variables de la MAQUINA que una fase necesita para poder arrancar algo.
+ *
+ * Estan nombradas una a una a proposito: es la diferencia entre un entorno
+ * declarado y `{ ...process.env }`. Ninguna de las nueve es una credencial —
+ * son las que hacen que un proceso pueda encontrar sus binarios, escribir en un
+ * temporal y hablar el idioma de la maquina. Lo que si es credencial entra por
+ * otro lado: lo declara el runtime en `requiredEnv`, y lo declara el, no el
+ * motor, porque nombrar aqui la variable de un runtime concreto es la misma
+ * ramificacion que el principio VI prohibe.
+ *
+ * @type {readonly string[]}
+ */
+export const VARIABLES_DE_LA_MAQUINA = Object.freeze([
+  "PATH", "HOME", "SHELL", "LANG", "LC_ALL", "TMPDIR", "TZ", "USER", "LOGNAME",
+]);
+
+/**
+ * El entorno con el que corre UNA fase.
+ *
+ * EL FALLO QUE CIERRA, y estaba medido. `runner.mjs` lanzaba la sesion con
+ * `{ ...process.env, CI: "1", ... }`, asi que el subproceso del agente recibia
+ * TODO lo que el motor tuviera cargado: la credencial del gestor de tickets, la
+ * del forge, lo que hubiera en el shell del operador. El grant autorizaba una
+ * cosa y el agente recibia quince — con lo que la capa de grants, que es el
+ * diferencial del producto, quedaba decorativa. El contrato de adaptadores se
+ * niega a invocar sin `env` por este motivo exacto, escrito ahi: "heredar el
+ * del motor no es un modo degradado: es la fuga".
+ *
+ * SE CONSTRUYE POR FASE Y NO UNA VEZ AL ARRANCAR: un grant que caduca a mitad
+ * del recorrido tiene que dejar de valer en la fase siguiente, y un entorno
+ * capturado al principio seguiria valiendo hasta el final.
+ *
+ * PASA POR `construirEntorno` DE LA BOVEDA y no por un objeto a mano: ahi estan
+ * la comprobacion de que cada nombre es un nombre de variable valido y la de
+ * que cada valor es texto. Un valor que no sea texto no falla al construirlo,
+ * falla al spawnear, con el modelo ya pagado.
+ *
+ * @param {any} config
+ * @param {{env?: Record<string, string|undefined>, requeridas?: readonly string[]}} [opts]
+ * @returns {Record<string, string>}
+ */
+export function entornoDeFase(config, opts = {}) {
+  const disponibles = opts.env || process.env;
+  /** @type {Record<string, string>} */
+  const variables = {};
+
+  for (const nombre of [...VARIABLES_DE_LA_MAQUINA, ...(opts.requeridas || [])]) {
+    const valor = disponibles[nombre];
+    // Una variable declarada y ausente NO se rellena con "": el subproceso
+    // distingue "no esta" de "esta vacia", y un PATH vacio es peor que ninguno.
+    if (typeof valor === "string" && valor !== "") variables[nombre] = valor;
+  }
+
+  variables.CI = "1";
+  // El limite de autonomia no puede depender de que la tarea activa se
+  // resuelva: adentro de una sesion del motor no hay persona a la que un
+  // bloqueo de mas pueda dejar sin trabajar.
+  variables.NOXLOOP_GUARD_ALWAYS = "1";
+  // Sin esto los hooks miran `~/.noxloop`, donde no hay ninguna tarea activa:
+  // o sea, sesion sin guarda y sin aviso. Es un fallo observado.
+  if (config?.home) variables.NOXLOOP_HOME = String(config.home);
+
+  return construirEntorno({ variables }).paraSpawn();
+}
+
+/**
+ * El runtime que va a correr las fases, montado desde el registro.
+ *
+ * POR QUE SE MONTA AQUI Y NO EN EL DRIVER. Porque el binario, los hooks, el
+ * home y el techo de tiempo son cosas del cableado, y porque el driver tiene
+ * que poder ignorar por completo cual runtime corre: en cuanto el motor
+ * pregunta "¿cual es?" aparece el `if` que el principio VI prohibe.
+ *
+ * LAS GUARDAS VAN CON EL ADAPTADOR, y si no se pueden armar no se monta nada.
+ * Una sesion sin hooks se saltea el paso RED y el limite del principio IV, las
+ * dos cosas en silencio — esta medido que un bloque `hooks` invalido se ignora
+ * sin avisar. Fallar aqui convierte ese silencio en un error de arranque, que
+ * es varias horas antes que a mitad de una fase.
+ *
+ * @param {any} config
+ * @param {{home: string, log: any, engineRoot?: string, adaptadores?: any[], runtime?: string, env?: any}} opts
+ */
+function montarRuntime(config, opts) {
+  const guardas = buildHookSettings(opts.engineRoot);
+  const v = validateHookSettings(guardas);
+  if (!v.ok) {
+    throw new Error(
+      `no se puede montar el runtime con las guardas puestas: ${v.missing?.length
+        ? `estos hooks declarados no existen en disco:\n  - ${v.missing.join("\n  - ")}`
+        : "no se declaro ningun hook"}\n` +
+      "Una sesion sin guardas se saltea el paso RED y el limite del principio IV, y no avisa.",
+    );
+  }
+
+  const adaptadores = opts.adaptadores || [
+    // El adaptador de referencia. Es el que `wiring.mjs` ya elegia a su manera
+    // —`via: sdkAvailable() ? "agent-sdk" : "cli"`—; la diferencia es que ahora
+    // la degradacion la DECLARA el en `capabilities()` en vez de ocurrir.
+    crearAdaptadorClaude({
+      home: opts.home,
+      hooks: guardas,
+      timeoutMs: (config.limits?.phaseTimeoutMin ?? 30) * 60_000,
+      // El home entra como directorio extra porque la fase de planificacion
+      // escribe el plan AHI, fuera del worktree: sin esto la planificacion no
+      // puede dejar su resultado y el motor lo lee como "no se pudo planificar".
+      directoriosExtra: [opts.home],
+      alProgreso: (e, peticion) => {
+        if (e.tipo === "tool_use") opts.log.info(`${peticion.phase} ${peticion.taskId || ""}: ${e.detalle.nombre}`);
+      },
+    }),
+  ];
+
+  const registro = registroDeAdaptadores(adaptadores);
+  const id = opts.runtime || adaptadores[0]?.id;
+  const adaptador = registro.obtener(id);
+  if (!adaptador) {
+    throw new Error(
+      `el runtime "${id}" no esta registrado. Los que hay: ${registro.ids().join(", ") || "ninguno"}. ` +
+      "El id es lo que guarda `Agent.runtime`: si no resuelve, no hay nada que invoque al modelo.",
+    );
+  }
+
+  return { registro, adaptador };
+}
+
+/**
  * Las dependencias completas del driver.
  *
  * `runPhase` se envuelve para que el driver no tenga que saber como se construye
@@ -213,6 +345,21 @@ export async function buildDeps(item, config, opts = {}) {
   // test dejaria de probar el cableado.
   const overrides = opts.inject || {};
 
+  const { registro, adaptador } = montarRuntime(config, {
+    home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, runtime: opts.runtime,
+  });
+
+  // EL ENTORNO VIAJA COMO FUNCION, no como objeto ya hecho. Es lo que hace que
+  // se construya por fase: ver `entornoDeFase`.
+  const entorno = () => entornoDeFase(config, { env: opts.env, requeridas: adaptador.requiredEnv });
+
+  // CUALES DE ESAS VARIABLES SON SECRETAS, y viaja con la peticion porque el
+  // mapa plano de `env` no lo dice. Son exactamente las que el runtime declaro
+  // necesitar: las de la maquina no lo son —ver `VARIABLES_DE_LA_MAQUINA`— y
+  // tratarlas como tales dejaba la guarda de argv dando positivo siempre, que
+  // es la forma mas rapida de que alguien la apague.
+  const secretos = [...(adaptador.requiredEnv || [])].filter((n) => Object.hasOwn(entorno(), n));
+
   return {
     home,
     config,
@@ -225,24 +372,19 @@ export async function buildDeps(item, config, opts = {}) {
     createPR,
     dryRun: Boolean(opts.dryRun),
     maxParallelTasks: config.limits?.maxParallelTasks ?? 4,
-    via: sdkAvailable() ? "agent-sdk" : "cli",
-    runPhase: (fase) =>
-      runPhase({
-        prompt: fase.prompt,
-        cwd: fase.cwd,
-        home,
-        model: fase.model,
-        effort: fase.effort,
-        resume: fase.resume,
-        allowedTools: DEFAULT_ALLOWED_TOOLS,
-        timeoutMs: (config.limits?.phaseTimeoutMin ?? 30) * 60_000,
-        addDirs: [home],
-        onProgress: (e) => {
-          if (e.tipo === "tool_use") {
-            log.info(`${fase.phase} ${fase.taskId || ""}: ${e.detalle.nombre}`);
-          }
-        },
-      }),
+    // Por que via corrio ya no se deduce de si un paquete esta instalado: lo
+    // dice el runtime que se monto.
+    via: adaptador.id,
+    runtime: adaptador.id,
+    adaptador,
+    registroDeRuntimes: registro,
+    entorno,
+    secretos,
+    // LA COSTURA, y es una linea. `adaptarADriver` convierte un `AgentAdapter`
+    // en la funcion que el driver ya inyectaba: el motor sigue llamando
+    // `deps.runPhase(...)` y no sabe —ni tiene por que— cual runtime hay
+    // detras.
+    runPhase: adaptarADriver(adaptador, { entorno }),
     ...overrides,
   };
 }

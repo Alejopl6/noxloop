@@ -108,6 +108,10 @@ export function crearAdaptadorFake(opts = {}) {
           comando: nodo,
           args,
           env: peticion.env,
+          // Cuales de esas variables son secretas. Sin esto se miran todas, y el
+          // valor de HOME es prefijo de casi cualquier ruta de la maquina: la
+          // guarda daba positivo siempre y ninguna fase se lanzaba.
+          secretos: peticion.secretos,
           cwd: peticion.cwd,
           signal: opcionesDeFase.signal,
           timeoutMs,

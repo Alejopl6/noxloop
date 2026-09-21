@@ -43,12 +43,32 @@ const LARGO_MINIMO_DE_SECRETO = 4;
  * Devuelve el NOMBRE, nunca el valor: un mensaje de error que cita el secreto lo
  * escribe en el log que estaba intentando proteger.
  *
+ * QUE VARIABLES SE MIRAN, y por que hizo falta decirlo. Mientras `env` solo
+ * llevaba credenciales, mirarlas todas era correcto. Desde que el motor
+ * construye el entorno completo, ahi viajan tambien las variables de la
+ * maquina —`HOME`, `TMPDIR`, `PATH`—, y el valor de `HOME` es prefijo de casi
+ * cualquier ruta absoluta de la maquina: con la ruta del script del runtime o
+ * un `--add-dir` del home, esta guarda daba positivo SIEMPRE y ninguna fase se
+ * podia lanzar. Un falso positivo en una guarda es peor que no tenerla: entrena
+ * a apagarla.
+ *
+ * La boveda ya hace esta distincion —`variables` publicas y `secretos`, y
+ * `buscarSecretoEn` solo mira las segundas: "los nombres si se pueden decir"—
+ * y se perdia al cruzar la costura, donde `env` es un mapa plano. `nombres` es
+ * esa distincion, viajando.
+ *
+ * SIN DECLARACION SE MIRAN TODAS. Ante la duda, denegar (principio IX): quien
+ * no dice cuales de sus variables son secretas no consigue que dejen de
+ * mirarse.
+ *
  * @param {Record<string,string>} env
  * @param {string[]} textos
+ * @param {readonly string[]} [nombres] los que son secretos; sin esto, todos
  * @returns {string|null}
  */
-export function secretoEnArgv(env, textos) {
-  for (const [nombre, valor] of Object.entries(env || {})) {
+export function secretoEnArgv(env, textos, nombres) {
+  const aMirar = nombres ? Object.entries(env || {}).filter(([n]) => nombres.includes(n)) : Object.entries(env || {});
+  for (const [nombre, valor] of aMirar) {
     if (typeof valor !== "string" || valor.length < LARGO_MINIMO_DE_SECRETO) continue;
     if (textos.some((t) => typeof t === "string" && t.includes(valor))) return nombre;
   }
@@ -64,14 +84,15 @@ export function secretoEnArgv(env, textos) {
  *
  * @param {{
  *   comando: string, args: string[], env: Record<string,string>, cwd: string,
+ *   secretos?: readonly string[],
  *   signal?: AbortSignal, timeoutMs?: number, alLanzar?: (l: any) => void
  * }} plan
  * @returns {Promise<Lanzamiento>}
  */
 export async function lanzar(plan) {
-  const { comando, args, env, cwd, signal, timeoutMs, alLanzar } = plan;
+  const { comando, args, env, cwd, secretos, signal, timeoutMs, alLanzar } = plan;
 
-  const colado = secretoEnArgv(env, [comando, ...args]);
+  const colado = secretoEnArgv(env, [comando, ...args], secretos);
   if (colado) {
     // Se NIEGA a lanzar en vez de avisar y seguir: si se lanza, el secreto ya
     // estuvo en la tabla de procesos, y un instante es todo lo que hace falta.

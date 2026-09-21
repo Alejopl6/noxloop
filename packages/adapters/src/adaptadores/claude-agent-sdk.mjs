@@ -43,6 +43,30 @@ export const HERRAMIENTAS_POR_DEFECTO = Object.freeze([
   "Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "Task", "Skill", "TodoWrite", "WebFetch",
 ]);
 
+/**
+ * Las variables que ESTE runtime necesita recibir, si la maquina las tiene.
+ *
+ * VIVEN AQUI Y NO EN EL CABLEADO DEL MOTOR a proposito. El entorno de una fase
+ * se construye: lo que no esta declarado no viaja. Si el motor nombrara estas
+ * variables, soportar el runtime siguiente exigiria volver a tocar el motor —
+ * que es exactamente lo que el principio VI prohibe. El runtime declara lo
+ * suyo; el cableado solo pregunta.
+ *
+ * NO SON EL CAMINO DE UN SECRETO CUALQUIERA. Son las credenciales del modelo,
+ * sin las cuales este adaptador no puede invocar nada; lo que un agente pueda
+ * alcanzar aparte de eso sigue saliendo del grant y de ningun otro sitio.
+ *
+ * @type {string[]}
+ */
+export const VARIABLES_DEL_RUNTIME = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_MODEL",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+];
+
 /** @returns {{disponible: boolean, motivo: string|null}} */
 export function sdkDisponible() {
   try {
@@ -62,8 +86,10 @@ export function sdkDisponible() {
  *   herramientas?: readonly string[],
  *   sdk?: ((opts: any) => AsyncIterable<any>)|null,
  *   resolverSdk?: () => {disponible: boolean, motivo: string|null},
+ *   directoriosExtra?: string[],
  *   timeoutMs?: number,
  *   alLanzar?: (l: any) => void,
+ *   alProgreso?: (e: {tipo: string, detalle?: any}, peticion: any) => void,
  * }} [opts]
  * @returns {import("../contrato.mjs").AgentAdapter}
  */
@@ -75,16 +101,49 @@ export function crearAdaptadorClaude(opts = {}) {
     herramientas = HERRAMIENTAS_POR_DEFECTO,
     sdk = null,
     resolverSdk = sdkDisponible,
+    directoriosExtra = [],
     timeoutMs = 30 * 60_000,
     alLanzar,
+    alProgreso,
   } = opts;
 
   /** El camino que se va a usar. Se resuelve una vez: no cambia a mitad de un run. */
   const conSdk = Boolean(sdk) || resolverSdk().disponible;
   const via = conSdk ? "agent-sdk" : "cli";
 
+  /**
+   * El transporte del SDK, resuelto PEREZOSAMENTE y una sola vez.
+   *
+   * EL FALLO QUE CIERRA. `runPhase` elegia `conSdk && sdk ? porSdk : porCli`, y
+   * `sdk` solo existia si alguien lo inyectaba. O sea: en una maquina con el
+   * paquete instalado, el adaptador declaraba `effort: true` y `via:
+   * "agent-sdk"` y despues corria por el CLI — donde el nivel de esfuerzo no
+   * viaja y cada fase arranca un proceso y un contexto frios. La degradacion
+   * mas cara del producto, ocurriendo en silencio dentro del archivo que
+   * existe para declararla.
+   *
+   * El import va dinamico y dentro de un `try` porque el paquete es
+   * `optionalDependencies` y puede no estar: uno estatico volveria incargable
+   * este modulo en la maquina que no lo tiene, que es el caso que el adaptador
+   * existe para cubrir.
+   */
+  /** @type {((o: any) => AsyncIterable<any>)|null|undefined} */
+  let transporte = sdk;
+  async function resolverTransporte() {
+    if (transporte !== undefined && transporte !== null) return transporte;
+    try {
+      const mod = await import(PAQUETE);
+      transporte = mod.query;
+    } catch {
+      transporte = null;
+    }
+    return transporte;
+  }
+
   return {
     id: "claude-agent-sdk",
+
+    requiredEnv: [...VARIABLES_DEL_RUNTIME],
 
     capabilities() {
       return {
@@ -154,9 +213,19 @@ export function crearAdaptadorClaude(opts = {}) {
         );
       }
 
-      const salida = conSdk && sdk
-        ? await porSdk({ sdk, peticion, hooks, herramientas, alLanzar })
-        : await porCli({ comando, argsPrefijo, peticion, hooks, herramientas, timeoutMs, alLanzar, signal: opcionesDeFase.signal });
+      const query = conSdk ? await resolverTransporte() : null;
+      if (conSdk && !query) {
+        // Se resolvio como instalado y no se pudo cargar. Se dice: el camino
+        // que se va a usar no es el que las capacidades prometieron.
+        degradaciones.push(
+          `el paquete \`${PAQUETE}\` resolvio como instalado pero no se pudo cargar, asi que la fase va por el ` +
+            "CLI: cada una arranca un proceso y un contexto frios, y el nivel de esfuerzo no viaja",
+        );
+      }
+
+      const salida = query
+        ? await porSdk({ sdk: query, peticion, hooks, herramientas, directoriosExtra, alLanzar, alProgreso })
+        : await porCli({ comando, argsPrefijo, peticion, hooks, herramientas, directoriosExtra, timeoutMs, alLanzar, signal: opcionesDeFase.signal });
 
       return { ...salida, degradaciones };
     },
@@ -178,12 +247,22 @@ async function porCli(p) {
   if (p.hooks) args.push("--settings", JSON.stringify(p.hooks));
   if (peticion.model) args.push("--model", peticion.model);
   if (peticion.resume) args.push("--resume", peticion.resume);
+  // Los directorios que la fase puede alcanzar ademas de su worktree. Sin
+  // esto, la fase de planificacion no puede escribir el plan —que vive en el
+  // home, fuera del arbol de trabajo a proposito— y el motor lo lee como que
+  // no se pudo planificar.
+  for (const d of p.directoriosExtra || []) args.push("--add-dir", d);
 
   try {
     const l = await lanzar({
       comando: p.comando,
       args,
       env: peticion.env,
+      // Cuales de esas variables son secretas. Sin esto se miran todas, y el
+      // valor de `HOME` es prefijo de casi cualquier ruta absoluta de la
+      // maquina: con un `--add-dir` del home en argv la guarda daba positivo
+      // siempre y ninguna fase se podia lanzar.
+      secretos: peticion.secretos,
       cwd: peticion.cwd,
       signal: p.signal,
       timeoutMs: p.timeoutMs,
@@ -245,6 +324,9 @@ async function porSdk(p) {
     permissionMode: "acceptEdits",
     allowedTools: [...p.herramientas],
     includePartialMessages: true,
+    // Ver el mismo campo del lado del CLI: sin el home, la planificacion no
+    // tiene donde dejar el plan.
+    ...(p.directoriosExtra?.length ? { additionalDirectories: [...p.directoriosExtra] } : {}),
     ...(p.hooks ? { settings: JSON.stringify(p.hooks) } : {}),
     ...(peticion.model ? { model: peticion.model } : {}),
     ...(peticion.effort ? { effort: peticion.effort } : {}),
@@ -267,6 +349,16 @@ async function porSdk(p) {
   try {
     for await (const m of p.sdk({ prompt: peticion.prompt, options })) {
       if (m?.type === "system" && m.subtype === "init" && m.session_id) sessionId = m.session_id;
+      // EL PROGRESO SE EMITE MIENTRAS PASA. Una fase puede durar minutos: sin
+      // esto, quien mira la bitacora ve una linea al empezar y nada hasta que
+      // termina, y no puede distinguir una fase trabajando de una colgada.
+      if (p.alProgreso && m?.type === "assistant") {
+        for (const bloque of m.message?.content || []) {
+          if (bloque?.type === "tool_use") {
+            p.alProgreso({ tipo: "tool_use", detalle: { nombre: bloque.name, id: bloque.id, entrada: bloque.input } }, peticion);
+          }
+        }
+      }
       if (m?.type === "result") {
         final = m;
         if (m.session_id) sessionId = m.session_id;
