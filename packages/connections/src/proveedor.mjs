@@ -264,9 +264,30 @@ export function crearProveedorDeConexiones({
     /**
      * Arranca una conexion. El modo lo decide el catalogo.
      *
-     * @param {{projectId: string, slug: string, valores?: Record<string,string>}} req
+     * `projectId` ADMITE `null`, Y ESO ES EL ALCANCE. `null` significa «del
+     * espacio de trabajo»: la cuenta de codigo del operador es una sola, se
+     * conecta una vez —incluso desde el alta de un proyecto, cuando ese
+     * proyecto todavia no existe— y todos sus proyectos eligen de ahi. Mientras
+     * esto no se pudo decir, la pantalla del alta remataba en un boton «Ir a un
+     * proyecto y conectar»: salir a otro proyecto para poder crear este.
+     *
+     * OMITIRLO NO ES LO MISMO QUE PASARLO NULO, y por eso se exige declararlo.
+     * `null` es una decision sobre el alcance; `undefined` es un olvido de
+     * quien llama, y tratarlos igual convierte cada olvido en una conexion
+     * compartida por todo el espacio de trabajo — mas alcance del que nadie
+     * pidio, que es la direccion en la que un error de este tipo duele.
+     *
+     * @param {{projectId: string|null, slug: string, valores?: Record<string,string>}} req
      */
     async conectar(req) {
+      if (!req || !("projectId" in req) || req.projectId === undefined) {
+        fallar(
+          "alcance_sin_declarar",
+          "la peticion de conectar no dice a que pertenece la conexion",
+          "pasa `projectId` con el proyecto, o `projectId: null` si es la cuenta del espacio de trabajo: `null` " +
+            "es una decision sobre el alcance y omitirlo es un olvido, y no se pueden tratar igual",
+        );
+      }
       if (req && "modo" in req) {
         fallar(
           "modo_impuesto",
@@ -560,8 +581,22 @@ export function crearProveedorDeConexiones({
       }
     },
 
-    /** Inventario del proyecto. Nunca lleva valores: hay una prueba que lo mide. */
-    async listar(projectId) {
+    /**
+     * Inventario del proyecto. Nunca lleva valores: hay una prueba que lo mide.
+     *
+     * `listar(null)` devuelve las del ESPACIO DE TRABAJO, no todas. Es la misma
+     * pregunta con el mismo alcance que se le paso a `conectar`, y mezclarlas
+     * aqui haria que la pantalla del alta enseñara como suyas las cuentas de
+     * otros proyectos.
+     */
+    async listar(projectId = undefined) {
+      if (projectId === undefined) {
+        fallar(
+          "alcance_sin_declarar",
+          "listar no dice de que alcance quiere las conexiones",
+          "pasa el `projectId`, o `null` para las del espacio de trabajo",
+        );
+      }
       return congelar(repositorio.porProyecto(projectId));
     },
   };

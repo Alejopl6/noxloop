@@ -458,15 +458,24 @@ async function reflejarConexion(p, conexion) {
     });
   }
 
-  const yaEsta = p.dep.almacen.conexiones
-    .porProyecto(conexion.project_id)
-    .some((/** @type {any} */ f) => f.id === conexion.id);
+  // LA BUSQUEDA ES POR ALCANCE, y el alcance lo dice `project_id`. Una conexion
+  // del espacio de trabajo (`project_id: null`) no esta en la lista de ningun
+  // proyecto: buscarla ahi la daba siempre por nueva y el segundo `INSERT` con
+  // el mismo id moria contra la clave primaria.
+  const existentes = conexion.project_id
+    ? p.dep.almacen.conexiones.porProyecto(conexion.project_id)
+    : p.dep.almacen.conexiones.delEspacioDeTrabajo(p.dep.workspace.id);
+  const yaEsta = existentes.some((/** @type {any} */ f) => f.id === conexion.id);
 
   if (yaEsta) p.dep.almacen.conexiones.cambiarEstado(conexion.id, estado);
   else {
     p.dep.almacen.conexiones.crear({
       id: conexion.id,
-      project_id: conexion.project_id,
+      // Los dos campos, siempre. `project_id` en `null` es el alcance del
+      // espacio de trabajo, no un hueco; `workspace_id` es lo que impide que
+      // esa fila valga para los proyectos de otro espacio.
+      project_id: conexion.project_id ?? null,
+      workspace_id: p.dep.workspace.id,
       clase: entrada.clase,
       proveedor: conexion.slug,
       id_externo: entrada.clase === "scm" ? null : conexion.handle,
@@ -475,8 +484,27 @@ async function reflejarConexion(p, conexion) {
     });
   }
 
-  return avanzarSiHayConexionViva(p, conexion.project_id);
+  // SIN PROYECTO NO SE MUEVE NINGUN ESTADO, y es la contracara de la decision
+  // sobre la guarda. `conexion_viva` da por buena una conexion del espacio de
+  // trabajo —el proyecto alcanza la forja de verdad— pero eso no puede
+  // significar que pegar un token empuje de etapa a los veinte proyectos del
+  // espacio a la vez. Avanzar sigue siendo una transicion pedida sobre UN
+  // proyecto, y aqui no hay ninguno sobre el que se haya actuado.
+  return conexion.project_id ? avanzarSiHayConexionViva(p, conexion.project_id) : null;
 }
+
+/**
+ * El alcance de una fila, dicho para quien la pinta.
+ *
+ * NO SE DEDUCE EN LA PANTALLA de que `project_id` sea nulo, y la diferencia es
+ * la que el operador vio: «del espacio de trabajo» y «de este proyecto» son dos
+ * cosas distintas —una la comparten todos los proyectos, la otra no— y
+ * mezclarlas confunde sobre que alcanza que. Un nombre explicito es lo que
+ * permite que la pantalla las separe sin inventarse la regla.
+ *
+ * @param {any} fila
+ */
+const conAlcance = (fila) => ({ ...fila, alcance: fila.project_id ? "proyecto" : "espacio_de_trabajo" });
 
 /**
  * La transicion a `CONNECTED`, y la unica que hay.
@@ -531,10 +559,65 @@ export async function conexionesDelProyecto(p) {
   // Ninguna de las dos lleva valores: la fila de `connection` no tiene columna
   // donde quepa uno, y hay una prueba de centinela que lo vuelve a medir sobre
   // la respuesta HTTP.
-  const filas = p.dep.almacen.conexiones.porProyecto(proyecto.id);
+  // LO QUE EL PROYECTO ALCANZA, Y NO SOLO LO QUE ES SUYO. La cuenta de codigo
+  // se conecta una vez para todo el espacio de trabajo, asi que un proyecto que
+  // va a clonar con ella tiene que verla en su pantalla de conexiones: si no,
+  // la pantalla dice «Sin conexiones todavia» sobre un proyecto que alcanza su
+  // forja perfectamente, y es la misma clase de mentira que el boton que
+  // mandaba a otra pantalla.
+  //
+  // Van CON SU ALCANCE y en un solo listado ordenado —lo propio primero— para
+  // que la pantalla las separe en dos grupos. Mezclarlas sin decir cual es cual
+  // seria el otro error.
+  const filas = p.dep.almacen.conexiones.alAlcanceDe(proyecto.id).map(conAlcance);
 
   return {
     cuerpo: coleccion(filas, {}, { catalogo: await proveedor.catalogo() }),
+  };
+}
+
+/**
+ * `GET /v1/connections` — las conexiones del ESPACIO DE TRABAJO, de los dos
+ * alcances y en una sola peticion.
+ *
+ * POR QUE EXISTE. El selector de repositorios del alta averiguaba que cuentas
+ * de codigo hay recorriendo los proyectos y pidiendo las conexiones de cada
+ * uno: N+1 peticiones, y su propia cabecera ya lo declaraba como deuda. Pero el
+ * problema no era el numero de viajes: en el alta NO HAY PROYECTO todavia, asi
+ * que ese recorrido no alcanzaba a la unica conexion que importa —la que el
+ * operador acaba de crear sin proyecto— y la pantalla remataba en «Sin cuenta
+ * de codigo conectada» con un boton a otra pantalla.
+ *
+ * `GET` y nada mas: preguntar que cuentas hay no cambia nada.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function conexionesDelEspacioDeTrabajo(p) {
+  const proveedor = exigirConexiones(p.dep);
+
+  const crudo = p.url.searchParams.get("alcance");
+  if (crudo !== null && crudo !== "espacio_de_trabajo" && crudo !== "proyecto") {
+    throw new ErrorDeServicio("parametro_invalido", {
+      parametro: "alcance",
+      valor: crudo,
+      opciones: ["espacio_de_trabajo", "proyecto"],
+    });
+  }
+
+  const filas = p.dep.almacen.conexiones
+    .todasDelEspacioDeTrabajo(p.dep.workspace.id)
+    .map(conAlcance)
+    .filter((/** @type {any} */ f) => crudo === null || f.alcance === crudo);
+
+  return {
+    cuerpo: coleccion(filas, {}, {
+      // El catalogo viaja con la lista por el mismo motivo que en la pantalla
+      // del proyecto: quien ve «no hay ninguna cuenta» necesita, en el mismo
+      // sitio, con que conectarla. Separarlo en otra ruta es lo que convierte
+      // un estado vacio en un boton que lleva a otro lado.
+      catalogo: await proveedor.catalogo(),
+      workspace_id: p.dep.workspace.id,
+    }),
   };
 }
 
@@ -602,12 +685,29 @@ export async function repositoriosDeConexion(p) {
   };
 }
 
-/** @param {import("./rutas.mjs").Peticion} p */
-export async function autorizarConexion(p) {
-  const proyecto = exigirProyecto(p.dep, p.parametros.id);
+/**
+ * Conectar un proveedor, con el ALCANCE que le pase quien llama.
+ *
+ * POR QUE UNA SOLA FUNCION PARA LOS DOS ALCANCES. Lo que cambia entre
+ * «conectar el tracker de este proyecto» y «conectar la cuenta de codigo del
+ * espacio de trabajo» es exactamente un valor: a que pertenece la conexion.
+ * Todo lo demas —que el modo lo decide el catalogo, que en oauth2 hay que
+ * buscar la conexion pendiente por su handle, que la fila se refleja en el
+ * almacen, que la respuesta nunca lleva el valor— es identico. Dos copias de
+ * esto es como una de las dos se queda sin la comprobacion del `modo` el dia
+ * que alguien toca una sola.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {string|null} projectId `null` = la conexion es del espacio de trabajo
+ */
+async function conectarConAlcance(p, projectId) {
   const proveedor = exigirConexiones(p.dep);
   const cuerpo = await p.cuerpo();
-  exigir(cuerpo, ["proveedor"], "El `slug` del proveedor externo; `GET /v1/projects/:id/connections` trae el catalogo.");
+  exigir(
+    cuerpo,
+    ["proveedor"],
+    "El `slug` del proveedor externo; `GET /v1/connections` y `GET /v1/projects/:id/connections` traen el catalogo.",
+  );
 
   if ("modo" in cuerpo) {
     throw new ErrorDeServicio("cuerpo_invalido", {
@@ -619,7 +719,10 @@ export async function autorizarConexion(p) {
   }
 
   const salida = await proveedor.conectar({
-    projectId: proyecto.id,
+    // Se pasa SIEMPRE, `null` incluido: la capa de conexiones distingue «del
+    // espacio de trabajo» de «alguien se olvido de decir el alcance», y solo lo
+    // primero se acepta.
+    projectId,
     slug: cuerpo.proveedor,
     valores: cuerpo.valores ?? {},
   });
@@ -628,13 +731,15 @@ export async function autorizarConexion(p) {
   // salida; en oauth2 no, porque lo que vuelve es una URL — y la fila hay que
   // escribirla igual, `pendiente`: la guarda distingue "no hay conexiones" de
   // "hay una esperando" y mandan al operador a sitios distintos.
-  const conexion = salida.conexion ?? (await proveedor.listar(proyecto.id)).find((c) => c.handle === salida.handle);
+  const conexion = salida.conexion ?? (await proveedor.listar(projectId)).find((c) => c.handle === salida.handle);
   const avanzado = conexion ? await reflejarConexion(p, conexion) : null;
 
   p.estado.bus.emitir(
     "conexion.estado",
     { proveedor: cuerpo.proveedor, handle: salida.handle, estado: salida.url ? "pendiente" : "conectada" },
-    { project_id: proyecto.id },
+    // Sin proyecto el evento no lleva `project_id`: inventarle uno haria que la
+    // pantalla de ese proyecto releyera por una conexion que no es suya.
+    projectId ? { project_id: projectId } : {},
   );
 
   return {
@@ -654,6 +759,31 @@ export async function autorizarConexion(p) {
         // para saber si paso algo, y la pantalla no lo tiene a mano.
         { session_token: salida.handle, conexion: salida.conexion, ...(avanzado ? { proyecto: avanzado } : {}) },
   };
+}
+
+/** @param {import("./rutas.mjs").Peticion} p */
+export async function autorizarConexion(p) {
+  const proyecto = exigirProyecto(p.dep, p.parametros.id);
+  return conectarConAlcance(p, proyecto.id);
+}
+
+/**
+ * `POST /v1/connections/authorize` — conectar la cuenta del ESPACIO DE TRABAJO.
+ *
+ * ESTA RUTA ES EL ARREGLO. Sin ella, conectar una cuenta de codigo exigia un
+ * proyecto, y en el alta de un proyecto —que es donde el operador esta cuando
+ * necesita elegir un repositorio— todavia no hay ninguno. La pantalla resolvia
+ * el conflicto mandandolo fuera: «Ir a un proyecto y conectar». Con esta ruta
+ * el token se pega ahi mismo y la lista de repositorios sale a continuacion.
+ *
+ * NO PIDE `:id` Y NO ES UNA OMISION: es la diferencia entera. El alcance de la
+ * conexion lo decide POR QUE RUTA entro, no un campo del cuerpo que quien llama
+ * podria poner mal.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function autorizarConexionDelEspacioDeTrabajo(p) {
+  return conectarConAlcance(p, null);
 }
 
 /** @param {import("./rutas.mjs").Peticion} p */

@@ -41,6 +41,11 @@ const ALIAS_QUE_CRECEN = {
   r: "recommendation",
   a: "agent",
   c: "connection",
+  // Las conexiones DEL ESPACIO DE TRABAJO, que la vista de inicio cuenta
+  // aparte. Entra en la guarda por el mismo motivo que las demas: el alias es
+  // nuevo, y un alias que la guarda no conoce es una subconsulta que puede
+  // recorrer la tabla entera sin que nadie se entere.
+  c2: "connection",
   s: "project_snapshot",
   s2: "project_snapshot",
   f: "snapshot_finding",

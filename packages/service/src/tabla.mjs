@@ -83,6 +83,22 @@ export const TABLA = crearTabla([
   // adaptador montado — «¿que puedo conectar?» es una pregunta de solo lectura
   // y no puede exigir tres contenedores levantados para contestarse.
   { patron: "/v1/connections/catalog", metodos: ["GET", "HEAD"], manejar: catalogo.catalogoDeConexiones },
+  // LAS CONEXIONES DEL ESPACIO DE TRABAJO, Y ESTAS DOS RUTAS SON EL ARREGLO DE
+  // UN FALLO QUE EL OPERADOR VIO EN PANTALLA. En «Anadir proyecto» ->
+  // «Repositorio remoto» la pantalla decia «Sin cuenta de codigo conectada» y
+  // ofrecia un boton a OTRA pantalla, porque conectar exigia un proyecto y en
+  // el alta el proyecto todavia no existe. La cuenta de codigo de un operador
+  // es una sola: se conecta aqui, sin proyecto, y todos sus proyectos eligen de
+  // ahi.
+  //
+  // `authorize` es literal y le gana a `/v1/connections/:id` al montar, asi que
+  // no hay forma de que una conexion llamada «authorize» se coma esta ruta.
+  { patron: "/v1/connections", metodos: ["GET"], manejar: credenciales.conexionesDelEspacioDeTrabajo },
+  {
+    patron: "/v1/connections/authorize",
+    metodos: ["POST"],
+    manejar: credenciales.autorizarConexionDelEspacioDeTrabajo,
+  },
   { patron: "/v1/projects/:id/connections", metodos: ["GET"], manejar: credenciales.conexionesDelProyecto },
   { patron: "/v1/projects/:id/connections/authorize", metodos: ["POST"], manejar: credenciales.autorizarConexion },
   { patron: "/v1/connections/:id/callback", metodos: ["POST"], manejar: credenciales.callbackDeConexion },

@@ -19,8 +19,10 @@ import { comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
 import { useLectura } from '@/lib/lectura'
 import { useMutacion } from '@/lib/mutacion'
 import {
+  alcanceDe,
   ETIQUETA_CLASE_CONEXION,
   ETIQUETA_ESTADO_CONEXION,
+  type AlcanceDeConexion,
   type AutorizacionDeConexion,
   type CampoDeProveedor,
   type CapacidadesDelServicio,
@@ -108,6 +110,39 @@ const CLASES: Array<{ valor: ClaseDeConexion; etiqueta: string; descripcion: str
   },
 ]
 
+/**
+ * LOS DOS ALCANCES, Y POR QUE ESTA PANTALLA LOS SEPARA EN VEZ DE MEZCLARLOS.
+ *
+ * Una conexion del ESPACIO DE TRABAJO la comparten todos los proyectos: es la
+ * cuenta de codigo del operador, que es una sola y alcanza muchos
+ * repositorios. Una conexion DEL PROYECTO alcanza a uno, que es lo correcto
+ * para un gestor de tickets —dos proyectos pueden vivir en dos Jira distintos—.
+ *
+ * Pintarlas en la misma lista confunde sobre QUE ALCANZA QUE, y eso tiene dos
+ * consecuencias concretas: revocar la del espacio creyendo que se toca solo
+ * este proyecto corta a todos los demas, y buscar aqui «la conexion de este
+ * proyecto» encuentra una que no lo es. Son dos grupos con su titulo y su
+ * insignia.
+ */
+const ALCANCES: Array<{
+  valor: AlcanceDeConexion
+  titulo: string
+  descripcion: string
+}> = [
+  {
+    valor: 'espacio_de_trabajo',
+    titulo: 'Del espacio de trabajo',
+    descripcion:
+      'Las comparten TODOS los proyectos. Es donde vive la cuenta de codigo: se conecta una vez y cualquier proyecto elige de ahi su repositorio. Revocar una aqui corta a todos los proyectos a la vez, no solo a este.',
+  },
+  {
+    valor: 'proyecto',
+    titulo: 'De este proyecto',
+    descripcion:
+      'Solo las alcanza este proyecto. Es lo que corresponde a un gestor de tickets: dos proyectos pueden vivir en dos instalaciones distintas, y su credencial no tiene por que ser la misma.',
+  },
+]
+
 /** Lo que hay que hacer para que el adaptador de los flujos delegados exista. */
 const LO_QUE_FALTA_PARA_OAUTH = [
   'Levantar el servidor de integraciones en esta maquina, con su base de datos y su cache.',
@@ -190,7 +225,11 @@ export interface PropsDePanelDeConexiones {
   trabajando: boolean
   /** Lo que devolvio el ultimo `authorize`, mientras el flujo sigue abierto. */
   autorizacion: AutorizacionDeConexion | null
-  alAutorizar: (proveedor: string, valores: Record<string, string>) => void
+  alAutorizar: (
+    proveedor: string,
+    valores: Record<string, string>,
+    alcance: AlcanceDeConexion,
+  ) => void
   alRevocar: (conexion: Conexion) => void
   /** El texto de busqueda del catalogo, que el contenedor traduce a `?q=`. */
   busqueda: string
@@ -218,6 +257,13 @@ export function PanelDeConexiones({
   navegar,
 }: PropsDePanelDeConexiones) {
   const [clase, setClase] = useState<ClaseDeConexion>('scm')
+  // A QUE VA A PERTENECER LA CONEXION NUEVA, Y SE PREGUNTA EN VEZ DE DECIDIRLO
+  // EN SILENCIO. Hasta ahora solo existia un alcance —el proyecto— y por eso no
+  // habia nada que preguntar. Ahora hay dos y no son intercambiables: la cuenta
+  // de codigo es una sola para todo el espacio de trabajo y un gestor de
+  // tickets puede ser distinto en cada proyecto. `null` mientras el operador no
+  // elige proveedor: el valor por defecto sale de la CLASE del que elija.
+  const [alcance, setAlcance] = useState<AlcanceDeConexion | null>(null)
   const [slug, setSlug] = useState<string | null>(null)
   const [valores, setValores] = useState<Record<string, string>>({})
   const [porRevocar, setPorRevocar] = useState<Conexion | null>(null)
@@ -242,6 +288,26 @@ export function PanelDeConexiones({
     () => (slug ? (catalogo.find((entrada) => entrada.slug === slug) ?? null) : null),
     [catalogo, slug],
   )
+
+  /**
+   * El alcance que se va a usar: el que el operador eligio, o el que le
+   * corresponde por defecto a la clase del proveedor.
+   *
+   * EL DEFECTO NO ES UNA PREFERENCIA, ES LO QUE ES CADA COSA. La cuenta de
+   * codigo de un operador es UNA y alcanza todos sus repositorios: conectarla
+   * por proyecto obliga a reconectarla N veces y guarda N copias del mismo
+   * token en la boveda. Un gestor de tickets no: dos proyectos pueden vivir en
+   * dos instalaciones distintas, y compartir esa credencial daria a un proyecto
+   * acceso a los tickets de otro.
+   *
+   * Se puede cambiar, porque hay casos legitimos en las dos direcciones —una
+   * cuenta de codigo de servicio solo para un proyecto, un tracker compartido—
+   * y decidirlo aqui sin dejarlo cambiar seria el mismo error de doblar al
+   * operador para que encaje en lo que el codigo supuso.
+   */
+  const alcancePorDefecto: AlcanceDeConexion =
+    elegido?.clase === 'scm' ? 'espacio_de_trabajo' : 'proyecto'
+  const alcanceElegido: AlcanceDeConexion = alcance ?? alcancePorDefecto
 
   /**
    * Se puede conectar AQUI Y AHORA si el catalogo trae sus campos y el
@@ -322,58 +388,74 @@ export function PanelDeConexiones({
         />
       ) : null}
 
-      {conexiones.length > 0 ? (
-        <ListaDeEntidades etiqueta="Conexiones del proyecto">
-          {conexiones.map((conexion) => {
-            const Icono = ICONO_DE_CLASE[conexion.clase] ?? Plug
-            return (
-              <Entity
-                key={conexion.id}
-                contenedor="li"
-                miniatura={<Icono />}
-                titulo={conexion.proveedor}
-                identificador={conexion.id}
-                descripcion={
-                  conexion.causa
-                    ? conexion.causa
-                    : `${ETIQUETA_CLASE_CONEXION[conexion.clase]}. ${
-                        conexion.clase === 'scm'
-                          ? 'Git se habla directo: la capa de integracion no se interpone entre noxloop y el repositorio.'
-                          : 'Lo que devuelva este proveedor entra como dato, nunca como instruccion ejecutable.'
-                      }`
-                }
-                metadatos={
-                  <>
-                    <Badge tono={TONO_DEL_ESTADO[conexion.estado]}>
-                      {ETIQUETA_ESTADO_CONEXION[conexion.estado]}
-                    </Badge>
-                    {conexion.credential_id ? (
-                      <span className="fuente-operativa text-label-12 text-ds-gray-700">
-                        {conexion.credential_id}
-                      </span>
-                    ) : (
-                      <span className="text-label-12 text-ds-gray-700">
-                        Sin credencial asociada
-                      </span>
-                    )}
-                  </>
-                }
-                acciones={
-                  conexion.estado !== 'revocada' ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setPorRevocar(conexion)}
-                    >
-                      Revocar
-                    </Button>
-                  ) : null
-                }
-              />
-            )
-          })}
-        </ListaDeEntidades>
-      ) : null}
+      {/* DOS GRUPOS Y NO UNA LISTA. Ver el comentario de `ALCANCES`: mezclar
+          lo que comparten todos los proyectos con lo que es de este esconde
+          justo el dato que hace falta antes de revocar nada. */}
+      {ALCANCES.map((alcance) => {
+        const delAlcance = conexiones.filter((c) => alcanceDe(c) === alcance.valor)
+        if (delAlcance.length === 0) return null
+        return (
+          <div key={alcance.valor} className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-heading-16 text-ds-gray-1000">{alcance.titulo}</h2>
+              <p className="text-copy-13 text-ds-gray-900">{alcance.descripcion}</p>
+            </div>
+            <ListaDeEntidades etiqueta={`Conexiones ${alcance.titulo.toLowerCase()}`}>
+              {delAlcance.map((conexion) => {
+                const Icono = ICONO_DE_CLASE[conexion.clase] ?? Plug
+                return (
+                  <Entity
+                    key={conexion.id}
+                    contenedor="li"
+                    miniatura={<Icono />}
+                    titulo={conexion.proveedor}
+                    identificador={conexion.id}
+                    descripcion={
+                      conexion.causa
+                        ? conexion.causa
+                        : `${ETIQUETA_CLASE_CONEXION[conexion.clase]}. ${
+                            conexion.clase === 'scm'
+                              ? 'Git se habla directo: la capa de integracion no se interpone entre noxloop y el repositorio.'
+                              : 'Lo que devuelva este proveedor entra como dato, nunca como instruccion ejecutable.'
+                          }`
+                    }
+                    metadatos={
+                      <>
+                        <Badge tono={TONO_DEL_ESTADO[conexion.estado]}>
+                          {ETIQUETA_ESTADO_CONEXION[conexion.estado]}
+                        </Badge>
+                        <Badge tono={alcance.valor === 'espacio_de_trabajo' ? 'informativo' : 'neutral'}>
+                          {alcance.titulo}
+                        </Badge>
+                        {conexion.credential_id ? (
+                          <span className="fuente-operativa text-label-12 text-ds-gray-700">
+                            {conexion.credential_id}
+                          </span>
+                        ) : (
+                          <span className="text-label-12 text-ds-gray-700">
+                            Sin credencial asociada
+                          </span>
+                        )}
+                      </>
+                    }
+                    acciones={
+                      conexion.estado !== 'revocada' ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setPorRevocar(conexion)}
+                        >
+                          Revocar
+                        </Button>
+                      ) : null
+                    }
+                  />
+                )
+              })}
+            </ListaDeEntidades>
+          </div>
+        )
+      })}
 
       {conexiones.length > 0 ? <FalloDeLectura error={error} /> : null}
 
@@ -535,6 +617,22 @@ export function PanelDeConexiones({
 
             {elegido && conectableAhora(elegido) ? (
               <div className="flex flex-col gap-4">
+                {/* A QUE VA A PERTENECER, ANTES DE PEDIR EL TOKEN. Se pregunta
+                    aqui y no despues porque decide DONDE queda la credencial:
+                    una del espacio de trabajo entra a la boveda con ambito
+                    `global` y la comparten todos los proyectos. Cambiarlo
+                    despues seria volver a pegar el valor. */}
+                <Segmentado
+                  etiqueta="A que pertenece esta conexion"
+                  opciones={ALCANCES.map((a) => ({
+                    valor: a.valor,
+                    etiqueta: a.titulo,
+                    descripcion: a.descripcion,
+                  }))}
+                  valor={alcanceElegido}
+                  alCambiar={setAlcance}
+                />
+
                 <p className="text-label-13 text-ds-gray-1000">
                   Lo que {elegido.nombre} necesita
                 </p>
@@ -615,11 +713,17 @@ export function PanelDeConexiones({
               ? 'Elige un proveedor de la lista. Nada se envia hasta entonces.'
               : faltantes.length > 0
                 ? `Faltan datos obligatorios: ${faltantes.map((campo) => campo.etiqueta || campo.nombre).join(', ')}. Nada se envia hasta que esten.`
-                : 'Al conectar, la credencial entra al inventario con su huella. El valor va al deposito de secretos del sistema operativo y no vuelve por esta pantalla.'
+                : `Al conectar, la credencial entra al inventario con su huella y queda ${
+                    alcanceElegido === 'espacio_de_trabajo'
+                      ? 'al alcance de TODOS los proyectos de este espacio de trabajo'
+                      : 'al alcance de este proyecto y de ninguno mas'
+                  }. El valor va al deposito de secretos del sistema operativo y no vuelve por esta pantalla.`
           }
         >
           <Button
-            onClick={() => (elegido ? alAutorizar(elegido.slug, valores) : undefined)}
+            onClick={() =>
+              elegido ? alAutorizar(elegido.slug, valores, alcanceElegido) : undefined
+            }
             disabled={trabajando || !puedeConectar}
           >
             {trabajando ? <Spinner tamano="sm" etiqueta="Conectando" /> : null}
@@ -637,11 +741,17 @@ export function PanelDeConexiones({
         claseDeRecurso="la conexion"
         consecuencias={
           <>
-            El proyecto deja de alcanzar {porRevocar?.proveedor ?? 'este proveedor'} de
-            inmediato. Un run en marcha que dependa de esta conexion se bloquea en su
-            proximo paso y entra en la bandeja con la causa escrita; no falla en
-            silencio. La revocacion queda en el registro de auditoria, que no se puede
-            editar ni borrar desde aqui.
+            {/* A QUIEN AFECTA, Y ESTO TENIA QUE DECIRSE. Revocar una conexion
+                del espacio de trabajo corta a TODOS los proyectos, no solo a
+                este. Con el texto anterior —«el proyecto deja de alcanzar»— el
+                operador confirmaba creyendo que tocaba uno y dejaba sin cuenta
+                de codigo a los veinte. */}
+            {porRevocar && alcanceDe(porRevocar) === 'espacio_de_trabajo'
+              ? `Esta conexion es del espacio de trabajo: TODOS los proyectos dejan de alcanzar ${porRevocar.proveedor} de inmediato, no solo este.`
+              : `Este proyecto deja de alcanzar ${porRevocar?.proveedor ?? 'este proveedor'} de inmediato.`}{' '}
+            Un run en marcha que dependa de esta conexion se bloquea en su proximo paso y
+            entra en la bandeja con la causa escrita; no falla en silencio. La revocacion
+            queda en el registro de auditoria, que no se puede editar ni borrar desde aqui.
           </>
         }
         etiquetaDeConfirmacion="Revocar conexion"
@@ -689,14 +799,26 @@ export function VistaDeConexiones({
   const conexiones = capacidades.datos?.conexiones
   const adaptadorMontado = conexiones?.valor?.adaptador ?? null
 
-  const autorizar = async (proveedor: string, valores: Record<string, string>) => {
+  const autorizar = async (
+    proveedor: string,
+    valores: Record<string, string>,
+    alcance: AlcanceDeConexion,
+  ) => {
     // `clase` NO viaja, y ese campo de mas era una fuente de verdad duplicada:
     // la clase de una conexion sale del catalogo del adaptador —es lo que
     // decide en que columna de la guarda cae— y que la mandara la pantalla
     // invitaba a que algun dia ganara la de quien llama, que es la que no sabe.
+    //
+    // EL ALCANCE TAMPOCO VIAJA EN EL CUERPO, y por el mismo motivo: lo decide
+    // POR QUE RUTA entra. Un campo `alcance` en el cuerpo seria un valor que
+    // quien llama puede poner mal y que el servicio tendria que validar contra
+    // la presencia del `:id`; con dos rutas, la peticion no puede contradecirse
+    // a si misma.
     const respuesta = await mutacion.enviar<AutorizacionDeConexion>(
       'POST',
-      `/v1/projects/${proyectoId}/connections/authorize`,
+      alcance === 'espacio_de_trabajo'
+        ? '/v1/connections/authorize'
+        : `/v1/projects/${proyectoId}/connections/authorize`,
       { proveedor, ...(Object.keys(valores).length > 0 ? { valores } : {}) },
     )
     if (respuesta) {
@@ -738,7 +860,9 @@ export function VistaDeConexiones({
       errorDeMutacion={mutacion.error}
       trabajando={mutacion.trabajando}
       autorizacion={autorizacion}
-      alAutorizar={(proveedor, valores) => void autorizar(proveedor, valores)}
+      alAutorizar={(proveedor, valores, alcance) =>
+        void autorizar(proveedor, valores, alcance)
+      }
       alRevocar={(conexion) => void revocar(conexion)}
       busqueda={busqueda}
       alBuscar={setBusqueda}

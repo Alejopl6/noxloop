@@ -162,23 +162,72 @@ export const GUARDAS = {
     return { listo: true, hallado: `${total.n} recomendacion(es), todas decididas`, comoConseguirlo: "" };
   },
 
+  /**
+   * UNA CONEXION DEL ESPACIO DE TRABAJO SATISFACE ESTA GUARDA. Es un cambio de
+   * significado de una transicion, asi que va razonado y no comentado de paso.
+   *
+   * LO QUE ESTA GUARDA COMPRUEBA ES UNA CAPACIDAD, NO UNA PROPIEDAD. La etapa
+   * 06 dice «conecta el proyecto con su ecosistema», y lo que el proyecto
+   * necesita para su primer ciclo es ALCANZAR la forja y el gestor de tickets:
+   * de donde sale el work item y donde se abre el pull request. Una cuenta de
+   * codigo conectada a nivel de espacio de trabajo la alcanza igual —es la
+   * misma credencial, la misma boveda y el mismo grant— asi que exigir ademas
+   * que la FILA cuelgue de este proyecto seria exigir una propiedad de
+   * contabilidad, no una capacidad. Y una guarda que pinta rojo sobre algo que
+   * de verdad funciona es la que ensena al operador a rodear las guardas.
+   *
+   * EL RIESGO QUE ESTO ABRE, Y POR QUE SE ACEPTA. Conectar una cuenta deja a
+   * TODOS los proyectos del espacio a un paso de `CONNECTED`, incluidos los que
+   * el operador no pensaba conectar. No es un verde falso —esos proyectos
+   * alcanzan la forja de verdad— y ademas ninguno avanza solo: la unica via que
+   * mueve el estado es una transicion pedida sobre ESE proyecto, y el servicio
+   * solo la intenta para el proyecto sobre el que se acaba de actuar. Lo que no
+   * se puede perder es la distincion, y por eso `hallado` DICE de quien es la
+   * conexion que conto: «de este proyecto» y «del espacio de trabajo» mandan al
+   * operador a sitios distintos cuando algo falle despues.
+   *
+   * LA CONEXION DE OTRO ESPACIO DE TRABAJO NO CUENTA, y por eso la consulta
+   * filtra por `workspace_id` en vez de por «project_id IS NULL» a secas: sin
+   * ese filtro, una fila del espacio A pondria en verde a un proyecto del
+   * espacio B — que es exactamente el agujero que la columna vino a tapar.
+   */
   conexion_viva(base, proyecto) {
     const viva = base.consultarUno(
-      "SELECT id, proveedor FROM connection WHERE project_id = ? AND estado = 'viva' LIMIT 1",
-      [proyecto.id],
+      "SELECT id, proveedor, project_id FROM connection " +
+        "WHERE estado = 'viva' AND (project_id = ? OR (project_id IS NULL AND workspace_id = ?)) " +
+        // Lo propio primero: un proyecto con conexion propia no se lee como
+        // apoyado en la del espacio.
+        "ORDER BY (project_id IS NULL) LIMIT 1",
+      [proyecto.id, proyecto.workspace_id],
     );
-    if (viva) return { listo: true, hallado: `conexion viva con ${viva.proveedor}`, comoConseguirlo: "" };
-    const otras = base.consultar("SELECT estado, COUNT(*) AS n FROM connection WHERE project_id = ? GROUP BY estado", [
-      proyecto.id,
-    ]);
+    if (viva) {
+      return {
+        listo: true,
+        hallado: `conexion viva con ${viva.proveedor}, ${viva.project_id ? "de este proyecto" : "del espacio de trabajo"}`,
+        comoConseguirlo: "",
+      };
+    }
+    // El rojo cuenta LOS DOS ALCANCES. Decir "este proyecto no tiene ninguna
+    // conexion" teniendo el espacio una `pendiente` manda a conectar otra vez
+    // en vez de a terminar la que esta a medias.
+    const otras = base.consultar(
+      "SELECT estado, (project_id IS NULL) AS del_espacio, COUNT(*) AS n FROM connection " +
+        "WHERE (project_id = ? OR (project_id IS NULL AND workspace_id = ?)) " +
+        "GROUP BY estado, del_espacio",
+      [proyecto.id, proyecto.workspace_id],
+    );
     return {
       listo: false,
       hallado: otras.length
-        ? `hay conexiones pero ninguna viva (${otras.map((f) => `${f.n} ${f.estado}`).join(", ")})`
-        : "este proyecto no tiene ninguna conexion",
+        ? `hay conexiones pero ninguna viva (${otras
+            .map((f) => `${f.n} ${f.estado} ${f.del_espacio ? "del espacio de trabajo" : "de este proyecto"}`)
+            .join(", ")})`
+        : "ni este proyecto ni su espacio de trabajo tienen ninguna conexion",
       comoConseguirlo:
-        "Conecta al menos un proveedor y comprueba la conexion hasta que quede `viva`. Una conexion `pendiente` " +
-        "es una que todavia no contesto: el estado se escribe con la respuesta, no con la intencion.",
+        "Conecta al menos un proveedor y comprueba la conexion hasta que quede `viva`. La cuenta de codigo se " +
+        "conecta una vez para todo el espacio de trabajo —desde el alta de un proyecto o desde esta pantalla— y " +
+        "un `tracker` puede ser de este proyecto. Una conexion `pendiente` es una que todavia no contesto: el " +
+        "estado se escribe con la respuesta, no con la intencion.",
     };
   },
 

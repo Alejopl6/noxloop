@@ -122,7 +122,7 @@ export function validarEntradaDeCatalogo(entrada) {
 /**
  * @typedef {object} Conexion
  * @property {string} id
- * @property {string} project_id
+ * @property {string|null} project_id  `null` = del espacio de trabajo (la cuenta de codigo del operador)
  * @property {string} slug
  * @property {string} modo
  * @property {string} estado
@@ -136,7 +136,7 @@ export function validarEntradaDeCatalogo(entrada) {
  */
 
 /**
- * @param {{ id: string, project_id: string, slug: string, modo: string, handle: string, estado?: string, etiqueta?: string|null, deposito?: Record<string, any>, expira?: string|null, ahora?: number }} datos
+ * @param {{ id: string, project_id: string|null, slug: string, modo: string, handle: string, estado?: string, etiqueta?: string|null, deposito?: Record<string, any>, expira?: string|null, ahora?: number }} datos
  * @returns {Conexion}
  */
 export function crearConexion({
@@ -161,7 +161,11 @@ export function crearConexion({
   const cuando = new Date(ahora).toISOString();
   return congelar({
     id,
-    project_id,
+    // `null` explicito: la fila de una conexion del espacio de trabajo tiene el
+    // campo y vale `null`, en vez de no tenerlo. Un campo ausente obliga a
+    // quien la lee a distinguir «no hay proyecto» de «esta version de la fila
+    // no lo guardaba», y las dos se ven igual.
+    project_id: project_id ?? null,
     slug,
     modo,
     estado,

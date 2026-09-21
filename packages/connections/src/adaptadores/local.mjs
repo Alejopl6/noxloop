@@ -183,8 +183,21 @@ export function crearAdaptadorLocal({
             // misma casilla "token" no comparten nada gobernable; dos
             // credenciales de tracker si.
             tipo: TIPO_POR_CLASE[entrada.clase] ?? "api_token",
-            ambito: "proyecto",
-            project_id: projectId,
+            // EL AMBITO SALE DEL ALCANCE DE LA CONEXION, y es lo que hace que
+            // la cuenta de codigo del espacio de trabajo se pueda guardar.
+            //
+            // Sin esto, una conexion sin proyecto registraba su credencial como
+            // `ambito: "proyecto"` con `project_id: null`, y el almacen la
+            // rechazaba por su propio CHECK —«una credencial 'global' con
+            // proyecto es una credencial que dos pantallas cuentan distinto», y
+            // al reves igual—. El operador pegaba su token en el alta y el
+            // error hablaba de una columna de una tabla.
+            //
+            // El enum `global | proyecto` de la boveda existe exactamente para
+            // esto: una credencial del espacio de trabajo entera, no una de
+            // proyecto a la que le falta el proyecto.
+            ambito: projectId ? "proyecto" : "global",
+            project_id: projectId ?? null,
             alcance_declarado: campo.alcance ?? null,
             valor,
           }),
@@ -195,7 +208,11 @@ export function crearAdaptadorLocal({
           // convierte la auditoria en una fila que dice que alguien autorizo sin
           // poder decir quien. Si no hubo persona, no hubo decision.
           boveda.otorgar({
-            project_id: projectId,
+            // `null` sobre una credencial global: el permiso no es de ningun
+            // proyecto porque la credencial tampoco lo es. La boveda compara
+            // este campo contra el del motivo al entregar el valor, asi que los
+            // dos lados tienen que decir lo mismo.
+            project_id: projectId ?? null,
             agent_id: agenteId,
             credential_id: credencial.id,
             concedido_por: quienConecta,
@@ -218,7 +235,10 @@ export function crearAdaptadorLocal({
         valores[campo] = await contraElDeposito(`entregar '${campo}'`, () =>
           boveda.recuperar(ref, {
             grant_id,
-            project_id: conexion.project_id,
+            // Declarado siempre, `null` incluido: la boveda distingue «esta
+            // credencial no es de ningun proyecto» de «quien llama se olvido de
+            // decirlo», y solo lo primero pasa.
+            project_id: conexion.project_id ?? null,
             agent_id: agenteId,
             proposito: "llamar_api",
           }),

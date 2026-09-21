@@ -706,9 +706,32 @@ export const ETIQUETA_ESTADO_CONEXION: Record<EstadoDeLaConexion, string> = {
   fallida: 'Fallida',
 }
 
+/**
+ * De quien es una conexion.
+ *
+ * `espacio_de_trabajo` es la cuenta que comparten TODOS los proyectos —la
+ * cuenta de codigo del operador es una sola, con muchos repositorios— y
+ * `proyecto` es la que solo alcanza a uno, como un gestor de tickets que puede
+ * ser distinto por proyecto.
+ *
+ * EL CAMPO LO MANDA EL SERVICIO Y NO SE DEDUCE AQUI de que `project_id` sea
+ * nulo. Deducirlo pondria en esta pantalla una regla del modelo de datos, y el
+ * dia que cambie habria dos verdades. Viaja explicito por la misma razon por la
+ * que viaja `clase`.
+ */
+export type AlcanceDeConexion = 'espacio_de_trabajo' | 'proyecto'
+
+export const ETIQUETA_ALCANCE_CONEXION: Record<AlcanceDeConexion, string> = {
+  espacio_de_trabajo: 'Del espacio de trabajo',
+  proyecto: 'De este proyecto',
+}
+
 export interface Conexion {
   id: string
-  project_id: string
+  /** `null` = del espacio de trabajo. Ver `alcance`, que es lo que hay que leer. */
+  project_id: string | null
+  workspace_id?: string | null
+  alcance?: AlcanceDeConexion
   clase: ClaseDeConexion
   proveedor: string
   id_externo?: string | null
@@ -717,6 +740,11 @@ export interface Conexion {
   capacidades?: Record<string, unknown>
   /** Por que fallo, cuando `estado === 'fallida'`. Texto completo. */
   causa?: string | null
+}
+
+/** El alcance de una fila, con el valor por defecto para un servicio que todavia no lo mande. */
+export function alcanceDe(conexion: Conexion): AlcanceDeConexion {
+  return conexion.alcance ?? (conexion.project_id ? 'proyecto' : 'espacio_de_trabajo')
 }
 
 /** `POST /v1/projects/:id/connections/authorize`. */
@@ -740,7 +768,8 @@ export interface AutorizacionDeConexion {
   /** Solo en los modos sin flujo de autorizacion: la conexion queda lista de inmediato. */
   conexion?: {
     id: string
-    project_id: string
+    /** `null` cuando la conexion es del espacio de trabajo: no hay proyecto todavia. */
+    project_id: string | null
     slug: string
     modo: string
     estado: string

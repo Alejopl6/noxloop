@@ -49,8 +49,16 @@ export function repositorioEnMemoria() {
       for (const c of conexiones.values()) if (c.handle === handle) return copia(c);
       return null;
     },
+    /**
+     * `projectId === null` pregunta por las del ESPACIO DE TRABAJO, y la
+     * comparacion estricta ya lo hace: una fila de proyecto tiene su id ahi y
+     * no empareja. Se dice porque la tentacion es escribir un `||` que las
+     * junte, y juntarlas ensena en el alta de un proyecto las cuentas de otros.
+     */
     porProyecto(projectId) {
-      return [...conexiones.values()].filter((c) => c.project_id === projectId).map((c) => copia(c));
+      return [...conexiones.values()]
+        .filter((c) => (c.project_id ?? null) === (projectId ?? null))
+        .map((c) => copia(c));
     },
     borrar(id) {
       conexiones.delete(id);

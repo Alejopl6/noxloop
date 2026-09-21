@@ -160,7 +160,11 @@ export function crearGrant({
   }
   return Object.freeze({
     id: id ?? nuevoIdDeCredencial(),
-    project_id,
+    // `null` explicito, y no `undefined`: un grant sobre una credencial de
+    // ambito `global` no es de ningun proyecto —la cuenta de codigo del
+    // espacio de trabajo es el caso— y la comparacion contra el motivo tiene
+    // que dar igual venga de aqui o de una fila del almacen.
+    project_id: project_id ?? null,
     agent_id,
     credential_id,
     concedido_por,

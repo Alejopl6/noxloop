@@ -21,6 +21,28 @@ import { esBackendConocido } from "./backends/seleccion.mjs";
 const CAMPOS_DEL_MOTIVO = ["grant_id", "project_id", "agent_id", "proposito"];
 
 /**
+ * El unico campo del motivo que puede ser NULO, y solo cuando la credencial es
+ * de ambito `global`.
+ *
+ * EL FALLO QUE ESTO CIERRA. La cuenta de codigo del operador se conecta a nivel
+ * de espacio de trabajo —una cuenta, muchos repositorios, todos los proyectos
+ * eligiendo de ahi— y se conecta en el ALTA de un proyecto, cuando ese proyecto
+ * todavia no existe. Su credencial es de ambito `global`, que es justo el caso
+ * que el enum `global | proyecto` existe para cubrir. Pero el motivo de acceso
+ * exigia `project_id` con verdad simple, asi que el motivo honesto —no hay
+ * proyecto, `null`— se rechazaba con `motivo_ausente`: la boveda distinguia los
+ * dos ambitos al dar de alta y no los distinguia al usar.
+ *
+ * LO QUE SE ENDURECE DE PASO, y por eso esto no es un aflojamiento. Antes
+ * bastaba con que `project_id` fuera una cadena cualquiera no vacia; el ambito
+ * de la credencial no se miraba en ningun momento. Ahora se mira: una
+ * credencial de ambito `proyecto` pedida sin proyecto se DENIEGA con su propio
+ * codigo, y el campo sigue siendo obligatorio de DECLARAR —omitirlo es el
+ * olvido de quien llama, y se trata como antes—.
+ */
+const NULO_PERMITIDO_EN_EL_MOTIVO = "project_id";
+
+/**
  * @param {{ backend: any, repositorio: any, auditoria: any, sal?: string, reloj?: () => number }} piezas
  */
 export function crearBoveda({ backend, repositorio, auditoria, sal = salPorDefecto(), reloj = () => Date.now() }) {
@@ -51,7 +73,16 @@ export function crearBoveda({ backend, repositorio, auditoria, sal = salPorDefec
         "pasa el motivo del acceso: sin el no hay forma de auditar para que se saco la credencial",
       );
     }
-    const faltan = CAMPOS_DEL_MOTIVO.filter((c) => !(/** @type {any} */ (motivo)[c]));
+    // `project_id: null` ESTA DECLARADO; `project_id` ausente, no. La
+    // diferencia no es formal: `null` dice «esta credencial no es de ningun
+    // proyecto» y la ausencia dice «me olvide de decirlo». Tratarlas igual
+    // convierte el olvido en una excepcion silenciosa justo en el campo que
+    // hace auditable el acceso.
+    const faltan = CAMPOS_DEL_MOTIVO.filter((c) => {
+      const valor = /** @type {any} */ (motivo)[c];
+      if (c === NULO_PERMITIDO_EN_EL_MOTIVO) return !(c in /** @type {any} */ (motivo)) || valor === undefined;
+      return !valor;
+    });
     if (faltan.length > 0) {
       fallar(
         "motivo_ausente",
@@ -179,11 +210,28 @@ export function crearBoveda({ backend, repositorio, auditoria, sal = salPorDefec
         );
       }
 
+      // EL AMBITO SE COMPRUEBA CONTRA LA CREDENCIAL, no contra la forma del
+      // motivo. Si `project_id: null` valiera para cualquier credencial, una
+      // declarada de un proyecto quedaria de hecho global — MAS permiso del que
+      // se pidio, que es lo que `crearCredencial` ya impide en el alta.
+      if (credencial.ambito === "proyecto" && !motivo.project_id) {
+        denegar(
+          "credencial_de_proyecto_sin_proyecto",
+          motivo,
+          ref,
+          `la credencial ${ref} es de ambito \`proyecto\` y el motivo del acceso no dice de que proyecto`,
+          "pasa el `project_id` del proyecto que la usa; si lo que querias era una credencial compartida por todo " +
+            "el espacio de trabajo, dala de alta con `ambito: \"global\"`",
+        );
+      }
+
       const grant = repositorio.grantPorId(motivo.grant_id);
       const alcanza =
         grant &&
         grant.credential_id === credencial.id &&
-        grant.project_id === motivo.project_id &&
+        // `null === null` para una credencial global, y el `?? null` normaliza
+        // el grant que llega de un almacen donde la columna es nula.
+        (grant.project_id ?? null) === (motivo.project_id ?? null) &&
         grant.agent_id === motivo.agent_id;
       if (!alcanza) {
         denegar(

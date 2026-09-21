@@ -455,6 +455,84 @@ CREATE INDEX auditoria_por_objeto      ON audit_event(objeto_tipo, objeto_id);
 CREATE INDEX politica_por_proyecto     ON danger_policy(project_id, capacidad);
 `;
 
+// LA CONEXION PASA A PODER SER DEL ESPACIO DE TRABAJO (`project_id` opcional).
+//
+// EL FALLO CONCRETO, VISTO EN PANTALLA. En «Anadir proyecto» -> «Repositorio
+// remoto» la pantalla decia «Sin cuenta de codigo conectada» y ofrecia un
+// boton: «Ir a un proyecto y conectar». Para dar de alta un proyecto habia que
+// salir a otro proyecto, conectar ahi la cuenta de codigo, y volver. La
+// pantalla no se equivocaba sola: `connection.project_id` era `NOT NULL
+// REFERENCES project(id)`, y en el alta el proyecto todavia no existe, asi que
+// no habia fila que escribir. El codigo resolvio el conflicto mandando fuera al
+// operador — doblarlo para que encaje en el modelo de datos.
+//
+// POR QUE LA CORRECCION ES DEL MODELO Y NO DE LA PANTALLA. Un operador tiene
+// UNA cuenta de codigo y muchos repositorios: la conecta una vez y todos sus
+// proyectos eligen de ahi. Un `tracker` si puede ser por proyecto —dos
+// proyectos pueden vivir en dos Jira distintos— pero la cuenta de codigo no lo
+// es en la practica, y modelarla por proyecto obliga a reconectarla N veces
+// guardando N copias del mismo token en la boveda.
+//
+// POR QUE APARECE `workspace_id`, Y NO ES UN CAMPO DE MAS. Hasta aqui la
+// conexion sabia a que espacio de trabajo pertenece POR SU PROYECTO. Con
+// `project_id` en `NULL` esa cadena se corta y la fila queda flotando: la
+// guarda de un proyecto del espacio A contaria una conexion creada en el
+// espacio B. El campo no agrega informacion —la que habia estaba implicita—
+// sino que la deja donde se puede consultar, que es lo que la guarda necesita.
+//
+// POR QUE SE RECONSTRUYE LA TABLA ENTERA. SQLite no sabe quitarle el `NOT NULL`
+// a una columna ni agregar una `NOT NULL` sin valor constante por defecto: la
+// unica via es tabla nueva, copia, `DROP` y `RENAME`. Y la migracion 1 no se
+// edita —su huella esta escrita en la base del operador— asi que esto es una
+// version nueva, no un retoque de la que ya corrio.
+//
+// EL `CHECK` DE FR-032 SE QUEDA TAL CUAL. `scm` sigue sin `id_externo`: git se
+// habla directo y la capa de integracion no se interpone. El alcance de la
+// conexion no cambia nada de eso, y quitarlo "de paso" al reconstruir la tabla
+// seria perder un invariante en una migracion que no venia a tocarlo.
+const CONEXION_DEL_ESPACIO_SQL = `
+CREATE TABLE connection_nueva (
+  id            TEXT PRIMARY KEY,
+  -- Una conexion pertenece SIEMPRE a un espacio de trabajo. Lo que es opcional
+  -- es el proyecto.
+  workspace_id  TEXT NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+  -- \`NULL\` = del espacio de trabajo. No es "sin proyecto todavia": es un
+  -- alcance distinto, y las dos pantallas que lo pintan tienen que poder
+  -- distinguirlo sin adivinar.
+  project_id    TEXT REFERENCES project(id) ON DELETE CASCADE,
+  clase         TEXT NOT NULL CHECK (clase ${en("connection.clase")}),
+  proveedor     TEXT NOT NULL,
+  id_externo    TEXT,
+  estado        TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado ${en("connection.estado")}),
+  credential_id TEXT REFERENCES credential(id) ON DELETE RESTRICT,
+  capacidades   TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(capacidades)),
+  -- FR-032, palabra por palabra igual que antes: \`scm\` no es una integracion.
+  CHECK (clase <> 'scm' OR id_externo IS NULL)
+) STRICT;
+
+-- El \`JOIN\` es lo que rellena \`workspace_id\` de lo que ya habia: hasta ahora
+-- toda conexion tenia proyecto, asi que su espacio de trabajo es el de su
+-- proyecto y no hay que inventar ninguno. Es un \`JOIN\` y no un \`LEFT JOIN\` a
+-- proposito: una conexion que apuntara a un proyecto inexistente no puede
+-- entrar con \`workspace_id\` en NULL a una columna \`NOT NULL\` —la migracion
+-- moriria a mitad— y ademas no deberia existir, porque la clave foranea la
+-- impedia.
+INSERT INTO connection_nueva (id, workspace_id, project_id, clase, proveedor, id_externo, estado, credential_id, capacidades)
+SELECT c.id, p.workspace_id, c.project_id, c.clase, c.proveedor, c.id_externo, c.estado, c.credential_id, c.capacidades
+FROM connection c JOIN project p ON p.id = c.project_id;
+
+DROP TABLE connection;
+ALTER TABLE connection_nueva RENAME TO connection;
+
+-- El \`DROP\` se llevo el indice que creo la migracion 2, asi que se rehace con
+-- el mismo nombre. Sin esta linea la vista de inicio pasa de buscar a recorrer
+-- y nadie se entera hasta que el operador tiene dos anos de uso encima.
+CREATE INDEX conexion_por_proyecto ON connection(project_id, estado);
+-- El de la guarda y el del selector de repositorios: «las conexiones vivas de
+-- ESTE espacio de trabajo que no son de ningun proyecto».
+CREATE INDEX conexion_por_espacio ON connection(workspace_id, estado, project_id);
+`;
+
 const APPEND_ONLY_SQL = `
 -- \`AuditEvent\` es append-only: sin UPDATE, sin DELETE (FR-049).
 --
@@ -494,4 +572,5 @@ export const MIGRACIONES = Object.freeze([
   { version: 1, nombre: "las-entidades", sql: TABLAS_SQL },
   { version: 2, nombre: "indices-de-consulta", sql: INDICES_SQL },
   { version: 3, nombre: "auditoria-append-only", sql: APPEND_ONLY_SQL },
+  { version: 4, nombre: "conexion-del-espacio-de-trabajo", sql: CONEXION_DEL_ESPACIO_SQL },
 ]);

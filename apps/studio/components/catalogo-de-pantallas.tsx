@@ -1364,6 +1364,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               autonomias={AUTONOMIAS}
               plantillas={conDatos(PLANTILLAS)}
               alCrear={SIN_EFECTO}
+              alConectarCuenta={SIN_EFECTO}
               trabajando={false}
               error={null}
               navegar={navegar}
@@ -1374,6 +1375,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               autonomias={AUTONOMIAS}
               plantillas={conError<Plantilla[]>(SIN_PLANTILLAS)}
               alCrear={SIN_EFECTO}
+              alConectarCuenta={SIN_EFECTO}
               trabajando={false}
               error={null}
               navegar={navegar}
@@ -1384,6 +1386,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               autonomias={AUTONOMIAS}
               plantillas={conDatos(PLANTILLAS)}
               alCrear={SIN_EFECTO}
+              alConectarCuenta={SIN_EFECTO}
               trabajando={false}
               error={DESTINO_NO_VACIO}
               navegar={navegar}
@@ -1394,6 +1397,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               autonomias={AUTONOMIAS}
               plantillas={cargando<Plantilla[]>()}
               alCrear={SIN_EFECTO}
+              alConectarCuenta={SIN_EFECTO}
               trabajando={false}
               error={NO_ES_REPOSITORIO}
               navegar={navegar}

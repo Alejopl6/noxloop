@@ -352,12 +352,44 @@ export function repositorioDeRecomendaciones(base) {
 
 /** @param {import("./sqlite.mjs").BaseSqlite} base */
 export function repositorioDeConexiones(base) {
+  /**
+   * El espacio de trabajo de la conexion: el declarado, o el del proyecto.
+   *
+   * POR QUE SE DERIVA EN VEZ DE EXIGIRLO SIEMPRE. Todas las llamadas que ya
+   * existen pasan `project_id` y ninguna pasa `workspace_id` — y no tienen por
+   * que, porque el proyecto ya dice cual es. Exigirlo obligaria a que cada
+   * llamador lo buscara, y el dia que uno se equivoque la fila quedaria en un
+   * espacio distinto al de su propio proyecto: dos verdades sobre la misma
+   * conexion, y la guarda leyendo la equivocada.
+   *
+   * @param {Record<string, any>} datos
+   * @returns {string}
+   */
+  function espacioDeTrabajoDe(datos) {
+    if (datos.workspace_id) return datos.workspace_id;
+    if (datos.project_id) {
+      const proyecto = base.consultarUno("SELECT workspace_id FROM project WHERE id = ?", [datos.project_id]);
+      if (!proyecto) fallar("proyecto_desconocido", { id: datos.project_id });
+      return String(proyecto.workspace_id);
+    }
+    return fallar("campo_obligatorio_ausente", {
+      tabla: "connection",
+      campo: "workspace_id",
+      pista:
+        "Una conexion sin `project_id` es una conexion DEL ESPACIO DE TRABAJO, asi que tiene que decir de cual. " +
+        "Sin el campo, la fila vale para cualquier proyecto de cualquier espacio.",
+    });
+  }
+
   return {
     crear(datos) {
       const clase = exigirEnum("connection", "clase", datos.clase);
       const fila = {
         id: datos.id ?? randomUUID(),
-        project_id: exigir(datos, "connection", "project_id"),
+        workspace_id: espacioDeTrabajoDe(datos),
+        // OPCIONAL, y `null` NO es "todavia no se sabe": es el alcance del
+        // espacio de trabajo. Ver la cabecera de la migracion 4.
+        project_id: datos.project_id ?? null,
         clase,
         proveedor: exigir(datos, "connection", "proveedor"),
         id_externo: datos.id_externo ?? null,
@@ -366,10 +398,11 @@ export function repositorioDeConexiones(base) {
         capacidades: json(datos.capacidades, {}),
       };
       base.escribir(
-        "INSERT INTO connection (id, project_id, clase, proveedor, id_externo, estado, credential_id, capacidades) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO connection (id, workspace_id, project_id, clase, proveedor, id_externo, estado, " +
+          "credential_id, capacidades) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           fila.id,
+          fila.workspace_id,
           fila.project_id,
           fila.clase,
           fila.proveedor,
@@ -410,8 +443,57 @@ export function repositorioDeConexiones(base) {
       return congelar(base.consultarUno("SELECT * FROM connection WHERE id = ?", [id]));
     },
 
+    /** Las del proyecto, y SOLO las del proyecto. */
     porProyecto(projectId) {
       return congelarTodas(base.consultar("SELECT * FROM connection WHERE project_id = ? ORDER BY clase", [projectId]));
+    },
+
+    /**
+     * TODAS las del espacio de trabajo, de los dos alcances, con las del
+     * espacio primero.
+     *
+     * POR QUE EXISTE. El selector de repositorios del alta las recorria
+     * pidiendo las conexiones de CADA proyecto, una peticion por proyecto,
+     * porque no habia otra forma de saber que cuentas de codigo hay. Esa
+     * cabecera ya lo declaraba: «si algun dia son cientos, lo que hace falta es
+     * una ruta que liste las conexiones del espacio de trabajo». Es esta.
+     */
+    todasDelEspacioDeTrabajo(workspaceId) {
+      return congelarTodas(
+        base.consultar(
+          "SELECT * FROM connection WHERE workspace_id = ? ORDER BY (project_id IS NOT NULL), clase, proveedor",
+          [workspaceId],
+        ),
+      );
+    },
+
+    /** Las del espacio de trabajo: las que no cuelgan de ningun proyecto. */
+    delEspacioDeTrabajo(workspaceId) {
+      return congelarTodas(
+        base.consultar("SELECT * FROM connection WHERE workspace_id = ? AND project_id IS NULL ORDER BY clase", [
+          workspaceId,
+        ]),
+      );
+    },
+
+    /**
+     * TODO lo que un proyecto alcanza: lo suyo y lo del espacio, en ese orden.
+     *
+     * EL ORDEN NO ES ESTETICO. La pantalla de conexiones tiene que poder
+     * separarlas —son dos alcances distintos y mezclarlas confunde sobre que
+     * alcanza que— y la guarda de la etapa 06 informa cual conto. Si lo propio
+     * no viniera primero, un proyecto con conexion propia se leeria como
+     * apoyado en la del espacio.
+     */
+    alAlcanceDe(projectId) {
+      return congelarTodas(
+        base.consultar(
+          "SELECT c.* FROM connection c JOIN project p ON p.id = ? " +
+            "WHERE c.project_id = p.id OR (c.project_id IS NULL AND c.workspace_id = p.workspace_id) " +
+            "ORDER BY (c.project_id IS NULL), c.clase",
+          [projectId],
+        ),
+      );
     },
   };
 }
@@ -608,6 +690,17 @@ export function vistaDeInicio(base) {
       (SELECT COUNT(*) FROM agent a WHERE a.project_id = p.id)  AS agentes,
       (SELECT COUNT(*) FROM connection c
         WHERE c.project_id = p.id AND c.estado = 'viva')        AS conexiones_vivas,
+      -- LAS DEL ESPACIO SE CUENTAN APARTE, Y HACEN FALTA LAS DOS CUENTAS. La
+      -- guarda de la etapa 06 da por buena una conexion del espacio de trabajo
+      -- (ver \`conexion_viva\`), asi que con una sola cuenta la lista de
+      -- proyectos diria «0 conexiones» sobre un proyecto que llego a
+      -- \`CONNECTED\` — el operador lee que no conecto nada justo despues de
+      -- conectar. Sumarlas en el mismo numero seria el otro error: perderia
+      -- QUE alcance tiene cada una, que es lo que hay que mirar cuando algo
+      -- falla.
+      (SELECT COUNT(*) FROM connection c2
+        WHERE c2.workspace_id = p.workspace_id AND c2.project_id IS NULL
+          AND c2.estado = 'viva')                               AS conexiones_del_espacio,
       (SELECT MAX(s.creado) FROM project_snapshot s
         WHERE s.project_id = p.id)                              AS ultimo_snapshot,
       (SELECT COUNT(*) FROM project_snapshot s2

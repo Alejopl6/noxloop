@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { GitBranch, Lock, Search, Unlock } from 'lucide-react'
+import { GitBranch, Lock, Plug, Search, Unlock } from 'lucide-react'
 
 import { Badge } from '@/components/ui/insignia'
 import { Button } from '@/components/ui/button'
@@ -15,8 +15,14 @@ import { EsqueletoDeLista } from '@/components/pantalla'
 import { useServicio } from '@/components/proveedor-servicio'
 import { comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
 import { formatearRelativo } from '@/lib/tiempo'
-import type { Conexion, Proyecto, RepositorioRemoto } from '@/lib/tipos'
-import type { Navegar } from '@/lib/ruta'
+import {
+  alcanceDe,
+  ETIQUETA_ALCANCE_CONEXION,
+  type CampoDeProveedor,
+  type Conexion,
+  type EntradaDeCatalogoDeConexiones,
+  type RepositorioRemoto,
+} from '@/lib/tipos'
 
 /**
  * Elegir el repositorio de una lista.
@@ -48,32 +54,41 @@ import type { Navegar } from '@/lib/ruta'
  */
 
 /* -------------------------------------------------------------------------- */
-/* Las conexiones de codigo que existen, miradas en todo el espacio de trabajo */
+/* Las cuentas de codigo del espacio de trabajo                               */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Las conexiones de clase `scm` vivas de TODOS los proyectos.
+ * Las conexiones de clase `scm` vivas del espacio de trabajo, y con que
+ * conectar una si no hay ninguna.
  *
- * POR QUE SE RECORREN LOS PROYECTOS EN VEZ DE PEDIR UNA LISTA GLOBAL. Porque
- * una conexion es de un proyecto: es asi en el modelo de datos y tiene sentido
- * —la credencial que la sostiene es de ambito `proyecto`—. Pero el alta de un
- * proyecto NUEVO ocurre cuando ese proyecto todavia no existe, asi que no hay
- * proyecto al que pedirle sus conexiones, y la cuenta de codigo del operador es
- * una sola aunque el modelo la guarde por proyecto.
+ * LO QUE HACIA ANTES, Y POR QUE NO PODIA FUNCIONAR. Recorria TODOS los
+ * proyectos pidiendo las conexiones de cada uno, porque una conexion era de un
+ * proyecto y no habia otra forma de saber que cuentas hay. El problema no era
+ * el numero de viajes: en el alta de un proyecto NO HAY PROYECTO todavia, asi
+ * que ese recorrido nunca podia encontrar la cuenta que el operador acabara de
+ * conectar ahi mismo — no habia donde guardarla. La pantalla remataba en «Sin
+ * cuenta de codigo conectada» con un boton a otra pantalla.
  *
- * Que esto sean N+1 peticiones esta medido contra la escala real de este
- * producto: un operador, unas decenas de proyectos. Si algun dia son cientos,
- * lo que hace falta es una ruta que liste las conexiones del espacio de
- * trabajo, y queda dicho aqui en vez de descubrirse con una pantalla lenta.
+ * AHORA ES UNA SOLA PETICION a `GET /v1/connections`, que es la ruta que la
+ * cabecera anterior pedia con todas las letras. Y la cuenta de codigo se
+ * conecta a nivel de espacio de trabajo: una cuenta, muchos repositorios,
+ * todos los proyectos eligiendo de ahi.
+ *
+ * EL CATALOGO VIAJA CON LA LISTA, y no es un extra: quien ve «no hay ninguna
+ * cuenta» necesita, EN EL MISMO SITIO, con que conectarla. Pedirlo en otra
+ * ruta es lo que convierte un estado vacio en un boton que lleva a otro lado.
  */
 export function useConexionesDeCodigo(): {
-  conexiones: Array<Conexion & { proyecto: string }>
+  conexiones: Conexion[]
+  /** Los proveedores de codigo que el adaptador montado sabe conectar aqui y ahora. */
+  catalogo: EntradaDeCatalogoDeConexiones[]
   cargando: boolean
   error: ErrorDelServicio | null
   releer: () => void
 } {
   const { cliente, estado } = useServicio()
-  const [conexiones, setConexiones] = useState<Array<Conexion & { proyecto: string }>>([])
+  const [conexiones, setConexiones] = useState<Conexion[]>([])
+  const [catalogo, setCatalogo] = useState<EntradaDeCatalogoDeConexiones[]>([])
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState<ErrorDelServicio | null>(null)
   const [revision, setRevision] = useState(0)
@@ -86,36 +101,30 @@ export function useConexionesDeCodigo(): {
     let vigente = true
 
     setCargando(true)
-    ;(async () => {
-      const proyectos = await cliente.obtener<{ items: Proyecto[] }>('/v1/projects', {
-        senal: abortador.signal,
+    cliente
+      .obtener<{ items: Conexion[]; catalogo?: EntradaDeCatalogoDeConexiones[] }>(
+        '/v1/connections',
+        { senal: abortador.signal },
+      )
+      .then((respuesta) => {
+        if (!vigente) return
+        setConexiones(
+          (respuesta.items ?? []).filter((c) => c.clase === 'scm' && c.estado === 'viva'),
+        )
+        // El catalogo que llega por aqui es el del adaptador MONTADO, asi que
+        // todo lo que trae se puede conectar en este servicio. Lo unico que se
+        // descarta es lo que no tiene campos que pedir: sin campos no hay
+        // formulario que dibujar, y un boton sin formulario es el mismo fallo
+        // de antes con otro nombre.
+        setCatalogo(
+          (respuesta.catalogo ?? []).filter(
+            (e) => e.clase === 'scm' && Array.isArray(e.campos) && e.campos.length > 0,
+          ),
+        )
+        setError(null)
       })
-      const encontradas: Array<Conexion & { proyecto: string }> = []
-      for (const proyecto of proyectos.items ?? []) {
-        // Un proyecto que falle no tumba la lista entera: sin conexiones es un
-        // proyecto sin conexiones, que es el caso normal.
-        try {
-          const respuesta = await cliente.obtener<{ items: Conexion[] }>(
-            `/v1/projects/${proyecto.id}/connections`,
-            { senal: abortador.signal },
-          )
-          for (const conexion of respuesta.items ?? []) {
-            if (conexion.clase === 'scm' && conexion.estado === 'viva') {
-              encontradas.push({ ...conexion, proyecto: proyecto.nombre })
-            }
-          }
-        } catch {
-          // Deliberado: el detalle de por que un proyecto concreto no contesta
-          // sus conexiones no ayuda a elegir un repositorio. Lo que importa es
-          // si al final hay alguna, y eso lo dice el estado vacio.
-        }
-      }
-      if (!vigente) return
-      setConexiones(encontradas)
-      setError(null)
-    })()
       .catch((fallo: unknown) => {
-        if (vigente) setError(comoErrorDelServicio(fallo, 'GET /v1/projects'))
+        if (vigente) setError(comoErrorDelServicio(fallo, 'GET /v1/connections'))
       })
       .finally(() => {
         if (vigente) setCargando(false)
@@ -127,7 +136,7 @@ export function useConexionesDeCodigo(): {
     }
   }, [cliente, estado, revision])
 
-  return { conexiones, cargando, error, releer }
+  return { conexiones, catalogo, cargando, error, releer }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -145,12 +154,29 @@ function useRepositorios(conexionId: string | null): {
   avisos: Aviso[]
   cargando: boolean
   error: ErrorDelServicio | null
+  /**
+   * No se le pregunto a nadie: no hay servicio, o no hay conexion elegida.
+   *
+   * TRES ESTADOS Y NO DOS, Y ESTO SALIO DE LEER EL HTML GENERADO. Sin servicio,
+   * este hook no pide nada —ni datos, ni error, ni peticion en vuelo— y la
+   * pantalla pintaba «Esta conexion no alcanza ningun repositorio. La conexion
+   * responde y la lista viene vacia». Las dos frases eran falsas: la conexion no
+   * respondio nada porque nunca se le pregunto. El operador leeria que su token
+   * no tiene permisos cuando lo que pasa es que el servicio no esta.
+   *
+   * Es el mismo fallo que `ExploradorDeCarpetas` ya tenia documentado unas
+   * pantallas mas alla, y por el mismo motivo: «no hay datos» y «no se pidio»
+   * se ven igual desde el estado.
+   */
+  sinPedir: boolean
 } {
   const { cliente, estado } = useServicio()
   const [repositorios, setRepositorios] = useState<RepositorioRemoto[]>([])
   const [avisos, setAvisos] = useState<Aviso[]>([])
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState<ErrorDelServicio | null>(null)
+
+  const sinPedir = !cliente || estado !== 'conectado' || !conexionId
 
   useEffect(() => {
     if (!cliente || estado !== 'conectado' || !conexionId) {
@@ -192,7 +218,7 @@ function useRepositorios(conexionId: string | null): {
     }
   }, [cliente, estado, conexionId])
 
-  return { repositorios, avisos, cargando, error }
+  return { repositorios, avisos, cargando, error, sinPedir }
 }
 
 /** Texto comparable: sin mayusculas y sin acentos, igual que en el servicio. */
@@ -204,31 +230,178 @@ function normalizar(texto: string | null | undefined): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Conectar la cuenta de codigo AQUI MISMO                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * El formulario que conecta la cuenta de codigo sin salir del alta.
+ *
+ * ESTE COMPONENTE ES EL ARREGLO ENTERO. Lo que habia en su lugar era un boton:
+ * «Ir a un proyecto y conectar». El operador lo dijo asi: "me dice ir a
+ * conectar, me deberia aparecer conectar la cuenta de GitHub, y que me muestre
+ * los repos, es decir ir integrado a Git desde aca". Tenia razon: el producto
+ * lo mandaba a otro sitio a hacer algo que tiene que pasar aqui.
+ *
+ * NO HAY NINGUN NOMBRE PROPIO ESCRITO AQUI. Los proveedores salen del catalogo
+ * del servicio y los campos de cada entrada del catalogo. Una casilla escrita
+ * en esta pantalla se queda vieja en silencio: el proveedor agrega un campo
+ * obligatorio, el servicio lo exige, y la pantalla sigue mandando lo de antes.
+ *
+ * EL VALOR NO VUELVE POR AQUI. Se escribe una vez en un campo en modo
+ * contrasena y viaja al servicio, que lo mete en la boveda como credencial de
+ * ambito `global` —la del espacio de trabajo— y devuelve la conexion, nunca el
+ * valor. Hay pruebas de centinela que lo miden endpoint por endpoint.
+ */
+function ConectarCuentaDeCodigo({
+  catalogo,
+  alConectar,
+  conectando,
+  error,
+}: {
+  catalogo: EntradaDeCatalogoDeConexiones[]
+  alConectar: (proveedor: string, valores: Record<string, string>) => void
+  conectando: boolean
+  error: ErrorDelServicio | null
+}) {
+  // Con un solo proveedor de codigo conectable —que es el caso normal— queda
+  // elegido y el operador ve directamente donde pegar el token. Obligarlo a
+  // pulsar antes es un clic que no decide nada.
+  const [slug, setSlug] = useState<string | null>(catalogo.length === 1 ? catalogo[0].slug : null)
+  const [valores, setValores] = useState<Record<string, string>>({})
+
+  const elegido = useMemo(
+    () => (slug ? (catalogo.find((e) => e.slug === slug) ?? null) : null),
+    [catalogo, slug],
+  )
+  const campos: CampoDeProveedor[] = elegido?.campos ?? []
+  const faltantes = campos
+    .filter((campo) => campo.requerido !== false)
+    .filter((campo) => (valores[campo.nombre] ?? '').trim().length === 0)
+
+  if (catalogo.length === 0) {
+    // No se finge un formulario que no se puede mandar. Este servicio no tiene
+    // ningun proveedor de codigo que sepa conectar, y eso NO lo arregla el
+    // operador desde ninguna pantalla: lo decide con que adaptador se arranco.
+    return (
+      <Note tipo="advertencia" titulo="Este servicio no sabe conectar ninguna cuenta de codigo">
+        El catalogo del adaptador montado no declara ningun proveedor de clase `Gestor de
+        repositorios` con campos que pedir. Mientras tanto se puede escribir la direccion del
+        repositorio a mano en el campo de abajo; el clon necesitara despues una credencial con
+        grant vigente.
+      </Note>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {catalogo.length > 1 ? (
+        <ListaDeEntidades etiqueta="Proveedores de codigo que se pueden conectar aqui">
+          {catalogo.map((entrada) => (
+            <Entity
+              key={entrada.slug}
+              contenedor="li"
+              miniatura={<GitBranch />}
+              titulo={entrada.nombre}
+              identificador={entrada.slug}
+              metadatos={
+                entrada.modo ? (
+                  <span className="fuente-operativa text-label-12 text-ds-gray-700">
+                    {entrada.modo}
+                  </span>
+                ) : null
+              }
+              alPulsar={() => {
+                setSlug(entrada.slug === slug ? null : entrada.slug)
+                setValores({})
+              }}
+              seleccionada={slug === entrada.slug}
+            />
+          ))}
+        </ListaDeEntidades>
+      ) : null}
+
+      {elegido ? (
+        <div className="flex flex-col gap-4">
+          <p className="text-label-13 text-ds-gray-1000">Lo que {elegido.nombre} necesita</p>
+          {campos.map((campo) => (
+            <Campo
+              key={campo.nombre}
+              etiqueta={campo.etiqueta || campo.nombre}
+              valor={valores[campo.nombre] ?? ''}
+              alCambiar={(valor) =>
+                setValores((previos) => ({ ...previos, [campo.nombre]: valor }))
+              }
+              requerido={campo.requerido !== false}
+              secreto={campo.secreto}
+              operativo={!campo.secreto}
+              deshabilitado={conectando}
+              ayuda={
+                campo.secreto
+                  ? `${campo.ayuda ?? 'Se guarda en el deposito de secretos del sistema.'} El valor no vuelve a salir de ahi: esta pantalla solo vera su huella.`
+                  : campo.ayuda
+              }
+              className="max-w-md"
+            />
+          ))}
+
+          {error ? <ErrorText causa={error.causa} accion={error.accion} /> : null}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={() => alConectar(elegido.slug, valores)}
+              disabled={conectando || faltantes.length > 0}
+            >
+              {conectando ? <Spinner tamano="sm" etiqueta="Conectando la cuenta" /> : <Plug />}
+              Conectar cuenta
+            </Button>
+            <span className="text-label-12 text-ds-gray-700">
+              {faltantes.length > 0
+                ? `Falta ${faltantes.map((c) => c.etiqueta || c.nombre).join(', ')}. Nada se envia hasta que este.`
+                : 'La cuenta queda conectada para todo el espacio de trabajo, y los repositorios aparecen aqui mismo.'}
+            </span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
 /* El selector                                                                */
 /* -------------------------------------------------------------------------- */
 
 export interface PropsDeSelectorDeRepositorio {
   /** Las conexiones de codigo entre las que elegir. */
-  conexiones: Array<Conexion & { proyecto?: string }>
+  conexiones: Conexion[]
   cargandoConexiones: boolean
   errorDeConexiones: ErrorDelServicio | null
+  /** Los proveedores de codigo conectables, para conectar sin salir de aqui. */
+  catalogoDeCodigo: EntradaDeCatalogoDeConexiones[]
+  alConectar: (proveedor: string, valores: Record<string, string>) => void
+  conectando: boolean
+  errorDeConectar: ErrorDelServicio | null
   /** El repositorio elegido, por su direccion de clonado. */
   elegido: RepositorioRemoto | null
   alElegir: (repositorio: RepositorioRemoto | null) => void
-  /** A donde mandar a quien no tiene ninguna cuenta conectada. */
-  navegar: Navegar
 }
 
 export function SelectorDeRepositorio({
   conexiones,
   cargandoConexiones,
   errorDeConexiones,
+  catalogoDeCodigo,
+  alConectar,
+  conectando,
+  errorDeConectar,
   elegido,
   alElegir,
-  navegar,
 }: PropsDeSelectorDeRepositorio) {
   const [conexionId, setConexionId] = useState<string | null>(null)
   const [busqueda, setBusqueda] = useState('')
+  // Conectar OTRA cuenta con una ya conectada: el formulario se despliega aqui
+  // mismo. Es la misma regla que en el estado vacio — nada que lleve a otra
+  // pantalla— aplicada al caso de quien tiene dos cuentas.
+  const [conectandoOtra, setConectandoOtra] = useState(false)
 
   // La primera conexion queda elegida sola, y solo la primera vez: con una
   // sola cuenta conectada —que es el caso normal— obligar a elegirla es un
@@ -241,7 +414,7 @@ export function SelectorDeRepositorio({
     setConexionId(conexiones[0].id)
   }, [conexiones])
 
-  const { repositorios, avisos, cargando, error } = useRepositorios(conexionId)
+  const { repositorios, avisos, cargando, error, sinPedir } = useRepositorios(conexionId)
 
   const visibles = useMemo(() => {
     const buscado = normalizar(busqueda).trim()
@@ -257,37 +430,63 @@ export function SelectorDeRepositorio({
   if (cargandoConexiones) return <EsqueletoDeLista filas={2} />
 
   if (conexiones.length === 0) {
+    // AQUI ESTABA EL FALLO: un `EmptyState` cuya unica accion era un boton
+    // «Ir a un proyecto y conectar», es decir, salir de esta pantalla para
+    // poder volver a ella. Ahora el formulario de conectar ESTA aqui. No hay
+    // ningun boton que lleve a otro sitio, a proposito: esa era la falla.
     return (
-      <EmptyState
-        modo={errorDeConexiones ? 'error' : 'primero'}
-        titulo={
-          errorDeConexiones
-            ? 'No Se Pudieron Leer Las Conexiones'
-            : 'Sin Cuenta De Codigo Conectada'
-        }
-        descripcion={
-          errorDeConexiones
-            ? errorDeConexiones.causa
-            : 'Para elegir un repositorio de una lista hace falta una conexion viva con el gestor de repositorios. Conectala una vez —pegando un token personal— y a partir de ahi eliges el repositorio en vez de escribir su direccion.'
-        }
-        accion={
-          <Button
-            variant="secondary"
-            onClick={() => navegar({ seccion: 'proyectos', id: null })}
-          >
-            Ir a un proyecto y conectar
-          </Button>
-        }
-      />
+      <div className="flex flex-col gap-5">
+        {errorDeConexiones ? (
+          <EmptyState
+            modo="error"
+            tamano="compacto"
+            titulo="No Se Pudieron Leer Las Cuentas De Codigo"
+            descripcion={errorDeConexiones.causa}
+          />
+        ) : (
+          <div className="flex flex-col gap-2">
+            <span className="text-label-13 text-ds-gray-1000">Conecta tu cuenta de codigo</span>
+            <p className="text-copy-13 text-ds-gray-900">
+              Se conecta una vez para todo el espacio de trabajo: pegas un token personal y a
+              partir de ahi eliges el repositorio de una lista en vez de escribir su direccion.
+              La credencial va al deposito de secretos del sistema y no vuelve a salir de ahi.
+            </p>
+          </div>
+        )}
+
+        <ConectarCuentaDeCodigo
+          catalogo={catalogoDeCodigo}
+          alConectar={alConectar}
+          conectando={conectando}
+          error={errorDeConectar}
+        />
+      </div>
     )
   }
 
   return (
     <div className="flex flex-col gap-5">
-      {conexiones.length > 1 ? (
-        <div className="flex flex-col gap-2">
-          <span className="text-label-13 text-ds-gray-1000">Cuenta de codigo</span>
-          <ListaDeEntidades etiqueta="Conexiones de codigo disponibles">
+      {/* LA LISTA DE CUENTAS SE ENSEÑA SIEMPRE, TAMBIEN CON UNA SOLA, y antes
+          se ocultaba cuando habia una. El razonamiento de entonces era que con
+          una cuenta no hay nada que elegir, y es cierto — pero tampoco habia
+          forma de ver CUAL esta conectada ni de conectar otra sin irse a otra
+          pantalla, que es el fallo que se esta arreglando. Lo que no se pinta
+          con una sola es la seleccion: queda elegida y basta. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-label-13 text-ds-gray-1000">
+            {conexiones.length > 1 ? 'Cuenta de codigo' : 'Cuenta de codigo conectada'}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setConectandoOtra((abierto) => !abierto)}
+          >
+            <Plug />
+            {conectandoOtra ? 'Dejarlo asi' : 'Conectar otra cuenta'}
+          </Button>
+        </div>
+        <ListaDeEntidades etiqueta="Conexiones de codigo disponibles">
             {conexiones.map((conexion) => (
               <Entity
                 key={conexion.id}
@@ -296,19 +495,36 @@ export function SelectorDeRepositorio({
                 titulo={conexion.proveedor}
                 identificador={conexion.id}
                 descripcion={
-                  conexion.proyecto
-                    ? `Conectada en el proyecto ${conexion.proyecto}. La credencial es suya; este proyecto la usa para leer la lista.`
+                  alcanceDe(conexion) === 'espacio_de_trabajo'
+                    ? 'Cuenta del espacio de trabajo: la comparten todos los proyectos.'
+                    : 'Conectada dentro de un proyecto. La credencial es suya; se puede elegir su repositorio igual.'
+                }
+                metadatos={
+                  <Badge tono={alcanceDe(conexion) === 'espacio_de_trabajo' ? 'informativo' : 'neutral'}>
+                    {ETIQUETA_ALCANCE_CONEXION[alcanceDe(conexion)]}
+                  </Badge>
+                }
+                alPulsar={
+                  conexiones.length > 1
+                    ? () => {
+                        setConexionId(conexion.id)
+                        alElegir(null)
+                      }
                     : undefined
                 }
-                alPulsar={() => {
-                  setConexionId(conexion.id)
-                  alElegir(null)
-                }}
-                seleccionada={conexionId === conexion.id}
+                seleccionada={conexiones.length > 1 && conexionId === conexion.id}
               />
             ))}
-          </ListaDeEntidades>
-        </div>
+        </ListaDeEntidades>
+      </div>
+
+      {conectandoOtra ? (
+        <ConectarCuentaDeCodigo
+          catalogo={catalogoDeCodigo}
+          alConectar={alConectar}
+          conectando={conectando}
+          error={errorDeConectar}
+        />
       ) : null}
 
       <Campo
@@ -332,7 +548,19 @@ export function SelectorDeRepositorio({
 
       {cargando && repositorios.length === 0 ? <EsqueletoDeLista filas={3} /> : null}
 
-      {!cargando && repositorios.length === 0 && !error ? (
+      {/* SIN PEDIR NO SE AFIRMA NADA SOBRE LA CONEXION. Ver `sinPedir`: decir
+          «la conexion responde y la lista viene vacia» cuando no se le
+          pregunto manda a revisar el alcance de un token que esta bien. */}
+      {sinPedir && !cargando ? (
+        <EmptyState
+          modo="primero"
+          tamano="compacto"
+          titulo="Todavia No Se Han Pedido Los Repositorios"
+          descripcion="Esta lista la sirve el servicio de control, que es quien tiene la credencial: esta pantalla no habla con ninguna forja. Mientras no haya servicio no se le pregunta nada, y la direccion del repositorio se puede escribir a mano en el campo de abajo."
+        />
+      ) : null}
+
+      {!sinPedir && !cargando && repositorios.length === 0 && !error ? (
         <EmptyState
           modo="primero"
           tamano="compacto"

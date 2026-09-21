@@ -22,7 +22,9 @@ import { useOpciones, useValorConPreseleccion } from '@/lib/opciones'
 import {
   GRUPO,
   type AltaDeProyecto,
+  type AutorizacionDeConexion,
   type Conexion,
+  type EntradaDeCatalogoDeConexiones,
   type GrupoDeOpciones,
   type OrigenProyecto,
   type Plantilla,
@@ -83,8 +85,14 @@ const ORIGENES = [
     valor: 'remoto' as const,
     etiqueta: 'Repositorio remoto',
     icono: <GitBranch />,
+    // EL TEXTO DECIA QUE EL CLON VA «a un area de trabajo propia de noxloop —no
+    // a tu carpeta de proyectos—», y era falso EN LOS DOS SENTIDOS: el servicio
+    // exige una `ruta_local` y clona donde se le diga, y esta pantalla ni
+    // siquiera la pedia. Una descripcion que promete que el producto elige por
+    // ti, al lado de un campo que te obliga a elegir, deja al operador sin
+    // saber cual de las dos cosas es verdad.
     descripcion:
-      'El codigo esta en un repositorio remoto. Se clona a un area de trabajo propia de noxloop —no a tu carpeta de proyectos— y se analiza ahi. Necesita una credencial del gestor de repositorios con grant vigente.',
+      'El codigo esta en un repositorio remoto. Conectas tu cuenta aqui mismo, eliges el repositorio de la lista y dices en que carpeta de esta maquina se clona. El clon lo hace el motor cuando le toca: dar de alta el proyecto no descarga nada todavia.',
   },
 ]
 
@@ -189,6 +197,10 @@ export function PanelDeAltaDeProyecto({
   conexionesDeCodigo = [],
   cargandoConexiones = false,
   errorDeConexiones = null,
+  catalogoDeCodigo = [],
+  alConectarCuenta,
+  conectandoCuenta = false,
+  errorDeConectar = null,
   alCrear,
   trabajando,
   error,
@@ -199,9 +211,14 @@ export function PanelDeAltaDeProyecto({
   autonomias: GrupoDeOpciones
   cargandoOpciones?: boolean
   /** Las conexiones `scm` vivas del espacio de trabajo, para elegir el repositorio. */
-  conexionesDeCodigo?: Array<Conexion & { proyecto?: string }>
+  conexionesDeCodigo?: Conexion[]
   cargandoConexiones?: boolean
   errorDeConexiones?: ErrorDelServicio | null
+  /** Los proveedores de codigo que se pueden conectar SIN salir de esta pantalla. */
+  catalogoDeCodigo?: EntradaDeCatalogoDeConexiones[]
+  alConectarCuenta: (proveedor: string, valores: Record<string, string>) => void
+  conectandoCuenta?: boolean
+  errorDeConectar?: ErrorDelServicio | null
   alCrear: (alta: AltaDeProyecto) => void
   trabajando: boolean
   error: ErrorDelServicio | null
@@ -216,6 +233,17 @@ export function PanelDeAltaDeProyecto({
   // de `POST /v1/projects` no cambia— y la ficha es lo que la pantalla enseña
   // para que el operador vea QUE eligio y no una cadena que tiene que releer.
   const [repoElegido, setRepoElegido] = useState<RepositorioRemoto | null>(null)
+  // La carpeta donde van a vivir los clones, aparte del destino final.
+  //
+  // SON DOS COSAS Y NO UNA, y meterlas en el mismo estado rompe el explorador:
+  // el destino de un clon es una carpeta que TODAVIA NO EXISTE
+  // (`<base>/<nombre-del-repo>`), y el explorador pidiendo esa ruta al servicio
+  // recibe un error de carpeta inexistente y pinta un fallo sobre algo que esta
+  // bien. Asi el explorador navega por lo que hay y el destino se compone.
+  const [carpetaBase, setCarpetaBase] = useState('')
+  // Escribir el destino a mano manda sobre la propuesta: recomponerlo al elegir
+  // otro repositorio pisaria lo que el operador ya decidio.
+  const [destinoAMano, setDestinoAMano] = useState(false)
   const [plantilla, setPlantilla] = useState('')
   const [superficie, setSuperficie] = useState<SuperficieDeSeleccion>('desconocida')
   const [errorDeCarpeta, setErrorDeCarpeta] = useState<ErrorDelServicio | null>(null)
@@ -254,8 +282,24 @@ export function PanelDeAltaDeProyecto({
     }
   }
 
+  /** `<carpeta base>/<nombre del repositorio>`, que es donde aterriza el clon. */
+  const destinoDelClon = (base: string, repositorio: RepositorioRemoto | null) => {
+    const limpia = base.replace(/\/+$/, '')
+    if (!repositorio?.nombre) return limpia
+    return limpia ? `${limpia}/${repositorio.nombre}` : ''
+  }
+
   const faltaNombre = nombre.trim().length === 0
-  const faltaRuta = origen !== 'remoto' && ruta.trim().length === 0
+  // LA RUTA LOCAL HACE FALTA EN LOS TRES ORIGENES, Y EL REMOTO NO LA PEDIA.
+  //
+  // El fallo era terminal y estaba medido contra el servicio: `POST
+  // /v1/projects` exige `ruta_local` SIEMPRE —«todo proyecto tiene una ruta en
+  // esta maquina, tambien el remoto: es donde va a vivir el clon»— y esta
+  // pantalla la omitia justo en `remoto`. Resultado: el boton «Crear proyecto»
+  // del origen remoto contestaba 400 `cuerpo_invalido` pidiendo un campo que
+  // la pantalla ni siquiera dibujaba. O sea, la rama entera del repositorio
+  // remoto no se podia completar por ningun camino.
+  const faltaRuta = ruta.trim().length === 0
   const faltaRemoto = origen === 'remoto' && remoto.trim().length === 0
   const incompleto = faltaNombre || faltaRuta || faltaRemoto
 
@@ -263,7 +307,7 @@ export function PanelDeAltaDeProyecto({
     const alta: AltaDeProyecto = {
       origen,
       nombre: nombre.trim(),
-      ...(origen !== 'remoto' ? { ruta_local: ruta.trim() } : {}),
+      ruta_local: ruta.trim(),
       ...(origen === 'remoto' ? { remoto: remoto.trim() } : {}),
       ...(origen === 'nuevo' && plantilla.trim() ? { plantilla: plantilla.trim() } : {}),
       ...(autonomia ? { autonomia } : {}),
@@ -317,6 +361,10 @@ export function PanelDeAltaDeProyecto({
                   conexiones={conexionesDeCodigo}
                   cargandoConexiones={cargandoConexiones}
                   errorDeConexiones={errorDeConexiones}
+                  catalogoDeCodigo={catalogoDeCodigo}
+                  alConectar={alConectarCuenta}
+                  conectando={conectandoCuenta}
+                  errorDeConectar={errorDeConectar}
                   elegido={repoElegido}
                   alElegir={(repositorio) => {
                     setRepoElegido(repositorio)
@@ -327,8 +375,8 @@ export function PanelDeAltaDeProyecto({
                     if (repositorio && nombre.trim().length === 0) {
                       setNombre(repositorio.nombre ?? '')
                     }
+                    if (!destinoAMano) setRuta(destinoDelClon(carpetaBase, repositorio))
                   }}
-                  navegar={navegar}
                 />
 
                 <Campo
@@ -344,7 +392,36 @@ export function PanelDeAltaDeProyecto({
                   requerido
                   operativo
                   marcador="git@servidor:organizacion/repositorio.git"
-                  ayuda="El repositorio que elijas arriba se escribe aqui. Tambien puedes escribir la direccion: se clona a un area de trabajo propia de noxloop, y necesita una credencial del gestor de repositorios con grant vigente; si no la hay, la tarea se bloquea y entra en la bandeja en vez de fallar."
+                  ayuda="El repositorio que elijas arriba se escribe aqui. Tambien puedes escribir la direccion: cubre el caso que la lista no alcanza —un repositorio de otra cuenta, o una forja que el catalogo todavia no declara—."
+                />
+
+                {/* DONDE VA A VIVIR EL CLON, Y ESTE CAMPO FALTABA ENTERO. El
+                    servicio exige `ruta_local` tambien en el origen remoto —el
+                    clon tiene que aterrizar en algun sitio de esta maquina— y
+                    esta pantalla no lo pedia ni lo mandaba: «Crear proyecto»
+                    contestaba 400 pidiendo un campo que no existia en ninguna
+                    casilla. El explorador va primero por el mismo motivo que en
+                    la otra rama: el SERVICIO corre en esta maquina y si lee el
+                    disco. */}
+                <ExploradorDeCarpetas
+                  ruta={carpetaBase}
+                  alElegir={(carpeta) => {
+                    setCarpetaBase(carpeta)
+                    if (!destinoAMano) setRuta(destinoDelClon(carpeta, repoElegido))
+                  }}
+                />
+
+                <Campo
+                  etiqueta="Donde se clona"
+                  valor={ruta}
+                  alCambiar={(valor) => {
+                    setDestinoAMano(true)
+                    setRuta(valor)
+                  }}
+                  requerido
+                  operativo
+                  marcador="/ruta/absoluta/donde/vivira/el/clon"
+                  ayuda="La carpeta en esta maquina donde noxloop va a clonar el repositorio. Lo normal es navegar hasta donde viven tus proyectos y anadir el nombre al final; se propone solo al elegir un repositorio de la lista. El clon lo hace el motor cuando le toca: dar de alta el proyecto no descarga nada todavia, y necesita una credencial del gestor de repositorios con grant vigente."
                 />
               </div>
             ) : (
@@ -539,6 +616,33 @@ export function VistaDeAltaDeProyecto({ navegar }: { navegar: Navegar }) {
   // esqueleto justo despues de que el operador pulse "Repositorio remoto".
   const conexiones = useConexionesDeCodigo()
   const mutacion = useMutacion()
+  // DOS MUTACIONES Y NO UNA, y la separacion importa: conectar la cuenta y
+  // crear el proyecto son dos peticiones distintas que pueden fallar por
+  // motivos distintos. Con una sola, el error de conectar se pintaria abajo,
+  // junto al boton «Crear proyecto», a cuarenta lineas de la casilla donde se
+  // pego el token — y el operador leeria que fallo crear el proyecto.
+  const conexion = useMutacion()
+
+  /**
+   * Conectar la cuenta de codigo DEL ESPACIO DE TRABAJO, sin proyecto.
+   *
+   * ESTA LLAMADA ES EL ARREGLO. Antes no existia ninguna ruta a la que esta
+   * pantalla pudiera llamar —conectar exigia un proyecto y aqui no hay
+   * ninguno— y por eso la pantalla remataba en un boton que llevaba a otra.
+   * `POST /v1/connections/authorize` conecta sin proyecto, y en cuanto la
+   * respuesta llega se relee la lista: los repositorios aparecen aqui mismo.
+   *
+   * El valor del token viaja UNA vez, hacia el servicio. Lo que vuelve es la
+   * conexion; el valor entra a la boveda y no sale por ninguna ruta.
+   */
+  const conectarCuenta = async (proveedor: string, valores: Record<string, string>) => {
+    const respuesta = await conexion.enviar<AutorizacionDeConexion>(
+      'POST',
+      '/v1/connections/authorize',
+      { proveedor, ...(Object.keys(valores).length > 0 ? { valores } : {}) },
+    )
+    if (respuesta) conexiones.releer()
+  }
 
   const crear = async (alta: AltaDeProyecto) => {
     const creado = await mutacion.enviar<Proyecto>('POST', '/v1/projects', alta)
@@ -562,6 +666,10 @@ export function VistaDeAltaDeProyecto({ navegar }: { navegar: Navegar }) {
       conexionesDeCodigo={conexiones.conexiones}
       cargandoConexiones={conexiones.cargando}
       errorDeConexiones={conexiones.error}
+      catalogoDeCodigo={conexiones.catalogo}
+      alConectarCuenta={(proveedor, valores) => void conectarCuenta(proveedor, valores)}
+      conectandoCuenta={conexion.trabajando}
+      errorDeConectar={conexion.error}
       alCrear={(alta) => void crear(alta)}
       trabajando={mutacion.trabajando}
       error={mutacion.error}
