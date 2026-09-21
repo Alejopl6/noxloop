@@ -152,13 +152,15 @@ Salida del bootstrap. Nada se escribe sin decisión.
 | Campo | Tipo | Notas |
 |---|---|---|
 | `id`, `project_id` | uuid | |
-| `tipo` | enum | `hook` \| `skill` \| `mcp` \| `tool` \| `subagente` \| `validacion` \| `ci` |
+| `tipo` | enum | `hook` \| `skill` \| `mcp` \| `tool` \| `subagente` \| `validacion` \| `ci` \| `instrucciones` \| `documentacion` |
 | `titulo`, `justificacion` | texto | |
 | `diff` | texto | Los cambios exactos, calculados antes de proponer (FR-026) |
 | `conflicto_constitution` | texto | Nullable. Si tiene valor, se propone marcada (FR-028) |
 | `decision` | enum | `pendiente` \| `aplicada` \| `personalizada` \| `omitida` |
 | `motivo_decision` | texto | Nullable, alimenta la evolución continua |
 | `decidida` | instante | |
+
+*(`instrucciones` y `documentacion` se añadieron al implementar el bootstrap. Los siete tipos originales describen piezas ejecutables, y un archivo de instrucciones para agentes no es ninguna de ellas: meterlo en `tool` lo etiqueta mal en la pantalla y, peor, en el registro de decisiones que alimenta la evolución continua — que es el único sitio donde el sistema aprende qué clase de propuesta acepta el operador y cuál descarta.)*
 
 ---
 

@@ -1,0 +1,10 @@
+{
+  "name": "@noxloop/store",
+  "version": "0.1.0",
+  "description": "El almacen consultable de noxloop: proyeccion de lectura sobre SQLite. Nunca la fuente de verdad del run, que vive en archivos.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": { "node": ">=22.5.0" },
+  "files": ["src"]
+}

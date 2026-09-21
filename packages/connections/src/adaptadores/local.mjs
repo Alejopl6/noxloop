@@ -26,12 +26,28 @@ import { CATALOGO_POR_DEFECTO, catalogoPorModo } from "../catalogo.mjs";
 export const MODOS_DEL_ADAPTADOR_LOCAL = ["pat", "api_key", "basic", "app"];
 
 /**
+ * De la clase de una conexion al tipo de credencial del inventario.
+ *
+ * Son dos vocabularios distintos a proposito y la traduccion vive aqui, en el
+ * adaptador, que es quien conoce los dos. La clase dice que papel juega el
+ * servicio en el proyecto; el tipo dice que clase de secreto es, que es lo que
+ * una politica puede gobernar. `infra` e `integracion` caen en `api_token`
+ * porque, para gobernarlas, lo son: un secreto de API sin mas estructura.
+ */
+const TIPO_POR_CLASE = Object.freeze({
+  tracker: "tracker",
+  scm: "scm",
+  infra: "api_token",
+  integracion: "api_token",
+});
+
+/**
  * Lo que este adaptador necesita del deposito de secretos. Es la interfaz
  * minima: nada de esto devuelve un valor salvo `recuperar`, que es la unica
  * puerta y exige un motivo auditable.
  *
  * @typedef {object} DepositoDeSecretos
- * @property {(datos: {workspace: string, nombre: string, tipo?: string, valor: string}) => Promise<{credencial: {id: string, ref_boveda: string}}>} registrar
+ * @property {(datos: {workspace: string, nombre: string, proveedor: string, tipo: string, ambito?: string, project_id?: string|null, alcance_declarado?: string|null, valor: string}) => Promise<{credencial: {id: string, ref_boveda: string}}>} registrar
  * @property {(datos: {project_id: string, agent_id: string, credential_id: string}) => Promise<{id: string}>} otorgar
  * @property {(ref: string, motivo: {grant_id: string, project_id: string, agent_id: string, proposito: string}) => Promise<string>} recuperar
  * @property {(ref: string) => Promise<any>} borrar
@@ -129,7 +145,20 @@ export function crearAdaptadorLocal({
           boveda.registrar({
             workspace: projectId,
             nombre: `${entrada.slug}-${campo.nombre}`,
-            tipo: campo.nombre,
+            proveedor: entrada.slug,
+            // El tipo sale de la CLASE de la conexion, no del nombre del campo.
+            //
+            // El primer intento pasaba `campo.nombre` —"pat", "api_key"— y la
+            // boveda lo rechazo: su enum es `api_token|tracker|scm|modelo|ssh`.
+            // Y tenia razon en rechazarlo: el tipo de una credencial dice PARA
+            // QUE sirve, que es lo que una politica puede gobernar, no como se
+            // llama la casilla del formulario. Dos proveedores distintos con la
+            // misma casilla "token" no comparten nada gobernable; dos
+            // credenciales de tracker si.
+            tipo: TIPO_POR_CLASE[entrada.clase] ?? "api_token",
+            ambito: "proyecto",
+            project_id: projectId,
+            alcance_declarado: campo.alcance ?? null,
             valor,
           }),
         );

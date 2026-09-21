@@ -1,0 +1,10 @@
+{
+  "name": "@noxloop/core",
+  "version": "0.1.0",
+  "description": "El dominio de las etapas 02-05 de noxloop: constitution con enmiendas, guidelines por area, diseno omitible y el bootstrap que detecta antes de proponer.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": { "node": ">=22" },
+  "files": ["src"]
+}

@@ -26,6 +26,8 @@
     "packages/vault/src/**/*.mjs",
     "packages/scanner/src/**/*.mjs",
     "packages/connections/src/**/*.mjs",
+    "packages/store/src/**/*.mjs",
+    "packages/core/src/**/*.mjs",
     "providers/**/*.mjs"
   ],
   "exclude": [

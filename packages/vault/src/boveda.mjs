@@ -85,10 +85,28 @@ export function crearBoveda({ backend, repositorio, auditoria, sal = salPorDefec
     /**
      * Alta de credencial: crea la fila del inventario y guarda el valor.
      *
-     * @param {{ workspace: string, nombre: string, tipo?: string, valor: string }} datos
+     * `proveedor` y `tipo` son obligatorios y no tienen valor por defecto. La
+     * primera version de esto ponia `tipo = "token"`, que ni siquiera esta en
+     * el enum del modelo de datos: el almacen lo rechazaba al persistir, y el
+     * fallo aparecia al integrar los dos paquetes en vez de al escribir el
+     * primero. `crearCredencial` los valida y dice cuales valen.
+     *
+     * @param {{ workspace: string, nombre: string, proveedor: string, tipo: string,
+     *           ambito?: string, project_id?: string|null, alcance_declarado?: string|null,
+     *           valor: string }} datos
      */
-    async registrar({ workspace, nombre, tipo, valor }) {
-      const credencial = crearCredencial({ workspace, nombre, tipo, backend: backend.tipo, ahora: reloj() });
+    async registrar({ workspace, nombre, proveedor, tipo, ambito, project_id, alcance_declarado, valor }) {
+      const credencial = crearCredencial({
+        workspace,
+        nombre,
+        proveedor,
+        tipo,
+        ambito,
+        project_id,
+        alcance_declarado,
+        backend: backend.tipo,
+        ahora: reloj(),
+      });
       repositorio.guardarCredencial(credencial);
       const { huella } = await boveda.guardar(credencial.ref_boveda, valor, "credencial_registrada");
       return { credencial: repositorio.credencialPorRef(credencial.ref_boveda), huella };

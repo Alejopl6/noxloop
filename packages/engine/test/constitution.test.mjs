@@ -48,6 +48,19 @@ const DE_LA_BOVEDA = () => fuentes(join(BOVEDA, "src"));
 const SCANNER = join(RAIZ, "packages/scanner");
 const DEL_SCANNER = () => fuentes(join(SCANNER, "src"));
 
+// El almacen y el dominio de las etapas 02-05. Entran por el mismo motivo que
+// el scanner: son codigo de servidor y el nombre propio de un proveedor
+// concreto entra sin que nadie lo note.
+//
+// `packages/connections` queda FUERA a proposito, y es la unica excepcion:
+// `src/catalogo.mjs` es DATO, y un catalogo de proveedores externos contiene
+// por necesidad sus nombres y sus hosts. Una guarda que lo marcara estaria
+// pidiendo que el catalogo no nombrara lo que cataloga.
+const ALMACEN = join(RAIZ, "packages/store");
+const DEL_ALMACEN = () => fuentes(join(ALMACEN, "src"));
+const NUCLEO = join(RAIZ, "packages/core");
+const DEL_NUCLEO = () => fuentes(join(NUCLEO, "src"));
+
 // La interfaz. Sus fuentes son .ts y .tsx, asi que necesita su propio recorrido.
 const STUDIO = join(RAIZ, "apps/studio");
 
@@ -90,7 +103,15 @@ test("VII — el motor no contiene ningun nombre propio de organizacion, repo o 
     /\.com\b/, /vstfs/i, /dev\.azure/i, /linear\.app/i, /api\.github/i,
   ];
   const hallazgos = [];
-  for (const f of [...DEL_MOTOR(), ...DEL_SERVICIO(), ...DE_LA_BOVEDA(), ...DEL_SCANNER()]) {
+  const paquetes = [
+    ...DEL_MOTOR(),
+    ...DEL_SERVICIO(),
+    ...DE_LA_BOVEDA(),
+    ...DEL_SCANNER(),
+    ...DEL_ALMACEN(),
+    ...DEL_NUCLEO(),
+  ];
+  for (const f of paquetes) {
     const texto = readFileSync(f, "utf8");
     for (const re of PROHIBIDOS) {
       const m = texto.match(re);

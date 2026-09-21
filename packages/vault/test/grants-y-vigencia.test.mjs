@@ -38,7 +38,7 @@ async function conCredencial(valor = centinela("grants")) {
   const { credencial } = await montado.boveda.registrar({
     workspace: "w1",
     nombre: "token-del-gestor",
-    tipo: "token",
+    proveedor: "proveedor-de-prueba", tipo: "api_token",
     valor,
   });
   return { ...montado, credencial, valor };
@@ -134,7 +134,7 @@ test("un grant revocado deja de alcanzar desde el instante en que se revoca", as
 
 test("el grant es una tripleta: no sirve el de otro proyecto, otro agente ni otra credencial", async () => {
   const { boveda, credencial } = await conCredencial();
-  const otra = await boveda.registrar({ workspace: "w1", nombre: "otra", tipo: "token", valor: centinela("otra") });
+  const otra = await boveda.registrar({ workspace: "w1", nombre: "otra", proveedor: "proveedor-de-prueba", tipo: "api_token", valor: centinela("otra") });
   const grant = await boveda.otorgar({ project_id: "p1", agent_id: "a1", credential_id: credencial.id });
 
   for (const cambio of [{ project_id: "p2" }, { agent_id: "a2" }]) {

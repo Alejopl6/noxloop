@@ -91,11 +91,11 @@ funcione.
 
 ### B.1 · Almacén
 
-- [ ] T050 [B] Test primero: una migración aplicada dos veces no duplica nada
-- [ ] T051 [B] `packages/store`: SQLite, migraciones versionadas, escrituras en transacción
-- [ ] T052 [B] Esquema de `Project`, `ProjectSnapshot`, `SnapshotFinding` según `data-model.md`
-- [ ] T053 [B] Test primero: la máquina de estados rechaza una transición sin su artefacto, con causa textual
-- [ ] T054 [B] Transiciones con guarda, escritor único, incluida `CREATED → CONSTITUTED` para proyecto nuevo
+- [X] T050 [B] Test primero: una migración aplicada dos veces no duplica nada
+- [X] T051 [B] `packages/store`: SQLite, migraciones versionadas, escrituras en transacción
+- [X] T052 [B] Esquema de `Project`, `ProjectSnapshot`, `SnapshotFinding` según `data-model.md`
+- [X] T053 [B] Test primero: la máquina de estados rechaza una transición sin su artefacto, con causa textual
+- [X] T054 [B] Transiciones con guarda, escritor único, incluida `CREATED → CONSTITUTED` para proyecto nuevo
 
 ### B.2 · Scanner
 
@@ -141,14 +141,14 @@ funcione.
 - [ ] T103 [C] Escritura versionada en el repositorio del proyecto → `CONSTITUTED`
 - [ ] T104 [P] [C] Guidelines por área, versionadas junto al código
 - [ ] T105 [P] [C] Etapa de diseño, omitible sin bloquear (FR-023)
-- [ ] T110 [C] Test primero: el bootstrap detecta lo existente **antes** de proponer nada
-- [ ] T111 [C] Motor de recomendaciones con el diff exacto calculado antes de proponer
-- [ ] T112 [C] Test primero: `apply` con el árbol cambiado falla con `diff_obsoleto`. **Aplicar algo distinto de lo mostrado es como se pierde la confianza en un instalador**
-- [ ] T113 [C] Aplicar, personalizar, omitir — con registro de la decisión y su motivo
-- [ ] T114 [C] Test primero: una recomendación que contradice la constitution no se propone sin declarar el conflicto (FR-028)
+- [X] T110 [C] Test primero: el bootstrap detecta lo existente **antes** de proponer nada
+- [X] T111 [C] Motor de recomendaciones con el diff exacto calculado antes de proponer
+- [X] T112 [C] Test primero: `apply` con el árbol cambiado falla con `diff_obsoleto`. **Aplicar algo distinto de lo mostrado es como se pierde la confianza en un instalador**
+- [X] T113 [C] Aplicar, personalizar, omitir — con registro de la decisión y su motivo
+- [X] T114 [C] Test primero: una recomendación que contradice la constitution no se propone sin declarar el conflicto (FR-028)
 - [X] T115 [P] [C] `packages/ui`: `Fieldset`, `JSON View`, `File Tree`
 - [ ] T116 [C] Pantallas de constitution, guidelines y bootstrap
-- [ ] T117 [C] **Test de aceptación**: bootstrap sobre este repositorio detecta ≥90% del setup existente (SC-005)
+- [X] T117 [C] **Test de aceptación**: bootstrap sobre este repositorio detecta ≥90% del setup existente (SC-005)
 
 ---
 
@@ -180,18 +180,18 @@ funcione.
 
 ### D.2 · Conexiones
 
-- [ ] T150 [D] `ConnectionProvider` según contrato. Test: **ningún proveedor del catálogo sin modo declarado**
-- [ ] T151 [D] Test primero: con un proveedor de modo `pat`, `conectar` **no** devuelve URL de autorización
-- [ ] T152 [P] [D] Adaptador `fake`, sin red ni credenciales
-- [ ] T153 [P] [D] Adaptador `local`: PAT y claves de API contra la bóveda. Test: completa un ciclo **sin Docker**
+- [X] T150 [D] `ConnectionProvider` según contrato. Test: **ningún proveedor del catálogo sin modo declarado**
+- [X] T151 [D] Test primero: con un proveedor de modo `pat`, `conectar` **no** devuelve URL de autorización
+- [X] T152 [P] [D] Adaptador `fake`, sin red ni credenciales
+- [X] T153 [P] [D] Adaptador `local`: PAT y claves de API contra la bóveda. Test: completa un ciclo **sin Docker**
 - [ ] T154 [D] Adaptador `nango`: `docker-compose` con **`SERVER_PORT=3003` explícito** (el bug #5305, cerrado como *not planned*)
 - [ ] T155 [D] `preflight` comprueba el puerto 3003 al arrancar y falla ruidosamente. No hay reasignación posible: está registrado en cada aplicación OAuth
 - [ ] T156 [D] **Registrar aplicaciones OAuth propias** para Linear, Jira, GitHub. Es el seguro de portabilidad y solo funciona si está desde el principio
 - [ ] T157 [D] Flujo: `connect_link` abierto en el **navegador del sistema** (`tauri-plugin-opener`), no en el webview
 - [ ] T158 [D] Sondeo hasta que la conexión aparece. **Los webhooks no son el camino primario** (`research.md` §3, no verificado)
-- [ ] T159 [D] `credenciales()` con `vigencia_ms` ≤ 5 minutos. Test: no se cachea más allá de la vigencia
-- [ ] T160 [D] Test primero: con el adaptador caído, las conexiones existentes siguen y las nuevas fallan con causa; la aplicación no se cae
-- [ ] T161 [D] Declarar la licencia ELv2 en `LICENSE` y `README`, con lo que implica para quien redistribuya
+- [X] T159 [D] `credenciales()` con `vigencia_ms` ≤ 5 minutos. Test: no se cachea más allá de la vigencia
+- [X] T160 [D] Test primero: con el adaptador caído, las conexiones existentes siguen y las nuevas fallan con causa; la aplicación no se cae
+- [X] T161 [D] Declarar la licencia ELv2 en `LICENSE` y `README`, con lo que implica para quien redistribuya
 - [X] T162 [P] [D] `packages/ui`: `SecretValue`, `Destructive Action Modal`
 - [ ] T163 [D] Pantallas de conexiones, inventario de credenciales, grants y vista inversa
 - [ ] T164 [D] Pantalla de auditoría, solo lectura

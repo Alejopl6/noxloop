@@ -31,7 +31,7 @@ async function conRedactor(credenciales) {
   const auditoria = crearAuditoria();
   const boveda = crearBoveda({ backend, repositorio, auditoria });
   for (const [nombre, valor] of Object.entries(credenciales)) {
-    await boveda.registrar({ workspace: "w1", nombre, tipo: "token", valor });
+    await boveda.registrar({ workspace: "w1", nombre, proveedor: "proveedor-de-prueba", tipo: "api_token", valor });
   }
   const redactor = crearRedactor({ backend, repositorio, auditoria });
   await redactor.cargarHuellas();

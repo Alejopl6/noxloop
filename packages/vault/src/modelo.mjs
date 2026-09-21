@@ -19,11 +19,30 @@ export const PROPOSITOS = ["lanzar_runner", "llamar_api", "clonar_repo", "sesion
 export const BACKENDS = ["keychain_so", "archivo_cifrado"];
 
 /**
+ * Los tipos de credencial. Es el enum de `data-model.md` §Credential, tal cual.
+ *
+ * POR QUE NO HAY UN VALOR POR DEFECTO. Lo hubo —`tipo = "token"`— y era un
+ * valor que este enum NO CONTIENE: el almacen lo rechazaba al persistir, y el
+ * fallo aparecia al integrar los dos paquetes y no al escribir el primero. Es
+ * el mismo criterio que el motor ya aplica a la ruta de un repositorio: un
+ * default razonable para algo que solo sabe quien llama es la forma de operar
+ * sobre la cosa equivocada sin enterarse.
+ */
+export const TIPOS = ["api_token", "tracker", "scm", "modelo", "ssh"];
+
+/** Ambito de una credencial: del workspace entero, o de un proyecto. */
+export const AMBITOS = ["global", "proyecto"];
+
+/**
  * @typedef {object} Credential
  * @property {string} id
  * @property {string} workspace
  * @property {string} nombre         nombre legible; es lo que se ve en `[redactado:<nombre>]`
- * @property {string} tipo
+ * @property {string} proveedor      quien la emite; el almacen lo exige y no lo inventa
+ * @property {string} tipo           uno de TIPOS
+ * @property {string} ambito         uno de AMBITOS
+ * @property {string|null} project_id  obligatorio si `ambito === "proyecto"`
+ * @property {string|null} alcance_declarado  lo que el operador DICE que permite hacer
  * @property {string} ref_boveda     la referencia opaca con la que se le pide al backend
  * @property {string|null} huella
  * @property {string} backend        que backend la guarda, declarado en la propia fila
@@ -32,16 +51,62 @@ export const BACKENDS = ["keychain_so", "archivo_cifrado"];
  */
 
 /**
- * @param {{ workspace: string, nombre: string, tipo?: string, id?: string, backend: string, ahora?: number }} datos
+ * @param {{ workspace: string, nombre: string, proveedor: string, tipo: string, ambito?: string,
+ *           project_id?: string|null, alcance_declarado?: string|null, id?: string,
+ *           backend: string, ahora?: number }} datos
  * @returns {Credential}
  */
-export function crearCredencial({ workspace, nombre, tipo = "token", id, backend, ahora = Date.now() }) {
+export function crearCredencial({
+  workspace,
+  nombre,
+  proveedor,
+  tipo,
+  ambito = "global",
+  project_id = null,
+  alcance_declarado = null,
+  id,
+  backend,
+  ahora = Date.now(),
+}) {
+  if (!proveedor) {
+    throw new Error(
+      "una credencial sin proveedor no se puede inventariar.\n" +
+        "  Causa:  el inventario responde 'que credenciales existen y de quien son', y sin proveedor la segunda mitad falta.\n" +
+        "  Accion: pasa `proveedor` con el nombre del servicio que la emite.",
+    );
+  }
+  if (!TIPOS.includes(tipo)) {
+    throw new Error(
+      `tipo de credencial no reconocido: ${JSON.stringify(tipo)}.\n` +
+        `  Causa:  el inventario solo admite ${TIPOS.join(", ")}, y un tipo fuera de esa lista no se puede gobernar por politica.\n` +
+        "  Accion: usa uno de esos, o amplia el enum en `data-model.md` y aqui a la vez.",
+    );
+  }
+  if (!AMBITOS.includes(ambito)) {
+    throw new Error(
+      `ambito no reconocido: ${JSON.stringify(ambito)}. Accion: usa ${AMBITOS.join(" o ")}.`,
+    );
+  }
+  // Denegar por defecto tambien aqui: una credencial declarada de proyecto pero
+  // sin proyecto quedaria de hecho global, que es MAS permiso del que se pidio.
+  if (ambito === "proyecto" && !project_id) {
+    throw new Error(
+      "una credencial de ambito `proyecto` necesita `project_id`.\n" +
+        "  Causa:  sin el, la credencial queda de hecho global — mas alcance del que se declaro.\n" +
+        "  Accion: pasa `project_id`, o declara `ambito: \"global\"` si eso es lo que quieres.",
+    );
+  }
+
   const identificador = id ?? nuevoIdDeCredencial();
   return Object.freeze({
     id: identificador,
     workspace,
     nombre,
+    proveedor,
     tipo,
+    ambito,
+    project_id,
+    alcance_declarado,
     ref_boveda: construirRef(workspace, identificador),
     huella: null,
     backend,

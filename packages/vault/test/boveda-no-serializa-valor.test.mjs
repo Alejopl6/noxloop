@@ -41,7 +41,7 @@ test("EL INVARIANTE: ninguna entidad del inventario serializa el valor, ni trunc
   const { credencial, huella } = await boveda.registrar({
     workspace: "w1",
     nombre: "token-del-gestor",
-    tipo: "token",
+    proveedor: "proveedor-de-prueba", tipo: "api_token",
     valor,
   });
   const grant = await boveda.otorgar({
@@ -83,7 +83,7 @@ test("la huella identifica el valor sin revelarlo, y cambia cuando el valor camb
   const { credencial, huella } = await boveda.registrar({
     workspace: "w1",
     nombre: "clave",
-    tipo: "token",
+    proveedor: "proveedor-de-prueba", tipo: "api_token",
     valor: primero,
   });
   assert.equal(await boveda.huella(credencial.ref_boveda), huella);
@@ -98,7 +98,7 @@ test("`existe` responde sin revelar, y de una credencial que no esta dice que no
   const { credencial } = await boveda.registrar({
     workspace: "w1",
     nombre: "clave",
-    tipo: "token",
+    proveedor: "proveedor-de-prueba", tipo: "api_token",
     valor: centinela("existe"),
   });
   assert.equal(await boveda.existe(credencial.ref_boveda), true);
@@ -111,7 +111,7 @@ test("borrar deja de tener el valor y lo registra en la bitacora", async () => {
   const { credencial } = await boveda.registrar({
     workspace: "w1",
     nombre: "clave",
-    tipo: "token",
+    proveedor: "proveedor-de-prueba", tipo: "api_token",
     valor: centinela("borrado"),
   });
   await boveda.borrar(credencial.ref_boveda);
