@@ -28,6 +28,39 @@ El alcance es el bloque 00–07 del ciclo y la capa de credenciales que lo sosti
 
 ---
 
+## El modelo de interacción · corregido el 2026-09-21
+
+> **Hacer fácil y visible lo que hoy es invisible pero necesario para desarrollar asistidamente con IA y con calidad.**
+
+Esa es la frase del operador y es el criterio con el que se resuelve cualquier duda de interfaz. Se escribe aquí porque la primera versión de la superficie no la cumplía.
+
+**Lo que se construyó primero y por qué estaba mal.** Trece vistas que se visitan como destinos: una consola. Cada pantalla, aislada, era correcta — y el conjunto le pedía al operador que supiera *cuál* de las trece tocaba ahora, en qué orden, y qué exigía cada una. Eso es trasladarle el problema: exactamente la densidad que el producto existe para quitar.
+
+**El modelo correcto es un recorrido guiado**, y no es un cambio de estética:
+
+```
+crear proyecto → discovery → constitution → guidelines → design
+              → bootstrap → connections → flota → listo
+```
+
+Una decisión a la vez, centrado y a una columna. Lo denso detrás de un «ver detalle», no pintado por defecto. Retomable, porque el estado del proyecto ya dice en qué paso va. Y con salida al modo consola: quien tiene doce proyectos no quiere un asistente para cambiar una credencial.
+
+### «Automático» significa que lo hace y lo propone
+
+Y esto es lo único que no se puede relajar al simplificar.
+
+El bootstrap se dispara solo y deja **una** propuesta completa lista para aprobar, en vez de veinte decisiones. La flota se sugiere desde lo que el snapshot ya sabe del proyecto. **Lo que desaparece es el trabajo, no la puerta humana**: nada se escribe en el repositorio del operador sin decisión explícita, y el diff exacto se enseña antes de tocar nada (FR-026).
+
+Un asistente que escribe solo destruye la propiedad que hace adoptable a este producto. Por eso dos cosas salen siempre del «aprobar todo» y se presentan solas: lo que **declara conflicto con la constitution** —es justo lo que existe para ser mirado (FR-028)— y lo que **pisa un archivo que ya existe**. El criterio no es el número de cambios: crear un archivo se deshace borrándolo, pisar uno que el operador escribió, no.
+
+### La sugerencia dice de dónde sale
+
+Todo campo propuesto declara su origen con el **mismo vocabulario que el scanner** —`detectado` con su evidencia, `inferido` con su confianza, `por_defecto`, `vacio`— porque el operador ya lo aprendió en el snapshot, y enseñarle un segundo para la flota sería densidad gratuita.
+
+Es el principio X aplicado a las propuestas: quien no sabe por qué se le sugiere algo no puede juzgarlo, y **acaba aceptando todo** — que es lo mismo que no haberle sugerido nada.
+
+---
+
 ## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 — Adoptar un proyecto que ya existe (Priority: P1)
