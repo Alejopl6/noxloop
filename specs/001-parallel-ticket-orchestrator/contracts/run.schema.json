@@ -9,6 +9,7 @@
   "properties": {
     "schemaVersion": { "const": 1 },
     "milestoneId": { "type": ["string", "null"] },
+    "projectId": { "type": ["string", "null"] },
     "createdAt": { "type": "string", "format": "date-time" },
     "updatedAt": { "type": "string", "format": "date-time" },
     "outOfScope": { "type": "array", "items": { "type": "string" }, "description": "Lo que el plan dejo afuera a proposito. Va al cuerpo del pull request." },

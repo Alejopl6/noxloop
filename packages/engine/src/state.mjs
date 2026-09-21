@@ -133,7 +133,7 @@ export function listRuns(opts) {
 
 /**
  * @param {object} plan validado con plan.mjs
- * @param {{home: string, milestoneId?: string}} opts
+ * @param {{home: string, milestoneId?: string, projectId?: string|null}} opts
  */
 export function createRun(plan, opts) {
   const existente = loadRun(plan.item.id, opts);
@@ -143,6 +143,20 @@ export function createRun(plan, opts) {
   const run = {
     schemaVersion: 1,
     milestoneId: opts.milestoneId || null,
+    // DE QUE PROYECTO ES ESTE RUN, y faltaba entero.
+    //
+    // El servicio filtra los runs de un proyecto por `project_id` o, si no
+    // esta, por la ruta del worktree de alguna tarea. `createRun` no escribia
+    // NINGUNO de los dos, asi que `GET /v1/projects/:id/runs` devolvia siempre
+    // la coleccion vacia: la pantalla de runs miraba un filtro que no podia dar
+    // verdadero para un recorrido de verdad. Lo encontro el recorrido de punta
+    // a punta, cuando el motor dejo un run con su PR y el proyecto no lo vio.
+    //
+    // `null` cuando no viene y no se adivina: los runs de v1 nacieron cuando no
+    // habia proyectos, y sus archivos no lo traen. Inferirlo del titulo del
+    // ticket seria inventar una correspondencia. Lo que no se puede atribuir se
+    // declara sin proyecto, que es lo que el servicio ya sabe leer.
+    projectId: opts.projectId ?? null,
     createdAt: ahora,
     updatedAt: ahora,
     // Lo que el plan dejo dicho y el PR tiene que repetir. Sin copiarlo aca,

@@ -154,7 +154,11 @@ export async function planItem(itemId, deps) {
     return { ok: false, reason: "el plan no valida", problems: vp.problems };
   }
 
-  const run = createRun(plan, { home, milestoneId: deps.milestoneId });
+  // `projectId` viaja desde quien lanza —el servicio lo conoce, el motor no— y
+  // se queda escrito en el run. Sin el, `GET /v1/projects/:id/runs` no puede
+  // encontrarlo: el motor por CLI no tiene proyecto, asi que llega `undefined`
+  // y el run se declara sin proyecto en vez de atribuirse al azar.
+  const run = createRun(plan, { home, milestoneId: deps.milestoneId, projectId: deps.projectId });
   log.info(`plan aceptado: ${run.tasks.length} tarea(s) sobre ${plan.repoScope.join(", ")}`);
 
   // ------------------------------------------- materializar en el tablero

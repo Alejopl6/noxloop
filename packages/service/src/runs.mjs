@@ -101,7 +101,15 @@ export function leerRuns(home) {
  * @param {any} proyecto
  */
 function esDelProyecto(run, proyecto) {
-  if (run && typeof run.project_id === "string") return run.project_id === proyecto.id;
+  // `projectId` es el nombre que el motor ESCRIBE: sus archivos de estado van
+  // en camelCase (`milestoneId`, `createdAt`). Este lector buscaba
+  // `project_id`, que es la convencion del almacen, y por eso no encontraba
+  // nada ni cuando el campo existia. Se aceptan los dos porque un archivo
+  // escrito por una version intermedia puede traer cualquiera, y equivocarse
+  // aqui no da error: da una lista vacia, que se lee como "este proyecto no ha
+  // corrido nada".
+  const declarado = run?.projectId ?? run?.project_id;
+  if (typeof declarado === "string") return declarado === proyecto.id;
   const rutas = Array.isArray(run?.tasks) ? run.tasks.map((/** @type {any} */ t) => t && t.repoPath).filter(Boolean) : [];
   return rutas.some((/** @type {string} */ r) => r === proyecto.ruta_local || r.startsWith(`${proyecto.ruta_local}/`));
 }

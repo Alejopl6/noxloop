@@ -102,7 +102,6 @@ async function main() {
   });
 
   aviso(`home: ${svc.home} (de ${de})`);
-  process.stdout.write(`NOXLOOP_READY ${svc.url}\n`);
 
   // Cierre limpio: se avisa por el canal de eventos, se sueltan las conexiones
   // y se libera el lock. Salir con codigo 0 porque un cierre PEDIDO no es una
@@ -117,6 +116,22 @@ async function main() {
       svc.detener().then(() => process.exit(0), () => process.exit(0));
     });
   }
+
+  // LA MARCA DE LISTO VA DESPUES DE LOS MANEJADORES, y el orden no es estetico.
+  //
+  // EL FALLO QUE EVITA, medido: estaba al reves, y la prueba de cierre limpio
+  // fallaba una de cada cuatro corridas de la suite completa. Quien lee esta
+  // linea —el escritorio, una prueba— sabe que el servicio esta en pie y puede
+  // mandarle una senal en el instante siguiente. Con los manejadores sin
+  // instalar todavia, esa senal la atiende el comportamiento por defecto: el
+  // proceso muere sin soltar el lock y sale por senal, no con codigo 0. El
+  // sintoma es un lock huerfano que impide el siguiente arranque, y el operador
+  // tiene que borrar un archivo a mano para volver a abrir la aplicacion.
+  //
+  // La ventana es de microsegundos y por eso solo se veia bajo carga. La
+  // propiedad que este orden garantiza se dice en una linea: si puedes verme,
+  // puedes pararme limpio.
+  process.stdout.write(`NOXLOOP_READY ${svc.url}\n`);
 }
 
 main().catch((e) => {
