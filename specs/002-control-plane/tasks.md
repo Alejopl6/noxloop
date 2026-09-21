@@ -211,6 +211,20 @@ funcione.
 - [ ] T185 [E] Test primero: `phase: 'REVIEW'` nunca recibe `resume` distinto de `null` — el revisor no hereda el razonamiento del implementador
 - [ ] T186 [E] Test primero: `activate` rechaza con `revisor_comparte_runtime` (FR-034)
 - [ ] T187 [E] `Agent` con rol, runtime, modelo, skills, tools, MCP, permisos, presupuesto y contexto → `ACTIVE`
+- [ ] T188 [E] **Pantalla de flota (etapa 07)**, y el botón que lleva a ella desde un proyecto `CONNECTED`
+- [ ] T189 [E] Lanzar un ciclo desde un proyecto `ACTIVE`, con el 409 que nombra la etapa que falta pintado como acción
+
+> **T188 y T189 se añadieron después de escribir este documento.** El desglose
+> original cubría el modelo de flota (T187) y ninguna pantalla para él, así que
+> un proyecto que llegaba a `CONNECTED` mostraba la etapa que le faltaba y no
+> tenía a dónde ir. Lo encontró quien construyó las pantallas, al negarse a
+> poner un botón hacia una pantalla inexistente — que es lo correcto: un botón
+> que no lleva a ningún sitio es peor que la ausencia del botón, porque el
+> operador cree que el camino existe y que él no lo encuentra.
+>
+> Vale anotarlo porque es un fallo del desglose, no de la implementación: una
+> etapa del ciclo tenía dominio y no tenía superficie, y ninguna tarea lo decía.
+
 - [ ] T190 [P] [E] `InboxEntry` con causa textual **completa**, no resumen generado (FR-062)
 - [ ] T191 [E] `GET /v1/dashboard`: indicadores agregados. Test: <1s con 20 proyectos (NFR-002)
 - [ ] T192 [E] Pantalla de inicio con la bandeja como **único elemento accionable**, y el estado "bandeja vacía" explícito

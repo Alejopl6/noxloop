@@ -73,6 +73,14 @@ Un único formato, siempre, porque NFR-006 exige que todo error nombre la causa 
 
 `POST` con `origen: "nuevo"` sobre un destino no vacío devuelve `destino_no_vacio` y ofrece adoptarlo como existente (escenario 3 de US2).
 
+| Método | Ruta | Notas |
+|---|---|---|
+| `GET` | `/v1/templates` | Las plantillas disponibles para `origen: "nuevo"` |
+
+**Por qué esta ruta existe, y se añadió tarde.** El contrato declaraba que `POST /v1/projects` acepta `plantilla` y no decía dónde se enumeran las plantillas. Quien construyó la pantalla se encontró con que solo tenía dos salidas: inventar la lista en el cliente —la interfaz decidiendo producto— o pedir al operador que escriba un identificador que no puede conocer. Lo señaló en vez de elegir por su cuenta, que es la respuesta correcta a un hueco del contrato.
+
+Devuelve `{ id, nombre, descripcion, stack }` por plantilla. Un servicio sin plantillas devuelve lista vacía, y la interfaz lo dice con esas palabras y deja escribir el identificador a mano — degradar visible, no fingir.
+
 ### Discovery · etapa 01
 
 | Método | Ruta | Notas |
@@ -97,6 +105,22 @@ Un único formato, siempre, porque NFR-006 exige que todo error nombre la causa 
 | `PUT` | `/v1/projects/:id/design` | Opcional. Omitirla no bloquea (FR-023) |
 
 El `400` de `amend` sin los tres campos es deliberado y viene de la constitution de este repositorio: *"una enmienda sin un fallo detrás no es una enmienda: es una preferencia"*. Lo que exigimos de nosotros lo exige el producto.
+
+**El cuerpo de `PUT /v1/projects/:id/constitution`** lleva las **dos** representaciones:
+
+```json
+{
+  "markdown": "# Constitution\n\n## I. ...",
+  "apartados": [
+    { "clave": "arquitectura", "contenido": "...", "origen": "detectado",
+      "evidencia": [{ "ruta": "package.json", "linea": 8 }] }
+  ]
+}
+```
+
+Las dos, y no solo el markdown, porque **el origen de cada apartado no se puede deducir de la prosa**. Deducirlo sería exactamente el contexto inventado que prohíbe el principio X: un apartado inferido que llega marcado como detectado se convierte en la regla del proyecto y el runtime la aplica durante meses sin que nadie lo revise.
+
+`GET` devuelve la misma forma. Si un servicio devuelve la constitution **sin** `apartados`, la interfaz lo dice —*"el origen de cada parte no viene en la respuesta"*— en vez de pintar marcas que no tiene.
 
 ### Bootstrap · etapa 05
 
@@ -127,6 +151,10 @@ El `400` de `amend` sin los tres campos es deliberado y viene de la constitution
 | `GET/POST` | `/v1/grants` | La tripleta |
 | `DELETE` | `/v1/grants/:id` | |
 | `GET` | `/v1/audit` | Paginado, filtrable. **Solo lectura. No existe POST, PATCH ni DELETE** (FR-049) |
+
+**Los parámetros de `/v1/audit`**, nombrados aquí porque "filtrable" no es una especificación: `?desde=` y `?hasta=` (instantes ISO), `?actor=`, `?accion=` (prefijo, para que `grant.` traiga todas las de grants), `?objeto_tipo=`, `?resultado=` (`permitido|denegado|error`), `?cursor=` y `?limite=`.
+
+Un parámetro que el servicio no reconozca se **ignora**, y la respuesta declara en `filtros_aplicados` cuáles honró. Sin eso, la interfaz enseñaría filas que no cumplen el filtro recién escrito y el operador creería estar viendo un subconjunto que no es — en una pantalla de auditoría, eso es peor que no filtrar.
 
 **Regla que atraviesa todo este bloque:** ninguna respuesta de ningún endpoint —ni siquiera un mensaje de error, ni una traza— contiene el valor de una credencial. La prueba no se escribe sobre la intención: se serializa la respuesta completa de cada endpoint y se busca el valor conocido dentro (NFR-004).
 
