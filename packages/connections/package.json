@@ -1,0 +1,10 @@
+{
+  "name": "@noxloop/connections",
+  "version": "0.1.0",
+  "description": "La capa de integracion de noxloop: una fachada propia delante de la capa alojada. El modo de autenticacion lo decide el catalogo, no quien llama.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": { "node": ">=22" },
+  "files": ["src"]
+}

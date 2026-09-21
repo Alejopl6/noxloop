@@ -25,6 +25,7 @@
     "packages/service/bin/**/*.mjs",
     "packages/vault/src/**/*.mjs",
     "packages/scanner/src/**/*.mjs",
+    "packages/connections/src/**/*.mjs",
     "providers/**/*.mjs"
   ],
   "exclude": [

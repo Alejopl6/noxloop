@@ -260,4 +260,29 @@ tarea avance no es una decisión de implementación. No está disponible.
 
 ## Licencia
 
-MIT — ver [LICENSE](LICENSE).
+**noxloop es MIT. La capa de integración que trae dentro, no.**
+
+Los binarios distribuidos incluyen Nango y sus SDK `@nangohq/node` y
+`@nangohq/frontend`, bajo **Elastic License 2.0 (ELv2)**. La ELv2 no está
+aprobada por la OSI, no es compatible con GPL ni AGPL, y distribuciones como
+Debian y Fedora no aceptan paquetes con ese código dentro.
+
+Qué significa en la práctica, según quién seas:
+
+- **Lo usas en tu máquina o en la de tu equipo**: nada. La cláusula que limita
+  el servicio alojado no alcanza a un Nango local para tu propio uso.
+- **Lo incorporas a un producto tuyo o lo reempaquetas**: estás
+  redistribuyendo código ELv2 y tienes que pasar sus términos a quien reciba la
+  copia. Los tienes completos en [LICENSE](LICENSE).
+- **Quieres ofrecerlo como servicio alojado que conecte integraciones por
+  cuenta de tus usuarios**: eso sí choca con la ELv2.
+- **Tu política interna no admite ELv2**: entonces noxloop no te sirve tal cual
+  se distribuye hoy, y conviene que lo sepas antes de adoptarlo y no después.
+  El código ELv2 viaja en el binario aunque solo uses el adaptador `local`:
+  ese adaptador te ahorra *ejecutar* Nango, no lo saca del artefacto. Sacarlo
+  exige un build propio sin ese adaptador, que la fachada `ConnectionProvider`
+  hace posible pero que hoy no publicamos.
+
+Esta nota existe porque la decisión de meter Nango en el núcleo se tomó con la
+licencia sobre la mesa. Descubrirla después de adoptar el producto sería un
+problema que te habríamos creado nosotros en silencio.

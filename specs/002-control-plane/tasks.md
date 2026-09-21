@@ -99,30 +99,30 @@ funcione.
 
 ### B.2 · Scanner
 
-- [ ] T060 [B] **Test primero, el que define la promesa**: `git status --porcelain` idéntico antes y después, sobre repositorios de varios ecosistemas
-- [ ] T061 [B] Test primero: ni siquiera se tocan archivos que git ignora — comparar mtime e inodos del árbol completo
-- [ ] T062 [B] `packages/scanner`: recorrido con exclusiones, progreso por fase y `AbortSignal`
-- [ ] T063 [B] Test primero: un hallazgo `detectado` sin `evidencia` no sale del scanner (principio X)
-- [ ] T064 [P] [B] Detector de stack: manifiestos, lockfiles, versión de runtime fijada
-- [ ] T065 [P] [B] Detector de arquitectura: estructura, monorepo y workspaces, capas
-- [ ] T066 [P] [B] Detector de testing: runner, ubicación, umbral de cobertura declarado
-- [ ] T067 [P] [B] Detector de CI/CD: workflows, qué comandos corren, qué gatea el merge
-- [ ] T068 [P] [B] Detector de agentes: `CLAUDE.md`, `.claude/`, `AGENTS.md`, MCP, hooks, skills
-- [ ] T069 [P] [B] Detector de guidelines: `CONTRIBUTING`, `docs/`, ADRs
-- [ ] T070 [B] Test primero, con centinela: un secreto plantado produce hallazgo de riesgo **con la ruta y sin el valor**
-- [ ] T071 [B] Detector de riesgos: secretos en claro, `.env` versionado, dependencias sin fijar
-- [ ] T072 [B] Test primero: sobre un repositorio vacío, huecos declarados y cero inferencias con confianza alta
-- [ ] T073 [B] Test de rendimiento: 10.000 archivos sintéticos bajo 60 segundos (NFR-001)
-- [ ] T074 [B] Test primero: cancelado a mitad deja estado `cancelado` y ningún snapshot completo
-- [ ] T075 [B] Test primero: rutas con espacios, acentos y enlaces simbólicos — funciona o falla con causa, nunca a medias
-- [ ] T076 [B] **Test de aceptación**: el scanner se detecta a sí mismo sobre este repositorio (SC-005 parcial)
+- [X] T060 [B] **Test primero, el que define la promesa**: `git status --porcelain` idéntico antes y después, sobre repositorios de varios ecosistemas
+- [X] T061 [B] Test primero: ni siquiera se tocan archivos que git ignora — comparar mtime e inodos del árbol completo
+- [X] T062 [B] `packages/scanner`: recorrido con exclusiones, progreso por fase y `AbortSignal`
+- [X] T063 [B] Test primero: un hallazgo `detectado` sin `evidencia` no sale del scanner (principio X)
+- [X] T064 [P] [B] Detector de stack: manifiestos, lockfiles, versión de runtime fijada
+- [X] T065 [P] [B] Detector de arquitectura: estructura, monorepo y workspaces, capas
+- [X] T066 [P] [B] Detector de testing: runner, ubicación, umbral de cobertura declarado
+- [X] T067 [P] [B] Detector de CI/CD: workflows, qué comandos corren, qué gatea el merge
+- [X] T068 [P] [B] Detector de agentes: `CLAUDE.md`, `.claude/`, `AGENTS.md`, MCP, hooks, skills
+- [X] T069 [P] [B] Detector de guidelines: `CONTRIBUTING`, `docs/`, ADRs
+- [X] T070 [B] Test primero, con centinela: un secreto plantado produce hallazgo de riesgo **con la ruta y sin el valor**
+- [X] T071 [B] Detector de riesgos: secretos en claro, `.env` versionado, dependencias sin fijar
+- [X] T072 [B] Test primero: sobre un repositorio vacío, huecos declarados y cero inferencias con confianza alta
+- [X] T073 [B] Test de rendimiento: 10.000 archivos sintéticos bajo 60 segundos (NFR-001)
+- [X] T074 [B] Test primero: cancelado a mitad deja estado `cancelado` y ningún snapshot completo
+- [X] T075 [B] Test primero: rutas con espacios, acentos y enlaces simbólicos — funciona o falla con causa, nunca a medias
+- [X] T076 [B] **Test de aceptación**: el scanner se detecta a sí mismo sobre este repositorio (SC-005 parcial)
 
 ### B.3 · Endpoints y pantallas
 
 - [ ] T080 [B] `POST /v1/projects` con los tres orígenes; `no_es_repositorio` y `destino_no_vacio` con su acción
 - [ ] T081 [B] `POST /v1/projects/:id/scan` + `DELETE /v1/scans/:id`; progreso y hallazgos por SSE
 - [ ] T082 [B] `PATCH` de hallazgo y `POST /accept` → `DISCOVERED`
-- [ ] T083 [P] [B] `packages/ui`: `Entity`, `EmptyState`, `Description`, `StatusDot` — los que shadcn no trae
+- [X] T083 [P] [B] `packages/ui`: `Entity`, `EmptyState`, `Description`, `StatusDot` — los que shadcn no trae
 - [ ] T084 [P] [B] Pantalla de lista de proyectos. **No es una grilla de tarjetas** (FR-061)
 - [ ] T085 [B] Asistente de alta con selector de carpeta (`tauri-plugin-dialog`) y adaptador web
 - [ ] T086 [B] Pantalla de snapshot: hallazgos agrupados, **origen visible en cada uno**, corregir y descartar
@@ -146,7 +146,7 @@ funcione.
 - [ ] T112 [C] Test primero: `apply` con el árbol cambiado falla con `diff_obsoleto`. **Aplicar algo distinto de lo mostrado es como se pierde la confianza en un instalador**
 - [ ] T113 [C] Aplicar, personalizar, omitir — con registro de la decisión y su motivo
 - [ ] T114 [C] Test primero: una recomendación que contradice la constitution no se propone sin declarar el conflicto (FR-028)
-- [ ] T115 [P] [C] `packages/ui`: `Fieldset`, `JSON View`, `File Tree`
+- [X] T115 [P] [C] `packages/ui`: `Fieldset`, `JSON View`, `File Tree`
 - [ ] T116 [C] Pantallas de constitution, guidelines y bootstrap
 - [ ] T117 [C] **Test de aceptación**: bootstrap sobre este repositorio detecta ≥90% del setup existente (SC-005)
 
@@ -160,22 +160,22 @@ funcione.
 
 ### D.1 · Bóveda
 
-- [ ] T130 [D] Comando Rust sobre el crate `keyring`. **No se expone al webview**
-- [ ] T131 [D] Test primero: sin Secret Service, el backend cae al archivo cifrado y lo **declara** en `/v1/capabilities` — nunca en silencio
-- [ ] T132 [D] Fallback cifrado para headless, contenedor y CI
-- [ ] T133 [D] Test primero, con centinela: serializar cualquier entidad del inventario no produce el valor, ni truncado
-- [ ] T134 [D] `packages/vault`: inventario con huella, `ref_boveda`, backend declarado
-- [ ] T135 [D] Test primero: `recuperar` sin `MotivoDeAcceso` no compila; sin grant vigente lanza y audita el intento denegado
+- [X] T130 [D] Comando Rust sobre el crate `keyring`. **No se expone al webview**
+- [X] T131 [D] Test primero: sin Secret Service, el backend cae al archivo cifrado y lo **declara** en `/v1/capabilities` — nunca en silencio
+- [X] T132 [D] Fallback cifrado para headless, contenedor y CI
+- [X] T133 [D] Test primero, con centinela: serializar cualquier entidad del inventario no produce el valor, ni truncado
+- [X] T134 [D] `packages/vault`: inventario con huella, `ref_boveda`, backend declarado
+- [X] T135 [D] Test primero: `recuperar` sin `MotivoDeAcceso` no compila; sin grant vigente lanza y audita el intento denegado
 - [ ] T136 [D] Grants: la tripleta, con vigencia opcional. Denegar por defecto
 - [ ] T137 [D] Test primero: `reach` no devuelve grants revocados ni expirados (vista inversa, FR-045)
 - [ ] T138 [D] Test primero: rotar cambia la huella y **conserva** los grants
-- [ ] T139 [D] Redactor: carga huellas, busca **por valor** y reemplaza por `[redactado:<nombre>]`
+- [X] T139 [D] Redactor: carga huellas, busca **por valor** y reemplaza por `[redactado:<nombre>]`
 - [ ] T140 [D] Test primero: el evidence packet **en disco** nunca contuvo el centinela — sobre el archivo escrito, no sobre el objeto en memoria
 - [ ] T141 [D] Auditoría append-only con hash encadenado. Test: no existe ruta en la API que la edite o borre
-- [ ] T142 [D] Test primero: el entorno del subproceso contiene **exactamente** lo declarado, ni una variable heredada de más
-- [ ] T143 [D] Test primero: ningún valor aparece en `argv` del proceso lanzado
+- [X] T142 [D] Test primero: el entorno del subproceso contiene **exactamente** lo declarado, ni una variable heredada de más
+- [X] T143 [D] Test primero: ningún valor aparece en `argv` del proceso lanzado
 - [ ] T144 [D] `DangerPolicy`: test de que ninguna ruta crea una habilitada (FR-051)
-- [ ] T145 [D] SSH: huella de host fijada, allowlist de lectura, bitácora de **cada comando**, sin `ForwardAgent`
+- [X] T145 [D] SSH: huella de host fijada, allowlist de lectura, bitácora de **cada comando**, sin `ForwardAgent`
 - [ ] T146 [D] **Test de suite**: el centinela no aparece en ninguna respuesta de **ningún** endpoint, errores incluidos (NFR-004)
 
 ### D.2 · Conexiones
@@ -192,7 +192,7 @@ funcione.
 - [ ] T159 [D] `credenciales()` con `vigencia_ms` ≤ 5 minutos. Test: no se cachea más allá de la vigencia
 - [ ] T160 [D] Test primero: con el adaptador caído, las conexiones existentes siguen y las nuevas fallan con causa; la aplicación no se cae
 - [ ] T161 [D] Declarar la licencia ELv2 en `LICENSE` y `README`, con lo que implica para quien redistribuya
-- [ ] T162 [P] [D] `packages/ui`: `SecretValue`, `Destructive Action Modal`
+- [X] T162 [P] [D] `packages/ui`: `SecretValue`, `Destructive Action Modal`
 - [ ] T163 [D] Pantallas de conexiones, inventario de credenciales, grants y vista inversa
 - [ ] T164 [D] Pantalla de auditoría, solo lectura
 - [ ] T165 [D] CI: las 12 pruebas de no filtración, en cada commit
@@ -218,7 +218,7 @@ funcione.
 - [ ] T194 [E] Context compiler: constitution + guidelines + diseño + work item → contexto del run
 - [ ] T195 [E] Test primero, al estilo del que ya protege el board: se mide el disco antes y después de un `GET /runs` y **no cambió nada**
 - [ ] T196 [E] **Test de punta a punta**: proyecto establecido en la aplicación → PR abierto con el proveedor `fake` (SC-009)
-- [ ] T197 [P] [E] `packages/ui`: `Command Menu` (⌘K) para NFR-005
+- [X] T197 [P] [E] `packages/ui`: `Command Menu` (⌘K) para NFR-005
 - [ ] T198 [E] Recorrido completo de teclado y tema claro/oscuro (NFR-005)
 
 ---

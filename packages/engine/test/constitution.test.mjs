@@ -3,7 +3,7 @@
 // en vez de aparecer en el repositorio de otra persona.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const RAIZ = new URL("../../../", import.meta.url).pathname;
@@ -108,6 +108,42 @@ test("VII — el motor no contiene ningun nombre propio de organizacion, repo o 
 // despues encuentra el repositorio ya acomodado a la violacion, y entonces
 // arreglarla cuesta una refactorizacion en vez de un rechazo en CI.
 // ---------------------------------------------------------------------------
+
+test("la licencia de la capa de integracion sigue declarada donde el usuario la lee", () => {
+  // No es un principio de la constitucion: es una obligacion que la decision
+  // de meter Nango en el nucleo genero, y que se cumple una vez y se puede
+  // deshacer sin querer.
+  //
+  // EL FALLO QUE EVITA. `@nangohq/node` es Elastic License 2.0: no es OSI, no
+  // es compatible con GPL/AGPL, y Debian y Fedora rechazan paquetes con ese
+  // codigo dentro. Esa nota se escribio a mano en LICENSE y en README, y nada
+  // la ata al codigo que la hace necesaria. El dia que alguien limpie el README
+  // o reescriba la seccion de licencia, la dependencia sigue viajando en el
+  // binario y el aviso ya no esta — y quien lo adopte lo descubre despues, que
+  // es exactamente el problema que la nota existia para evitar.
+  //
+  // La condicion es el adaptador: mientras `nango.mjs` exista, el aviso es
+  // obligatorio. Si algun dia se retira la dependencia, esta guarda se cae
+  // sola y hay que borrar la nota, que es el orden correcto.
+  const adaptador = join(RAIZ, "packages/connections/src/adaptadores/nango.mjs");
+  if (!existsSync(adaptador)) return;
+
+  const faltan = [];
+  for (const [archivo, marcas] of [
+    ["LICENSE", ["Elastic License 2.0", "@nangohq/node"]],
+    ["README.md", ["Elastic License 2.0", "ELv2"]],
+  ]) {
+    const texto = readFileSync(join(RAIZ, archivo), "utf8");
+    for (const marca of marcas) {
+      if (!texto.includes(marca)) faltan.push(`${archivo}: falta "${marca}"`);
+    }
+  }
+  assert.deepEqual(
+    faltan,
+    [],
+    `el adaptador de Nango existe pero su licencia dejo de estar declarada:\n${faltan.join("\n")}`,
+  );
+});
 
 test("VII — el puerto de desarrollo esta declarado igual en los tres lugares que lo usan", () => {
   // El puerto de `next dev` aparece en TRES sitios que tienen que coincidir, y
