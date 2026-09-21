@@ -134,7 +134,48 @@ export async function lista(p) {
   // NFR-002: los contadores vienen en la MISMA consulta. Devolver solo los
   // proyectos obliga a la interfaz a pedir despues la bandeja de cada uno —21
   // viajes— y el presupuesto de un segundo se gasta en los viajes.
-  return { cuerpo: coleccion(p.dep.almacen.inicio.proyectos()) };
+  return { cuerpo: coleccion(p.dep.almacen.inicio.proyectos().map(conContadores)) };
+}
+
+/**
+ * Los agregados salen ANIDADOS bajo `contadores`, que es como el contrato los
+ * declara.
+ *
+ * EL FALLO QUE ESTO CIERRA, y estaba en produccion sin dar ningun error. El
+ * almacen los devuelve planos y con otros nombres (`bandeja_esperando`,
+ * `recomendaciones_pendientes`); la interfaz lee `contadores.entradas_bandeja`.
+ * Dos desacuerdos a la vez —anidamiento y nombre— asi que los badges de "N en
+ * bandeja" y "N agentes" de la lista NO SE PINTABAN NUNCA.
+ *
+ * Y el sintoma es lo peor: no es una pantalla rota, es una fila que parece no
+ * tener nada pendiente. El operador no ve un hueco, ve un proyecto tranquilo.
+ *
+ * La traduccion vive aqui y no en el almacen porque los nombres del almacen
+ * describen SU consulta —`bandeja_esperando` dice que filtra por `esperando`—
+ * y son los correctos ahi. Lo que cambia al cruzar la frontera es el
+ * vocabulario publico, que es justo lo que un contrato define.
+ *
+ * @param {any} fila
+ */
+function conContadores(fila) {
+  const {
+    bandeja_esperando,
+    agentes,
+    conexiones_vivas,
+    recomendaciones_pendientes,
+    hallazgos_pendientes,
+    ...proyecto
+  } = fila;
+  return {
+    ...proyecto,
+    contadores: {
+      entradas_bandeja: bandeja_esperando ?? 0,
+      agentes: agentes ?? 0,
+      conexiones: conexiones_vivas ?? 0,
+      recomendaciones_pendientes: recomendaciones_pendientes ?? 0,
+      hallazgos_pendientes: hallazgos_pendientes ?? 0,
+    },
+  };
 }
 
 /** @param {import("./rutas.mjs").Peticion} p */

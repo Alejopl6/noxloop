@@ -106,6 +106,18 @@ Un único formato, siempre, porque NFR-006 exige que todo error nombre la causa 
 | Método | Ruta | Notas |
 |---|---|---|
 | `GET` | `/v1/projects` | Lista con estado y contadores. Responde en <1s con 20 proyectos (NFR-002) |
+
+**Los contadores van anidados bajo `contadores`**, y el contrato tuvo que decirlo porque solo decía la palabra:
+
+```json
+{ "id": "...", "nombre": "...", "estado": "BOOTSTRAPPED",
+  "contadores": { "entradas_bandeja": 2, "agentes": 3, "conexiones": 1,
+                  "credenciales": 4, "recomendaciones_pendientes": 0 } }
+```
+
+**El fallo que esto cierra ya estaba en producción.** El almacén devolvía campos planos (`bandeja_esperando`, `agentes`) y la interfaz leía `contadores.entradas_bandeja`: dos desacuerdos a la vez, anidamiento y nombre. Los badges de «N en bandeja» y «N agentes» de la lista de proyectos **no se pintaban nunca** contra el servicio real, y el síntoma no es un error — es una fila que parece no tener nada pendiente.
+
+Anidados y no planos porque separan **identidad** de **agregado**: `nombre` describe al proyecto y `entradas_bandeja` describe su situación ahora mismo. Mezclarlos hace que cada campo nuevo del proyecto tenga que comprobarse contra los nombres de los contadores.
 | `POST` | `/v1/projects` | Crea. Cuerpo: `{ origen, nombre, ruta_local?, remoto?, plantilla? }` |
 | `GET` | `/v1/projects/:id` | Detalle completo |
 | `PATCH` | `/v1/projects/:id` | Identidad y metadatos. **No** cambia `estado` |

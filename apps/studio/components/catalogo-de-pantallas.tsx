@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react'
 
 import { Campo } from '@/components/ui/campo'
 import { Segmentado } from '@/components/ui/segmentado'
+import { CicloDeVida, LoQueFalta, ResumenDelCiclo } from '@/components/ui/ciclo-de-vida'
 import { PanelDeProyectos } from '@/components/vista-proyectos'
 import { PanelDeAltaDeProyecto } from '@/components/vista-alta-de-proyecto'
 import { PanelDeSnapshot } from '@/components/vista-snapshot'
@@ -26,6 +27,7 @@ import type {
   Agente,
   AlcanceDeAgente,
   AlcanceDeCredencial,
+  ArtefactosDeProyecto,
   Capacidades,
   Conexion,
   Constitution,
@@ -149,6 +151,158 @@ const PROYECTOS: Proyecto[] = [
     creado: '2026-09-19T17:05:00.000Z',
   },
 ]
+
+/* --- Ciclo de vida ------------------------------------------------------- */
+
+/**
+ * El "ahora" del catalogo, fijo.
+ *
+ * `Date.now()` aqui haria que el HTML prerenderizado y el render del cliente
+ * no coincidan, y ademas que "sin moverse 21 dias" dijera otra cosa cada dia:
+ * con un instante fijo, lo que se lee en el HTML generado es comprobable.
+ */
+const AHORA_DEL_CATALOGO = Date.parse('2026-09-20T12:00:00.000Z')
+
+/** Un proyecto por etapa, todos `local`: el recorrido entero, de seis pasos. */
+const UNO_POR_ETAPA: Proyecto[] = [
+  'CREATED',
+  'DISCOVERED',
+  'CONSTITUTED',
+  'BOOTSTRAPPED',
+  'CONNECTED',
+  'ACTIVE',
+].map((estado, indice) => ({
+  id: `prj_etapa_${indice}`,
+  nombre: `proyecto en ${estado}`,
+  origen: 'local' as const,
+  ruta_local: `/Users/operador/proyectos/etapa-${indice}`,
+  estado: estado as Proyecto['estado'],
+  creado: '2026-09-01T09:00:00.000Z',
+  actualizado: '2026-09-18T09:00:00.000Z',
+}))
+
+/**
+ * El atajo, en las dos mitades que hay que poder comparar de un vistazo: el
+ * mismo estado, `CREATED`, con origenes distintos. El `nuevo` pinta cinco
+ * marcas y manda a Constitution; el `local` pinta seis y manda a Discovery.
+ */
+const ATAJO_DE_PROYECTO_NUEVO: Proyecto[] = [
+  {
+    id: 'prj_nuevo',
+    nombre: 'proyecto nuevo, sin codigo que escanear',
+    origen: 'nuevo',
+    ruta_local: '/Users/operador/proyectos/recien-creado',
+    estado: 'CREATED',
+    creado: '2026-09-18T09:00:00.000Z',
+    actualizado: '2026-09-18T09:00:00.000Z',
+  },
+  {
+    id: 'prj_local',
+    nombre: 'repositorio existente, con codigo que leer',
+    origen: 'local',
+    ruta_local: '/Users/operador/proyectos/heredado',
+    estado: 'CREATED',
+    creado: '2026-09-18T09:00:00.000Z',
+    actualizado: '2026-09-18T09:00:00.000Z',
+  },
+  {
+    // El caso que obliga a no filtrar `DISCOVERED` a ciegas: un proyecto
+    // `nuevo` PARADO en `DISCOVERED` demuestra que no tomo el atajo, y
+    // esconderle la etapa en la que esta de pie seria el peor de los dos
+    // errores posibles.
+    id: 'prj_nuevo_analizado',
+    nombre: 'proyecto nuevo que si paso por Discovery',
+    origen: 'nuevo',
+    ruta_local: '/Users/operador/proyectos/nuevo-analizado',
+    estado: 'DISCOVERED',
+    creado: '2026-09-18T09:00:00.000Z',
+    actualizado: '2026-09-18T09:00:00.000Z',
+  },
+]
+
+/** Doce proyectos repartidos, con tres parados de sobra sobre el umbral. */
+const FLOTA_DE_PROYECTOS: Proyecto[] = [
+  ...UNO_POR_ETAPA,
+  {
+    id: 'prj_parado_1',
+    nombre: 'motor de facturacion',
+    origen: 'remoto',
+    remoto: 'git@servidor-interno:plataforma/facturacion.git',
+    estado: 'BOOTSTRAPPED',
+    creado: '2026-07-02T08:30:00.000Z',
+    actualizado: '2026-08-30T08:30:00.000Z',
+    contadores: { entradas_bandeja: 2 },
+  },
+  {
+    id: 'prj_parado_2',
+    nombre: 'pasarela de pagos',
+    origen: 'local',
+    ruta_local: '/Users/operador/proyectos/pagos',
+    estado: 'CONNECTED',
+    creado: '2026-06-11T08:30:00.000Z',
+    actualizado: '2026-09-01T08:30:00.000Z',
+  },
+  {
+    id: 'prj_parado_3',
+    nombre: 'portal interno',
+    origen: 'nuevo',
+    ruta_local: '/Users/operador/proyectos/portal',
+    estado: 'CREATED',
+    creado: '2026-05-04T08:30:00.000Z',
+    actualizado: '2026-05-04T08:30:00.000Z',
+  },
+  {
+    id: 'prj_activo_viejo',
+    nombre: 'servicio de notificaciones',
+    origen: 'local',
+    ruta_local: '/Users/operador/proyectos/notificaciones',
+    estado: 'ACTIVE',
+    // Lleva cuatro meses sin transicionar y NO es un parado: ya no le quedan
+    // transiciones que pedir. Si aparece en la lista de abajo, la regla esta
+    // mal escrita.
+    creado: '2026-01-04T08:30:00.000Z',
+    actualizado: '2026-05-04T08:30:00.000Z',
+  },
+  {
+    id: 'prj_reciente',
+    nombre: 'buscador de documentacion',
+    origen: 'local',
+    ruta_local: '/Users/operador/proyectos/buscador',
+    estado: 'CONSTITUTED',
+    creado: '2026-09-19T08:30:00.000Z',
+    actualizado: '2026-09-19T08:30:00.000Z',
+  },
+]
+
+/** Nada parado y nada nuevo: la distribucion sola. */
+const FLOTA_AL_DIA: Proyecto[] = UNO_POR_ETAPA.map((proyecto) => ({
+  ...proyecto,
+  actualizado: '2026-09-20T09:00:00.000Z',
+}))
+
+/**
+ * Los veredictos de `GET /v1/projects/:id`, tal como los escribe `GUARDAS`.
+ *
+ * Es el caso que una tabla local no sabe contar: el snapshot ESTA y aun asi
+ * la etapa no pasa, porque quedan hallazgos sin decidir.
+ */
+const ARTEFACTOS_CON_HALLAZGOS_SIN_DECIDIR: ArtefactosDeProyecto = {
+  snapshot_aceptado: {
+    listo: false,
+    hallado: 'el snapshot esta completo pero tiene 12 hallazgo(s) con decision pendiente',
+    comoConseguirlo:
+      'Decide cada hallazgo pendiente —aceptar, corregir o descartar— en la pantalla del snapshot. Un hallazgo sin decidir es un hueco que se hereda como si fuera un hecho verificado.',
+  },
+}
+
+/** El artefacto ya esta y el estado sigue donde estaba: falta pedir el salto. */
+const ARTEFACTOS_YA_LISTOS: ArtefactosDeProyecto = {
+  constitution_vigente: {
+    listo: true,
+    hallado: 'constitution 1.2.0 vigente',
+    comoConseguirlo: '',
+  },
+}
 
 const PLANTILLAS: Plantilla[] = [
   {
@@ -828,6 +982,103 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="error">
             <PanelDeProyectos lectura={conError<Proyecto[]>(SIN_SERVICIO)} navegar={navegar} />
+          </Estado>
+        </div>
+      </Pantalla>
+
+      <Pantalla
+        titulo="Ciclo de vida del proyecto"
+        nota="La columna vertebral del producto, hecha visible: donde esta, que falta y como conseguirlo, y que ya paso. Monocromo entero salvo el ambar de un proyecto parado, sin checkmarks y sin barras decorativas."
+      >
+        <div className="flex flex-col gap-10">
+          <Estado nombre="las seis etapas · recorrido completo">
+            <ul className="flex flex-col gap-5">
+              {UNO_POR_ETAPA.map((proyecto) => (
+                <li key={proyecto.id} className="flex flex-col gap-1">
+                  <span className="text-label-14 text-ds-gray-1000">{proyecto.nombre}</span>
+                  <CicloDeVida proyecto={proyecto} />
+                  <p className="text-copy-14 text-ds-gray-900">
+                    <LoQueFalta proyecto={proyecto} />
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </Estado>
+
+          <Estado nombre="atajo de proyecto nuevo · cinco marcas, no seis">
+            <ul className="flex flex-col gap-5">
+              {ATAJO_DE_PROYECTO_NUEVO.map((proyecto) => (
+                <li key={proyecto.id} className="flex flex-col gap-1">
+                  <span className="text-label-14 text-ds-gray-1000">{proyecto.nombre}</span>
+                  <CicloDeVida proyecto={proyecto} />
+                  <p className="text-copy-14 text-ds-gray-900">
+                    <LoQueFalta proyecto={proyecto} />
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </Estado>
+
+          <Estado nombre="con los veredictos del servicio · lo que la tabla local no sabe decir">
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-1">
+                <span className="text-label-14 text-ds-gray-1000">
+                  sin los artefactos · la frase declarada
+                </span>
+                <CicloDeVida proyecto={UNO_POR_ETAPA[0]} />
+                <p className="text-copy-14 text-ds-gray-900">
+                  <LoQueFalta proyecto={UNO_POR_ETAPA[0]} />
+                </p>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-label-14 text-ds-gray-1000">
+                  con los artefactos · lo que la guarda hallo
+                </span>
+                <CicloDeVida
+                  proyecto={UNO_POR_ETAPA[0]}
+                  artefactos={ARTEFACTOS_CON_HALLAZGOS_SIN_DECIDIR}
+                />
+                <p className="text-copy-14 text-ds-gray-900">
+                  <LoQueFalta
+                    proyecto={UNO_POR_ETAPA[0]}
+                    artefactos={ARTEFACTOS_CON_HALLAZGOS_SIN_DECIDIR}
+                  />
+                </p>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-label-14 text-ds-gray-1000">
+                  el artefacto ya esta y la etapa no ha avanzado
+                </span>
+                <CicloDeVida proyecto={UNO_POR_ETAPA[1]} artefactos={ARTEFACTOS_YA_LISTOS} />
+                <p className="text-copy-14 text-ds-gray-900">
+                  <LoQueFalta proyecto={UNO_POR_ETAPA[1]} artefactos={ARTEFACTOS_YA_LISTOS} />
+                </p>
+              </div>
+            </div>
+          </Estado>
+
+          <Estado nombre="densidad agregada · con parados">
+            <ResumenDelCiclo
+              proyectos={FLOTA_DE_PROYECTOS}
+              ahora={AHORA_DEL_CATALOGO}
+              navegar={navegar}
+            />
+          </Estado>
+
+          <Estado nombre="densidad agregada · nada parado">
+            <ResumenDelCiclo
+              proyectos={FLOTA_AL_DIA}
+              ahora={AHORA_DEL_CATALOGO}
+              navegar={navegar}
+            />
+          </Estado>
+
+          <Estado nombre="densidad agregada · el reloj todavia no se ha leido">
+            <ResumenDelCiclo proyectos={FLOTA_DE_PROYECTOS} ahora={null} navegar={navegar} />
+          </Estado>
+
+          <Estado nombre="densidad agregada · sin proyectos">
+            <ResumenDelCiclo proyectos={[]} ahora={AHORA_DEL_CATALOGO} navegar={navegar} />
           </Estado>
         </div>
       </Pantalla>

@@ -132,8 +132,22 @@ test("GET /v1/projects lista lo que hay, con sus contadores", async () => {
     assert.equal(cursor, null, "sin mas paginas el cursor es `null`, no ausente");
     assert.deepEqual(avisos, []);
     for (const p of items) {
-      assert.equal(typeof p.bandeja_esperando, "number", "la lista trae los contadores en UNA consulta (NFR-002)");
-      assert.equal(typeof p.hallazgos_pendientes, "number");
+      // Los contadores van ANIDADOS y con el vocabulario del contrato, no con
+      // el de la consulta del almacen.
+      //
+      // Este assert miraba `p.bandeja_esperando` plano, que es lo que el
+      // almacen devuelve — se escribio contra la implementacion y no contra el
+      // contrato. Mientras tanto la interfaz leia `contadores.entradas_bandeja`
+      // y sus badges NO SE PINTABAN NUNCA: dos desacuerdos a la vez,
+      // anidamiento y nombre, y ninguno daba error. El sintoma era una fila que
+      // parecia no tener nada pendiente.
+      assert.equal(typeof p.contadores?.entradas_bandeja, "number", "la lista trae los contadores en UNA consulta (NFR-002)");
+      assert.equal(typeof p.contadores?.hallazgos_pendientes, "number");
+      assert.equal(typeof p.contadores?.agentes, "number");
+      // Y los nombres del almacen NO se filtran al vocabulario publico: si se
+      // filtraran, habria dos formas de leer lo mismo y la interfaz podria
+      // atarse a la equivocada sin que nada lo dijera.
+      assert.equal(p.bandeja_esperando, undefined, "el nombre interno del almacen no sale al contrato");
     }
   });
 });

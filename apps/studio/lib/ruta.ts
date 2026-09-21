@@ -49,6 +49,37 @@ export type Seccion =
   | 'catalogo'
 
 /**
+ * Las secciones que NO SE PUEDEN ABRIR SIN UN PROYECTO.
+ *
+ * Existe como lista propia porque el marco pregunta esto tres veces —para
+ * saber si pinta el conmutador de proyecto, para saber que grupo de la
+ * navegacion se despliega, y para decidir la miga del medio— y porque de ella
+ * se deriva `PARAMETRO_DE_ID` justo debajo.
+ *
+ * EL FALLO QUE EVITA DERIVARLO: el dia que se anada una septima etapa, quien
+ * la anada la escribe en `Seccion` y en la navegacion, y se olvida de darle
+ * entrada en `PARAMETRO_DE_ID`. Entonces `construirRuta` descarta el
+ * identificador en silencio, la direccion queda sin `?proyecto=`, todo parece
+ * funcionar mientras no se recargue, y al recargar la pantalla dice que falta
+ * el proyecto. Con la tabla derivada de esta lista ese olvido no se puede
+ * cometer.
+ */
+export const SECCIONES_DE_PROYECTO = [
+  'snapshot',
+  'constitution',
+  'bootstrap',
+  'conexiones',
+  'flota',
+  'runs',
+] as const satisfies readonly Seccion[]
+
+export type SeccionDeProyecto = (typeof SECCIONES_DE_PROYECTO)[number]
+
+export function esSeccionDeProyecto(seccion: Seccion): seccion is SeccionDeProyecto {
+  return (SECCIONES_DE_PROYECTO as readonly Seccion[]).includes(seccion)
+}
+
+/**
  * Como se llama el identificador de cada seccion en la direccion.
  *
  * NO ES COSMETICA. El identificador significa cosas distintas segun la
@@ -62,13 +93,8 @@ export type Seccion =
  */
 const PARAMETRO_DE_ID: Partial<Record<Seccion, string>> = {
   bandeja: 'entrada',
-  snapshot: 'proyecto',
-  constitution: 'proyecto',
-  bootstrap: 'proyecto',
-  conexiones: 'proyecto',
-  flota: 'proyecto',
-  runs: 'proyecto',
   credenciales: 'credencial',
+  ...Object.fromEntries(SECCIONES_DE_PROYECTO.map((seccion) => [seccion, 'proyecto'])),
 }
 
 const SECCIONES: readonly Seccion[] = [

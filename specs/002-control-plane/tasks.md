@@ -184,8 +184,8 @@ funcione.
 - [X] T151 [D] Test primero: con un proveedor de modo `pat`, `conectar` **no** devuelve URL de autorización
 - [X] T152 [P] [D] Adaptador `fake`, sin red ni credenciales
 - [X] T153 [P] [D] Adaptador `local`: PAT y claves de API contra la bóveda. Test: completa un ciclo **sin Docker**
-- [ ] T154 [D] Adaptador `nango`: `docker-compose` con **`SERVER_PORT=3003` explícito** (el bug #5305, cerrado como *not planned*)
-- [ ] T155 [D] `preflight` comprueba el puerto 3003 al arrancar y falla ruidosamente. No hay reasignación posible: está registrado en cada aplicación OAuth
+- [X] T154 [D] Adaptador `nango`: `docker-compose` con **`SERVER_PORT=3003` explícito** (el bug #5305, cerrado como *not planned*)
+- [X] T155 [D] `preflight` comprueba el puerto 3003 al arrancar y falla ruidosamente. No hay reasignación posible: está registrado en cada aplicación OAuth
 - [ ] T156 [D] **Registrar aplicaciones OAuth propias** para Linear, Jira, GitHub. Es el seguro de portabilidad y solo funciona si está desde el principio
 - [ ] T157 [D] Flujo: `connect_link` abierto en el **navegador del sistema** (`tauri-plugin-opener`), no en el webview
 - [ ] T158 [D] Sondeo hasta que la conexión aparece. **Los webhooks no son el camino primario** (`research.md` §3, no verificado)
@@ -231,7 +231,7 @@ funcione.
 - [X] T193 [E] Test primero: `POST /runs` sobre un proyecto no `ACTIVE` devuelve 409 **nombrando la etapa que falta** (FR-064)
 - [X] T194 [E] Context compiler: constitution + guidelines + diseño + work item → contexto del run
 - [X] T195 [E] Test primero, al estilo del que ya protege el board: se mide el disco antes y después de un `GET /runs` y **no cambió nada**
-- [ ] T196 [E] **Test de punta a punta**: proyecto establecido en la aplicación → PR abierto con el proveedor `fake` (SC-009)
+- [X] T196 [E] **Test de punta a punta**: proyecto establecido en la aplicación → PR abierto con el proveedor `fake` (SC-009)
 - [X] T197 [P] [E] `packages/ui`: `Command Menu` (⌘K) para NFR-005
 - [X] T198 [E] Recorrido completo de teclado y tema claro/oscuro (NFR-005)
 

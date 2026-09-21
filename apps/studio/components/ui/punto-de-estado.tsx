@@ -46,7 +46,12 @@ export function StatusDot({ estado, etiqueta, className }: PropsDeStatusDot) {
     <span className={cn('inline-flex items-center gap-2', className)}>
       <span
         aria-hidden="true"
-        className={cn('size-2 shrink-0 rounded-full', estilo.punto)}
+        // El punto se funde al cambiar de estado por lo mismo que el badge: un
+        // despliegue pasa de "Construyendo" a "Listo" solo, sin que nadie
+        // pulse nada, y un cambio seco no deja rastro de que acaba de pasar.
+        // La palabra de al lado es lo que lo dice de verdad —el punto va
+        // `aria-hidden`— asi que con movimiento reducido no se pierde nada.
+        className={cn('size-2 shrink-0 rounded-full transition-colors', estilo.punto)}
       />
       <span className="text-label-13 text-ds-gray-1000">{etiqueta ?? estilo.etiqueta}</span>
     </span>

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle, PlugZap, RefreshCw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/indicador-de-carga'
 import { useServicio } from '@/components/proveedor-servicio'
 import { formatearRelativo } from '@/lib/tiempo'
 
@@ -79,9 +80,22 @@ export function PantallaServicioCaido() {
         }
       >
         <div className="flex items-center gap-3">
+          {/* EL BOTON DICE LO QUE ESTA HACIENDO, y antes no.
+              Era un icono de refresco con `animate-spin` y la etiqueta fija en
+              "Reintentar ahora" mientras reintentaba. Dos fallos encima del
+              mismo control: con `prefers-reduced-motion` queda un icono quieto
+              en un boton gris, indistinguible de "deshabilitado y no se por
+              que"; y sin region viva, un lector de pantalla no se entera ni
+              con la animacion corriendo.
+              `Spinner` lleva etiqueta obligatoria y `role="status"` justo por
+              esto, y es lo que hacen los otros trece sitios. */}
           <Button onClick={reintentar} disabled={estado === 'iniciando'}>
-            <RefreshCw className={estado === 'iniciando' ? 'animate-spin' : undefined} />
-            Reintentar ahora
+            {estado === 'iniciando' ? (
+              <Spinner etiqueta="Reintentando" tamano="sm" />
+            ) : (
+              <RefreshCw />
+            )}
+            {estado === 'iniciando' ? 'Reintentando' : 'Reintentar ahora'}
           </Button>
           <span className="text-label-12 text-ds-gray-700">
             La aplicacion tambien reintenta sola.

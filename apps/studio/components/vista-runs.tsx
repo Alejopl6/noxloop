@@ -22,15 +22,16 @@ import { useLectura } from '@/lib/lectura'
 import { useMutacion } from '@/lib/mutacion'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import {
-  ETAPA_PENDIENTE,
   ETIQUETA_ESTADO_PROYECTO,
   ETIQUETA_ESTADO_TAREA,
   type EstadoDeTarea,
   type Proyecto,
   type Run,
   type TareaDeRun,
+  etapaQueFalta,
 } from '@/lib/tipos'
-import { DESTINO_DE_ETAPA, type Navegar } from '@/lib/ruta'
+import { destinoDeLaEtapaQueFalta } from '@/components/ui/ciclo-de-vida'
+import { type Navegar } from '@/lib/ruta'
 
 /**
  * T189 · Lanzar un ciclo, y mirar los que ya estan en marcha.
@@ -258,8 +259,20 @@ export function PanelDeRuns({
   const [workItem, setWorkItem] = useState('')
 
   const activo = proyecto?.estado === 'ACTIVE'
-  const pendiente = proyecto ? ETAPA_PENDIENTE[proyecto.estado] : null
-  const destino = proyecto ? DESTINO_DE_ETAPA[proyecto.estado] : null
+  // EL ATAJO DE PROYECTO NUEVO, que esta pantalla no contemplaba.
+  //
+  // Leer `ETAPA_PENDIENTE[estado]` y `DESTINO_DE_ETAPA[estado]` directamente
+  // supone que el recorrido es siempre lineal, y no lo es: un proyecto `nuevo`
+  // salta de `CREATED` a `CONSTITUTED` sin snapshot, porque no hay codigo que
+  // escanear. Con las tablas crudas, a ese proyecto se le decia "corre el
+  // analisis" y el boton lo mandaba a escanear una carpeta vacia — una
+  // instruccion que no se puede cumplir, que es peor que ninguna.
+  //
+  // `etapaQueFalta` mira el ORIGEN ademas del estado, y ademas prefiere el
+  // veredicto real de la guarda cuando el servicio lo manda: dice que falta de
+  // verdad en vez de la frase generica de la etapa.
+  const pendiente = proyecto ? etapaQueFalta(proyecto) : null
+  const destino = proyecto ? destinoDeLaEtapaQueFalta(proyecto) : null
 
   return (
     <div className="flex flex-col gap-8">

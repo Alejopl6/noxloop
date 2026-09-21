@@ -516,6 +516,26 @@
   --shadow-ds-menu: var(--ds-shadow-menu);
   --shadow-ds-modal: var(--ds-shadow-modal);
 
+  /* EL DEFECTO DE TAILWIND REAPUNTADO A LOS TOKENS. Tailwind trae
+     `transition-*` con `150ms` y `cubic-bezier(.4,0,.2,1)` de fabrica. Esos dos
+     valores estaban EN PRODUCCION en ocho sitios (boton, fila de entidad, fila
+     de tabla, segmentado, arbol de archivos, bandeja, selector de tema, barra
+     de progreso) y nadie los eligio: son el defecto de una libreria, no Geist.
+     Es el mismo fallo que la paleta escrita de memoria, en su version barata —
+     un numero que se ve bien y no viene de ningun sitio.
+
+     Reapuntarlos aqui arregla los ocho sin tocar un solo componente, que es lo
+     que permite hacerlo mientras otros frentes escriben en esos archivos.
+
+     SE USA EL PAR DE POPOVER Y NO EL DE OVERLAY, y la diferencia es la que
+     Geist nombra: overlay (.3s) es para una superficie que aparece, popover
+     (.2s) para algo que ya esta y cambia. Un hover a .3s se siente pegajoso.
+     Geist no publica un tercer par para micro-interacciones; si existe, no
+     salio en la extraccion del 2026-09-20 — queda anotado en el informe en vez
+     de rellenarse con un `120ms` inventado. */
+  --default-transition-duration: var(--ds-motion-popover-duration);
+  --default-transition-timing-function: var(--ds-motion-popover-timing);
+
   /* Auto-hospedadas por `next/font` en build: cero peticiones de red en
      runtime, que es lo que FR-003 exige (la app funciona sin internet). */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
@@ -575,6 +595,91 @@
   font-feature-settings: "calt" 0;
 }
 
+/* ---------------------------------------------------------------------------
+   MOVIMIENTO
+   ---------------------------------------------------------------------------
+   Geist sobre movimiento, verbatim: "Never gate reading behind animation."
+
+   De ahi salen las tres reglas de esta seccion, y ninguna es estetica:
+
+   1. UN MOVIMIENTO QUE NO EXPLICA NADA SE BORRA. Lo que queda aqui son tres
+      trabajos concretos: "esto salio de la pagina" (la superficie modal que
+      escala desde .96), "esto es la capa de debajo apagandose" (el velo), y
+      "esto es lo mismo que estabas mirando, ya cargado" (el bloque que
+      sustituye al esqueleto). No hay un cuarto.
+
+   2. NADA EN CASCADA. No se anima la entrada de filas una por una. Veinte
+      filas escalonadas son veinte esperas antes de poder leer la lista, y el
+      operador se queda mirando el escalon. La lista entera entra de una vez, o
+      no entra.
+
+   3. EL ESTADO FINAL ES EL ESTADO BASE, y los fotogramas solo tienen `from`.
+      Esto NO es estilo: es lo que hace que `prefers-reduced-motion` sea seguro.
+      La regla global de abajo no cancela las animaciones, las acorta a 0.01ms;
+      una animacion sin `animation-fill-mode` vuelve al estilo base al acabar.
+      Si el `opacity: 0` viviera en la clase y el fotograma lo subiera a 1, con
+      movimiento reducido el elemento parpadearia y se quedaria INVISIBLE para
+      siempre. Con el oculto solo en el `from`, "sin movimiento" es
+      "directamente visible", que es lo correcto.
+
+   Las duraciones y la curva salen de los tokens extraidos; no hay un solo
+   numero suelto aqui. La curva `swift` sobrepasa a proposito (ultimo valor de
+   la bezier > 1): es lo que hace que la superficie ATERRICE en vez de frenar.
+   --------------------------------------------------------------------------- */
+
+/* La superficie que aparece. Escala desde `--ds-motion-overlay-scale` (.96),
+   que es lo que dice "esto salio de la pagina que tienes detras" en lugar de
+   "esto ha aparecido de la nada". El token de escala es el unico que Geist
+   publica para esto, asi que lo comparten los dos perfiles: lo que cambia entre
+   un modal y un menu de comandos es CUANTO tarda, no de donde sale. */
+@keyframes entrada-de-superficie {
+  from {
+    opacity: 0;
+    transform: scale(var(--ds-motion-overlay-scale));
+  }
+}
+
+/* El velo. No escala: no es un objeto, es la capa de debajo apagandose. */
+@keyframes entrada-de-velo {
+  from {
+    opacity: 0;
+  }
+}
+
+/* El relevo del esqueleto. Solo opacidad y a la duracion corta: el trabajo es
+   decir "es lo mismo, ya cargado", no presentar el contenido. Con la curva
+   `swift`, que va muy cargada al principio, el texto es legible en los primeros
+   fotogramas — que es la unica forma de fundir algo sin retrasar la lectura. */
+@keyframes entrada-de-contenido {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Un modal: `--ds-motion-overlay-*`. */
+@utility movimiento-overlay {
+  animation: entrada-de-superficie var(--ds-motion-overlay-duration)
+    var(--ds-motion-overlay-timing);
+}
+
+/* Una superficie transitoria del camino de teclado: `--ds-motion-popover-*`.
+   Los .1s de diferencia con el overlay no son cosmetica — son la diferencia
+   entre que ⌘K se sienta instantaneo y que se sienta lento. */
+@utility movimiento-popover {
+  animation: entrada-de-superficie var(--ds-motion-popover-duration)
+    var(--ds-motion-popover-timing);
+}
+
+@utility movimiento-velo {
+  animation: entrada-de-velo var(--ds-motion-overlay-duration)
+    var(--ds-motion-overlay-timing);
+}
+
+@utility movimiento-contenido-cargado {
+  animation: entrada-de-contenido var(--ds-motion-popover-duration)
+    var(--ds-motion-popover-timing);
+}
+
 @layer base {
   /* Tailwind v4 cambio el borde por defecto a `currentColor`. Sin esto, cada
      `border` sale del color del texto. */
@@ -609,10 +714,18 @@
     background-color: var(--ds-blue-300);
   }
 
+  /* `::backdrop` NO estaba en esta lista, y no es un detalle de estilo: el velo
+     de un `<dialog>` modal se pinta en el pseudoelemento `::backdrop`, que el
+     universal `*` no alcanza y que no es ni `::before` ni `::after`. Sin
+     nombrarlo, el unico movimiento que el operador ve a pantalla completa —el
+     fondo entero apagandose— seguia corriendo sus .3s con `prefers-reduced-
+     motion: reduce` activado. Se descubrio al animar el velo, no antes, porque
+     hasta hoy no habia nada animado ahi. */
   @media (prefers-reduced-motion: reduce) {
     *,
     ::after,
-    ::before {
+    ::before,
+    ::backdrop {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;

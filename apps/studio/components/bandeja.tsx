@@ -86,8 +86,14 @@ function FilaDeBandeja({
           <span className="text-copy-14 text-ds-gray-900">{entrada.causa}</span>
         </span>
 
+        {/* `group-focus-within` ademas de `group-hover`, y no es un extra.
+            Con solo hover, quien navega con teclado NO VE NUNCA esta flecha:
+            la afordancia que dice "esta fila lleva a algun sitio" existe solo
+            para el raton. Es la clase de detalle que hace que una interfaz
+            operable con teclado se sienta operable a medias — NFR-005 pide
+            recorrerla entera, no poder pulsarla. */}
         <ChevronRight
-          className="mt-1 size-4 shrink-0 text-ds-gray-600 opacity-0 transition-opacity group-hover:opacity-100"
+          className="mt-1 size-4 shrink-0 text-ds-gray-600 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
           aria-hidden="true"
         />
       </button>

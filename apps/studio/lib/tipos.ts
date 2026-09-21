@@ -203,35 +203,204 @@ export interface EtapaPendiente {
   causa: string
   /** Que hacer. Siempre. */
   accion: string
+  /**
+   * El artefacto que exige la guarda del almacen, con su nombre exacto.
+   *
+   * Opcional por compatibilidad con quien ya leia esta tabla, y presente en
+   * todas las entradas: es la clave que permite cruzar esta frase escrita en
+   * el cliente con el veredicto que el servicio devuelve en
+   * `GET /v1/projects/:id`, y sin ella el cruce se haria por el nombre visible
+   * de la etapa —"Bootstrap"— que es texto de pantalla y cambia.
+   */
+  artefacto?: NombreDeArtefacto
 }
 
 export const ETAPA_PENDIENTE: Record<EstadoProyecto, EtapaPendiente | null> = {
   CREATED: {
     etapa: 'Discovery',
+    artefacto: 'snapshot_aceptado',
     causa: 'El proyecto esta en CREATED: todavia no tiene un snapshot aceptado, asi que no hay lectura tecnica de la que derivar su constitution.',
     accion: 'Corre el analisis del proyecto y acepta el snapshot, o declaralo proyecto nuevo si no hay codigo que escanear.',
   },
   DISCOVERED: {
     etapa: 'Constitution',
+    artefacto: 'constitution_vigente',
     causa: 'El proyecto tiene snapshot aceptado pero no tiene constitution fijada: el runtime no tiene reglas que consultar cuando una decision sea ambigua.',
     accion: 'Revisa la constitution propuesta y fijala.',
   },
   CONSTITUTED: {
     etapa: 'Bootstrap',
+    artefacto: 'bootstrap_resuelto',
     causa: 'La constitution esta fijada pero el bootstrap no se ha resuelto: hay recomendaciones sin decidir, y ninguna se escribe sin tu decision.',
     accion: 'Resuelve cada recomendacion (aplicar, personalizar u omitir) y cierra el bootstrap.',
   },
   BOOTSTRAPPED: {
     etapa: 'Conexiones',
+    artefacto: 'conexion_viva',
     causa: 'El setup esta resuelto pero el proyecto no tiene ninguna conexion viva: sin tracker ni SCM, un ciclo no tiene de donde sacar el work item ni donde abrir el pull request.',
     accion: 'Conecta al menos un proveedor desde Conexiones.',
   },
   CONNECTED: {
     etapa: 'Flota',
+    artefacto: 'flota_declarada',
     causa: 'El proyecto esta conectado pero no tiene flota declarada: no hay ningun agente con rol, runtime y presupuesto definidos.',
     accion: 'Declara al menos un implementador y un revisor con runtimes distintos.',
   },
   ACTIVE: null,
+}
+
+/* --- El recorrido del ciclo de vida -------------------------------------- */
+
+/**
+ * Las etapas EN ORDEN.
+ *
+ * Es `ESTADOS` de `packages/store/src/proyecto.mjs`, transcrita: alli el
+ * indice es lo que distingue avanzar de retroceder, y aqui es lo que
+ * distingue una etapa cerrada de una que todavia no ha pasado.
+ *
+ * NO se deriva de `Object.keys(ETIQUETA_ESTADO_PROYECTO)`. El orden de las
+ * claves de un objeto es un detalle del motor que nadie promete, y este orden
+ * es la columna vertebral del producto: si un dia se reordena la tabla de
+ * etiquetas por comodidad, el indicador pinta el recorrido en otro orden y
+ * sigue compilando.
+ */
+export const ETAPAS_DEL_PROYECTO: readonly EstadoProyecto[] = [
+  'CREATED',
+  'DISCOVERED',
+  'CONSTITUTED',
+  'BOOTSTRAPPED',
+  'CONNECTED',
+  'ACTIVE',
+] as const
+
+/**
+ * Los artefactos que exigen las guardas, con el nombre EXACTO con el que el
+ * almacen los devuelve (`GUARDAS` en `packages/store/src/proyecto.mjs`).
+ */
+export type NombreDeArtefacto =
+  | 'snapshot_aceptado'
+  | 'constitution_vigente'
+  | 'bootstrap_resuelto'
+  | 'conexion_viva'
+  | 'flota_declarada'
+
+/**
+ * Lo que devuelve una guarda, y son TRES campos, no uno.
+ *
+ * `hallado` es el que no se puede perder por el camino. Una tabla escrita en
+ * el cliente solo sabe decir "falta el snapshot"; la guarda sabe decir "el
+ * snapshot esta completo pero tiene 12 hallazgos con decision pendiente", y
+ * las dos frases mandan al operador a sitios distintos. `comoConseguirlo` es
+ * la otra mitad: que hacer, que es lo que NFR-006 exige de todo "no".
+ */
+export interface VeredictoDeArtefacto {
+  listo: boolean
+  hallado: string
+  comoConseguirlo: string
+}
+
+/**
+ * `GET /v1/projects/:id` devuelve `{ proyecto, artefactos, snapshots }`, y
+ * `artefactos` es el estado de CADA guarda, no solo el de la que bloquea.
+ *
+ * PARCIAL A PROPOSITO. El contrato (`control-api.md`) describe esta ruta como
+ * "detalle completo" y no enumera las claves de `artefactos`: quien las
+ * enumera es el almacen. Exigirlas todas aqui convierte un servicio con una
+ * guarda mas —o una menos— en una pantalla en blanco.
+ *
+ * LA LISTA NO LAS TRAE. `GET /v1/projects` responde con la vista de inicio
+ * (una sola consulta, NFR-002) y ahi no caben cinco guardas por proyecto. Por
+ * eso el indicador de la fila funciona sin esto y solo lo aprovecha cuando
+ * quien lo pinta tiene el detalle delante.
+ */
+export type ArtefactosDeProyecto = Partial<Record<NombreDeArtefacto, VeredictoDeArtefacto>>
+
+/**
+ * El recorrido REAL de un proyecto, que no siempre son seis pasos.
+ *
+ * EL ATAJO ESTA DECLARADO EN LA MAQUINA DE ESTADOS, no es una suposicion de
+ * esta pantalla: `TRANSICIONES` tiene la arista
+ * `CREATED -> CONSTITUTED` con `soloOrigen: "nuevo"`, porque en un proyecto
+ * nuevo no hay codigo que escanear y `DISCOVERED` no tendria sobre que
+ * decidir. Un indicador que pinta seis pasos siempre miente sobre la mitad de
+ * los proyectos: ensena una etapa que ese proyecto no va a pisar nunca y deja
+ * al operador esperando un snapshot que nadie va a correr.
+ *
+ * EL HUECO, declarado como hueco (principio X): la lista de proyectos dice
+ * DONDE esta el proyecto, no POR DONDE paso. Un proyecto `nuevo` puede tomar
+ * igualmente `CREATED -> DISCOVERED` —esa arista no lleva `soloOrigen`— y
+ * desde `CONSTITUTED` ya no hay forma de saber cual de los dos caminos siguio.
+ * Se pinta el atajo, que es el camino declarado para ese origen, salvo cuando
+ * el proyecto esta PARADO en `DISCOVERED`: eso es prueba de que no lo tomo, y
+ * esconder la etapa en la que el proyecto esta de pie seria el peor error
+ * posible de los dos.
+ */
+export function recorridoDelProyecto(
+  proyecto: Pick<Proyecto, 'estado' | 'origen'>,
+): readonly EstadoProyecto[] {
+  if (proyecto.origen !== 'nuevo') return ETAPAS_DEL_PROYECTO
+  if (proyecto.estado === 'DISCOVERED') return ETAPAS_DEL_PROYECTO
+  return ETAPAS_DEL_PROYECTO.filter((etapa) => etapa !== 'DISCOVERED')
+}
+
+/**
+ * La etapa que falta segun el ESTADO y el ORIGEN.
+ *
+ * `ETAPA_PENDIENTE` sola se equivoca con los proyectos nuevos y el fallo es
+ * concreto: a un proyecto `nuevo` en `CREATED` le dice "corre el analisis y
+ * acepta el snapshot", y ese proyecto no tiene nada que analizar — la carpeta
+ * esta vacia porque la creo el propio servicio. El operador corre un scan que
+ * no puede encontrar nada, y el estado no se mueve.
+ */
+export function etapaPendienteDeclarada(
+  proyecto: Pick<Proyecto, 'estado' | 'origen'>,
+): EtapaPendiente | null {
+  if (proyecto.estado === 'CREATED' && proyecto.origen === 'nuevo') {
+    return {
+      etapa: 'Constitution',
+      artefacto: 'constitution_vigente',
+      causa:
+        'El proyecto es nuevo y esta en CREATED: no hay codigo que escanear, asi que no pasa por Discovery. Lo que le falta es la constitution, que es el unico artefacto que la guarda del atajo exige.',
+      accion:
+        'Redacta y fija la constitution del proyecto. Con ella, el proyecto salta de CREATED a CONSTITUTED sin snapshot.',
+    }
+  }
+  return ETAPA_PENDIENTE[proyecto.estado]
+}
+
+/**
+ * La etapa que falta, prefiriendo lo que el servicio HALLO a lo que esta
+ * pantalla supone.
+ *
+ * Cuando llegan los `artefactos` del detalle, la frase que se lee es la de la
+ * guarda, que fue a buscar. Cuando no llegan —la lista no los trae— se lee la
+ * declarada, que es correcta pero generica.
+ *
+ * EL TERCER CASO ES EL QUE NADIE ESCRIBE Y SE VE FEO EN PANTALLA: la guarda
+ * dice que el artefacto YA ESTA y el estado sigue sin moverse, porque el
+ * estado solo cambia cuando alguien pide la transicion. Sin este caso, la
+ * pantalla pone "fija la constitution" al lado de una constitution fijada, y
+ * el operador la vuelve a fijar.
+ */
+export function etapaQueFalta(
+  proyecto: Pick<Proyecto, 'estado' | 'origen'>,
+  artefactos?: ArtefactosDeProyecto | null,
+): EtapaPendiente | null {
+  const declarada = etapaPendienteDeclarada(proyecto)
+  if (!declarada) return null
+
+  const veredicto = declarada.artefacto ? artefactos?.[declarada.artefacto] : undefined
+  if (!veredicto) return declarada
+
+  if (veredicto.listo) {
+    return {
+      ...declarada,
+      causa: `La guarda ya da por bueno el artefacto de esta etapa: ${veredicto.hallado}. Lo que falta no es producirlo, es avanzar la etapa — el estado del proyecto solo cambia cuando alguien pide la transicion.`,
+      accion: `Avanza el proyecto a la etapa siguiente desde ${declarada.etapa}. Retroceder no existe, asi que la transicion se pide una vez y no se deshace.`,
+    }
+  }
+
+  return { ...declarada, causa: veredicto.hallado, accion: veredicto.comoConseguirlo }
 }
 
 /** `POST /v1/projects`. Lo que la pantalla de alta envia al servicio. */

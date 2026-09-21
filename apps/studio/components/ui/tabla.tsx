@@ -94,7 +94,30 @@ export function Tabla<T>({
   if (filas.length === 0) return null
 
   return (
-    <table className={cn('w-full border-collapse', className)}>
+    <table
+      className={cn(
+        'w-full border-collapse',
+        // LA TABLA ENTERA ENTRA DE UNA VEZ, Y LAS FILAS NO SE ANIMAN.
+        //
+        // La tentacion aqui es el escalonado: cada `<tr>` con su retraso, que
+        // queda muy bien en una captura de tres filas. Con veinte —que es lo
+        // normal en runs o en credenciales— son veinte esperas antes de que la
+        // ultima linea exista, y el operador que vino a comparar dos numeros se
+        // queda mirando como aparecen. Es literalmente "gate reading behind
+        // animation", que es lo unico que Geist prohibe de forma explicita.
+        //
+        // Lo que SI tiene trabajo es el bloque completo: la tabla aparece donde
+        // estaba el esqueleto, y el fundido dice "es lo mismo que estabas
+        // mirando, ya cargado" en vez de un cambiazo seco.
+        //
+        // Se anima al MONTAR y no en cada render, y eso es justo lo que se
+        // quiere: al filtrar, React reusa el mismo `<table>` y no hay
+        // animacion. Volver a fundir la tabla en cada tecleo del filtro seria
+        // retrasar la lectura una vez por letra.
+        'movimiento-contenido-cargado',
+        className,
+      )}
+    >
       <caption className="sr-only">{etiqueta}</caption>
 
       <thead>

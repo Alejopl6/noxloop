@@ -79,6 +79,16 @@ export function Entity({
     <Contenedor
       aria-current={seleccionada ? 'true' : undefined}
       className={cn(
+        // `transition-colors` con la duracion y la curva de `--ds-motion-
+        // popover-*` (reapuntadas en `globals.css`). El fundido del resaltado
+        // es lo que separa "el raton pasa por encima" de "el raton esta aqui":
+        // en una lista sin bordes, donde lo unico que marca la fila es un fondo
+        // translucido al 5%, un cambio instantaneo parpadea al recorrer la
+        // lista y no se lee como seguimiento.
+        //
+        // El anillo de foco NO entra aqui: vive en `box-shadow`, que
+        // `transition-colors` no toca. Aparece instantaneo a proposito
+        // (NFR-005).
         'group relative flex items-start gap-3 rounded-md px-3 py-3 transition-colors',
         alPulsar ? 'hover:bg-ds-gray-alpha-100' : null,
         seleccionada ? 'bg-ds-gray-alpha-100' : null,
@@ -153,7 +163,19 @@ export function ListaDeEntidades({
   className?: string
 }) {
   return (
-    <ul aria-label={etiqueta} className={cn('-mx-3 flex flex-col', className)}>
+    <ul
+      aria-label={etiqueta}
+      className={cn(
+        '-mx-3 flex flex-col',
+        // La lista entra COMO BLOQUE, nunca fila a fila. Es el mismo caso que
+        // la tabla: `EsqueletoDeLista` deja tres huecos y esto es lo que los
+        // sustituye, asi que el fundido dice "es lo mismo, ya cargado". Un
+        // escalonado por fila convertiria una lista de veinte credenciales en
+        // veinte esperas antes de poder leerla entera.
+        'movimiento-contenido-cargado',
+        className,
+      )}
+    >
       {children}
     </ul>
   )

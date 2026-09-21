@@ -32,8 +32,24 @@ import { cn } from '@/lib/utils'
  * eso se decide, no se estira.
  */
 
+/**
+ * EL CAMBIO DE TONO SE FUNDE, y no por estetica. Un badge cambia de tono solo
+ * cuando la cosa cambio de estado —un run que pasa de "En marcha" a "Fallido"—
+ * y eso ocurre mientras el operador mira OTRA parte de la pantalla, en una
+ * tabla donde hay quince badges mas. Un cambio instantaneo no deja rastro: la
+ * tabla simplemente es distinta a la siguiente vez que se mira. El fundido
+ * corto es lo que hace que el ojo lo cace de refilon y sepa QUE fila cambio.
+ *
+ * Con `prefers-reduced-motion` el cambio es instantaneo otra vez, y por eso el
+ * texto del badge nunca es opcional: "Fallido" sigue escrito. Lo que se pierde
+ * es el aviso de refilon, no la informacion.
+ *
+ * La duracion y la curva salen del defecto reapuntado en `globals.css`
+ * (`--ds-motion-popover-*`); `transition-colors` NO incluye `box-shadow`, asi
+ * que el anillo de foco sigue apareciendo instantaneo.
+ */
 const variantesDeBadge = cva(
-  'inline-flex items-center gap-1 whitespace-nowrap rounded-full text-label-12',
+  'inline-flex items-center gap-1 whitespace-nowrap rounded-full text-label-12 transition-colors',
   {
     variants: {
       tono: {

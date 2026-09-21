@@ -11,7 +11,7 @@ import {
   Wrench,
 } from 'lucide-react'
 
-import { useRuta, type Navegar, type Ruta } from '@/lib/ruta'
+import { esSeccionDeProyecto, useRuta, type Navegar, type Ruta } from '@/lib/ruta'
 import { useServicio } from '@/components/proveedor-servicio'
 import {
   BannerSinConexion,
@@ -21,6 +21,9 @@ import {
 import { Button } from '@/components/ui/button'
 import { MenuDeComandos, useMenuDeComandos, type Comando } from '@/components/ui/menu-de-comandos'
 import { SelectorDeTema } from '@/components/selector-tema'
+import { Marco } from '@/components/marco/marco'
+import { anchoDelLienzo } from '@/components/marco/lienzo'
+import { ETIQUETA_DE_SECCION, SECCIONES_DE_LA_ETAPA } from '@/components/marco/secciones'
 import { VistaDeInicio } from '@/components/vista-inicio'
 import { VistaDeBandeja } from '@/components/vista-bandeja'
 import { VistaDeCatalogo } from '@/components/vista-catalogo'
@@ -43,6 +46,12 @@ import { cn } from '@/lib/utils'
  * Es un componente de cliente entero a proposito: en un export estatico el
  * prerender produce HTML sin datos, y todo lo que se pinta depende de lo que
  * diga el servicio. Fingir contenido en el servidor aqui seria fingir datos.
+ *
+ * LO QUE ESTE ARCHIVO YA NO HACE. La forma del marco —migas, los dos niveles
+ * de navegacion, el contexto de proyecto y el ancho del lienzo— vive en
+ * `components/marco/`. Aqui quedan las tres cosas que son del cascaron y de
+ * nadie mas: que pantalla corresponde a la ruta, el estado del servicio, y los
+ * comandos de ⌘K.
  */
 
 /** FR-005 llevado al encabezado: en todo momento se sabe si esto es de ahora. */
@@ -67,7 +76,11 @@ function IndicadorDeFrescura() {
           fresco ? 'bg-ds-green-700' : 'bg-ds-amber-700',
         )}
       />
-      <span className="text-label-12 text-ds-gray-900">
+      {/* `sr-only` y no `hidden` en ventana estrecha: la cabecera es de altura
+          fija y no envuelve, asi que algo tiene que ceder, pero ocultarlo del
+          todo se lleva por delante el anuncio de `aria-live` — que es
+          precisamente lo unico que tiene quien no ve el punto de color. */}
+      <span className="sr-only text-label-12 text-ds-gray-900 md:not-sr-only">
         {fresco
           ? 'En vivo'
           : ultimoContacto && ahora
@@ -166,14 +179,28 @@ function Contenido({ ruta, navegar }: { ruta: Ruta; navegar: Navegar }) {
  * levantar las manos del teclado. Un menu que solo conoce los comandos de la
  * pantalla abierta es una barra de herramientas con otro aspecto.
  *
- * Las pantallas que cuelgan de un proyecto no estan aqui a proposito: sin
- * saber de que proyecto, el comando llevaria a la pantalla que dice que falta
- * el identificador. Se llega a ellas desde la lista, que es donde se elige.
+ * LAS ETAPAS DEL PROYECTO YA SI ESTAN, y antes no. La razon por la que no
+ * estaban era buena mientras duro: sin contexto de proyecto persistente, un
+ * comando "Abrir constitution" no sabia de que proyecto y habria llevado a la
+ * pantalla que dice que falta el identificador. Con el proyecto abierto en el
+ * marco, el identificador se conoce, y las seis etapas entran al menu ATADAS A
+ * EL. Sin proyecto abierto siguen sin aparecer, por el mismo motivo de antes.
  */
-function comandosDeNavegacion(navegar: Navegar): Comando[] {
+function comandosDeNavegacion(navegar: Navegar, proyectoId: string | null): Comando[] {
   const ir = (destino: Ruta) => () => navegar(destino)
 
+  const deEtapa: Comando[] = proyectoId
+    ? SECCIONES_DE_LA_ETAPA.map((seccion) => ({
+        id: `ir-${seccion}`,
+        etiqueta: `Abrir ${ETIQUETA_DE_SECCION[seccion].toLowerCase()}`,
+        descripcion: 'Del proyecto que tienes abierto',
+        grupo: 'Proyecto abierto',
+        ejecutar: ir({ seccion, id: proyectoId }),
+      }))
+    : []
+
   return [
+    ...deEtapa,
     {
       id: 'ir-inicio',
       etiqueta: 'Abrir inicio',
@@ -236,49 +263,30 @@ function comandosDeNavegacion(navegar: Navegar): Comando[] {
   ]
 }
 
-/**
- * La navegacion visible. Cinco entradas y no once.
- *
- * Las pantallas de etapa —snapshot, constitution, bootstrap, conexiones— NO
- * estan aqui: pertenecen a un proyecto, y una barra con cuatro entradas que
- * la mitad del tiempo no llevan a ninguna parte ensena a no mirarla. Se llega
- * a ellas desde la fila del proyecto, que es donde el operador ya esta
- * decidiendo cual.
- */
-const SECCIONES_VISIBLES = [
-  { seccion: 'inicio' as const, etiqueta: 'Inicio' },
-  { seccion: 'proyectos' as const, etiqueta: 'Proyectos' },
-  { seccion: 'bandeja' as const, etiqueta: 'Bandeja' },
-  { seccion: 'credenciales' as const, etiqueta: 'Credenciales' },
-  { seccion: 'auditoria' as const, etiqueta: 'Auditoria' },
-]
-
-/** Que entrada de la navegacion queda marcada segun donde se esta. */
-const SECCION_PADRE: Partial<Record<Ruta['seccion'], Ruta['seccion']>> = {
-  'proyecto-nuevo': 'proyectos',
-  snapshot: 'proyectos',
-  constitution: 'proyectos',
-  bootstrap: 'proyectos',
-  conexiones: 'proyectos',
-  flota: 'proyectos',
-  runs: 'proyectos',
-}
-
 export function Aplicacion() {
   const { ruta, navegar } = useRuta()
   const { estado } = useServicio()
   const menu = useMenuDeComandos()
 
-  const comandos = useMemo(() => comandosDeNavegacion(navegar), [navegar])
+  const proyectoAbierto = esSeccionDeProyecto(ruta.seccion) ? ruta.id : null
+  const comandos = useMemo(
+    () => comandosDeNavegacion(navegar, proyectoAbierto),
+    [navegar, proyectoAbierto],
+  )
 
   // El catalogo de componentes va ANTES de la comprobacion del servicio, y a
   // proposito: no lee nada del servicio, asi que exigir el daemon para revisar
   // el contraste de un `Badge` seria una barrera sin motivo. De paso, montarlo
   // desde aqui es lo que hace que el build ejercite los componentes en vez de
   // dejarlos como codigo que compila y nadie ha renderizado nunca.
+  //
+  // Va SIN el marco: no es superficie de producto, y pintarle migas y
+  // navegacion de proyecto alrededor diria que lo es. El ancho si sale de
+  // `lienzo.ts`, para que los componentes se revisen en el mismo espacio en el
+  // que despues viven.
   if (ruta.seccion === 'catalogo') {
     return (
-      <main className="mx-auto w-full max-w-5xl px-6 py-10">
+      <main className={cn('w-full px-4 py-8 sm:px-6 lg:px-8', anchoDelLienzo('catalogo'))}>
         <VistaDeCatalogo navegar={navegar} />
       </main>
     )
@@ -288,49 +296,19 @@ export function Aplicacion() {
 
   // Nunca hubo contacto: no hay datos que ensenar, asi que se ensena el
   // problema. Lo que no se hace, jamas, es dejar la pantalla en blanco.
+  //
+  // Tampoco se pinta el marco alrededor: una navegacion de once entradas que
+  // no lleva a ningun sitio porque no hay servicio es once promesas falsas.
   if (estado === 'sin_servicio') return <PantallaServicioCaido />
 
-  const activa = SECCION_PADRE[ruta.seccion] ?? ruta.seccion
-
   return (
-    <div className="flex min-h-dvh flex-col">
-      {/* NFR-005: lo primero que recibe el foco es la forma de saltarse el
-          encabezado. Sin esto, llegar al contenido con teclado cuesta seis
-          tabulaciones en cada carga. */}
-      <a
-        href="#contenido"
-        className="sr-only rounded-md bg-ds-background-100 px-3 py-2 text-label-14 text-ds-gray-1000 focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50"
-      >
-        Saltar al contenido
-      </a>
-
-      <header className="border-b border-ds-gray-400">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-3">
-          <span className="text-heading-16 text-ds-gray-1000">noxloop</span>
-
-          <nav aria-label="Secciones" className="flex flex-wrap items-center gap-1">
-            {SECCIONES_VISIBLES.map(({ seccion, etiqueta }) => {
-              const esLaActiva = activa === seccion
-              return (
-                <button
-                  key={seccion}
-                  type="button"
-                  aria-current={esLaActiva ? 'page' : undefined}
-                  onClick={() => navegar({ seccion, id: null })}
-                  className={cn(
-                    'rounded-md px-2 py-1 text-button-14 transition-colors',
-                    esLaActiva
-                      ? 'bg-ds-gray-alpha-100 text-ds-gray-1000'
-                      : 'text-ds-gray-900 hover:text-ds-gray-1000',
-                  )}
-                >
-                  {etiqueta}
-                </button>
-              )
-            })}
-          </nav>
-
-          <div className="ml-auto flex items-center gap-4">
+    <>
+      <Marco
+        ruta={ruta}
+        navegar={navegar}
+        aviso={estado === 'sin_conexion' ? <BannerSinConexion /> : null}
+        acciones={
+          <>
             {/* El menu de comandos tiene su atajo global, y ademas un boton:
                 un atajo sin nada que lo anuncie solo lo usa quien ya sabia que
                 existe. */}
@@ -342,17 +320,15 @@ export function Aplicacion() {
             </Button>
             <IndicadorDeFrescura />
             <SelectorDeTema />
-          </div>
-        </div>
-      </header>
-
-      {estado === 'sin_conexion' ? <BannerSinConexion /> : null}
-
-      <main id="contenido" className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+          </>
+        }
+      >
         <Contenido ruta={ruta} navegar={navegar} />
-      </main>
+      </Marco>
 
+      {/* Fuera del marco, y no dentro de `<main>`: un dialogo global no
+          pertenece al landmark del contenido de la pantalla abierta. */}
       <MenuDeComandos comandos={comandos} abierto={menu.abierto} alCerrar={menu.cerrar} />
-    </div>
+    </>
   )
 }

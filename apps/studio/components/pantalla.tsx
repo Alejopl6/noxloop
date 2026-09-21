@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/esqueleto'
+import { useHayMigas } from '@/components/marco/contexto'
 import { cn } from '@/lib/utils'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import type { Lectura } from '@/lib/lectura'
@@ -15,8 +16,10 @@ import type { Navegar, Ruta } from '@/lib/ruta'
  *
  * Existen aqui y no copiadas en cada vista por un motivo concreto de cada una:
  *
- *   - `Encabezado`: el enlace de vuelta tiene que ser lo primero que recibe el
- *     foco dentro del contenido, y en once pantallas eso se olvida una vez.
+ *   - `Encabezado`: el titulo, su identificador operativo y sus acciones
+ *     alineados igual en once pantallas. Cuando cada una lo resuelve, la
+ *     tercera pone el identificador debajo del titulo y la septima lo pone al
+ *     lado, y navegar entre ellas se nota.
  *   - `FalloDeLectura`: un error que pierde la `accion` por el camino es el
  *     fallo que `daemon.ts` existe para evitar; si cada pantalla lo pinta a su
  *     manera, la decima pinta solo la causa.
@@ -38,7 +41,16 @@ export function Encabezado({
 }: {
   titulo: string
   descripcion?: ReactNode
-  /** A donde lleva el enlace de vuelta. Sin esto no se pinta. */
+  /**
+   * A donde lleva el enlace de vuelta. Sin esto no se pinta.
+   *
+   * SE CALLA CUANDO EL MARCO YA PINTA LAS MIGAS, y el fallo que eso evita es
+   * concreto: nueve vistas pasan `volver` porque era la unica vuelta atras que
+   * tenian, y con las migas en la cabecera quedaban dos —una encima de la
+   * otra, al mismo destino— y quien navega con teclado tabulaba por las dos
+   * antes de llegar al titulo. La prop se sigue aceptando porque fuera del
+   * marco (el catalogo de componentes) sigue siendo la unica salida.
+   */
   volver?: { ruta: Ruta; etiqueta: string }
   navegar?: Navegar
   /** Controles de la pantalla. A la derecha del titulo. */
@@ -46,9 +58,11 @@ export function Encabezado({
   /** Identificador operativo del objeto que se mira. Geist Mono. */
   identificador?: string
 }) {
+  const hayMigas = useHayMigas()
+
   return (
     <div className="flex flex-col gap-2">
-      {volver && navegar ? (
+      {volver && navegar && !hayMigas ? (
         <Button
           variant="ghost"
           size="sm"

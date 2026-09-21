@@ -209,6 +209,13 @@ export function MenuDeComandos({
       alCerrar={alCerrar}
       etiqueta="Menu de comandos"
       ancho="lg"
+      // POPOVER Y NO OVERLAY, aunque por dentro sea el mismo `<dialog>` modal.
+      // Esta superficie esta en el camino de teclado y se abre y se cierra
+      // decenas de veces por sesion: los .3s del overlay se pagan enteros cada
+      // ⌘K, antes de poder leer la lista. Los .2s del par de popover son el
+      // token que Geist tiene justo para esto. El modal destructivo si usa
+      // overlay: ese se abre una vez y hay que pararse a leerlo.
+      movimiento="popover"
       className={className}
     >
       <div className="flex items-center gap-2 border-b border-ds-gray-400 px-4">

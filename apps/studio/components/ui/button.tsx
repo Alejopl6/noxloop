@@ -18,6 +18,22 @@ import { cn } from '@/lib/utils'
  * `asChild` sin que se pierda nada: los nombres de variante son los mismos.
  *
  * Los colores salen de los tokens de Geist, no de valores sueltos.
+ *
+ * MOVIMIENTO: `transition-colors` y nada mas, y las dos partes de esa frase
+ * importan.
+ *
+ * El hover se funde porque dice "esto responde": un boton `ghost` no tiene
+ * fondo ni borde, y sin la transicion el unico aviso de que es pulsable es un
+ * rectangulo gris que aparece de golpe. La duracion y la curva ya no son el
+ * `150ms` de fabrica de Tailwind — `globals.css` reapunta el defecto a
+ * `--ds-motion-popover-*`, asi que este archivo no lleva ningun numero.
+ *
+ * EL ANILLO DE FOCO NO SE ANIMA, y es deliberado: `transition-colors` no
+ * incluye `box-shadow`, que es donde vive `--ds-focus-ring`. Quien navega con
+ * el tabulador necesita saber DONDE esta, no verlo llegar; fundir el anillo
+ * pone 200ms entre la tecla y la respuesta, y al tercer tabulador el operador
+ * va por delante de la interfaz. Es NFR-005 y es la razon de que `transition`
+ * aqui sea la variante estrecha y no `transition-all`.
  */
 const buttonVariants = cva(
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-button-14 transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',

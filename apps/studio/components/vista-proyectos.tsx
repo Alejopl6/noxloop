@@ -3,9 +3,14 @@
 import { useMemo, useState } from 'react'
 import { FolderGit2, GitBranch, Plus, Sparkles } from 'lucide-react'
 
-import { Badge, type TonoDeBadge } from '@/components/ui/insignia'
+import { Badge } from '@/components/ui/insignia'
 import { Button } from '@/components/ui/button'
 import { Campo } from '@/components/ui/campo'
+import {
+  CicloDeVida,
+  LoQueFalta,
+  destinoDeLaEtapaQueFalta,
+} from '@/components/ui/ciclo-de-vida'
 import { Entity, ListaDeEntidades } from '@/components/ui/entidad'
 import { EmptyState } from '@/components/ui/estado-vacio'
 import {
@@ -16,13 +21,8 @@ import {
 } from '@/components/pantalla'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import { contiene } from '@/lib/texto'
-import {
-  ETAPA_PENDIENTE,
-  ETIQUETA_ESTADO_PROYECTO,
-  type EstadoProyecto,
-  type Proyecto,
-} from '@/lib/tipos'
-import { DESTINO_DE_ETAPA, type Navegar } from '@/lib/ruta'
+import { etapaQueFalta, type Proyecto } from '@/lib/tipos'
+import { type Navegar } from '@/lib/ruta'
 
 /**
  * T084 · La lista de proyectos.
@@ -45,26 +45,20 @@ import { DESTINO_DE_ETAPA, type Navegar } from '@/lib/ruta'
  *   - El nombre, que es lo pulsable.
  *   - La ruta o el remoto, en Geist Mono: es un identificador operativo, y es
  *     lo unico que distingue dos proyectos que se llaman parecido.
- *   - LA ETAPA QUE FALTA, dicha entera. Es la unica pregunta que el operador
- *     se hace al abrir esta pantalla: "cual de estos me esta esperando". Un
- *     badge con el estado solo responde a medias, porque `BOOTSTRAPPED` no
- *     dice que hacer; el texto de `ETAPA_PENDIENTE` si.
- *   - El estado, en badge, con la palabra escrita: la senal no cromatica va
- *     dentro del propio badge.
+ *   - LA ETAPA QUE FALTA, dicha entera, Y COMO CONSEGUIRLA. Es la unica
+ *     pregunta que el operador se hace al abrir esta pantalla: "cual de estos
+ *     me esta esperando". Un badge con el estado solo responde a medias,
+ *     porque `BOOTSTRAPPED` no dice que hacer; `LoQueFalta` si, y dice las dos
+ *     frases —que paso y que hacer— en vez de tirar la segunda.
+ *   - EL CICLO DE VIDA, en una regleta de seis marcas con su etapa escrita al
+ *     lado. Es lo que distingue este producto de un orquestador de agentes, y
+ *     hasta que `CicloDeVida` existio estaba invisible: habia que deducir
+ *     donde estaba el proyecto leyendo el parrafo de la etapa que falta.
  *
  * El filtro existe porque doce filas se barren y cuarenta no. Su estado vacio
  * es distinto del de "no hay proyectos" a proposito: uno pide cambiar la
  * busqueda y el otro pide crear algo (ver `EmptyState`).
  */
-
-const TONO_DEL_ESTADO: Record<EstadoProyecto, TonoDeBadge> = {
-  CREATED: 'neutral',
-  DISCOVERED: 'neutral',
-  CONSTITUTED: 'informativo',
-  BOOTSTRAPPED: 'informativo',
-  CONNECTED: 'informativo',
-  ACTIVE: 'exito',
-}
 
 const ICONO_DEL_ORIGEN = {
   nuevo: Sparkles,
@@ -84,8 +78,11 @@ function FilaDeProyecto({
   proyecto: Proyecto
   navegar: Navegar
 }) {
-  const pendiente = ETAPA_PENDIENTE[proyecto.estado]
-  const destino = DESTINO_DE_ETAPA[proyecto.estado]
+  const pendiente = etapaQueFalta(proyecto)
+  // Por el ARTEFACTO que falta y no por el estado: `DESTINO_DE_ETAPA` manda a
+  // `snapshot` todo lo que este en `CREATED`, y un proyecto `nuevo` en CREATED
+  // no tiene nada que escanear — su carpeta la creo vacia el propio servicio.
+  const destino = destinoDeLaEtapaQueFalta(proyecto)
   const Icono = ICONO_DEL_ORIGEN[proyecto.origen] ?? FolderGit2
   const contadores = proyecto.contadores
 
@@ -95,25 +92,14 @@ function FilaDeProyecto({
       miniatura={<Icono />}
       titulo={proyecto.nombre}
       identificador={ubicacion(proyecto)}
-      descripcion={
-        pendiente
-          ? pendiente.causa
-          : 'El proyecto esta establecido: tiene snapshot, constitution, setup resuelto, conexiones vivas y flota declarada. Puede recibir ciclos del motor.'
-      }
+      descripcion={<LoQueFalta proyecto={proyecto} />}
       metadatos={
         <>
-          <Badge tono={TONO_DEL_ESTADO[proyecto.estado]}>
-            {ETIQUETA_ESTADO_PROYECTO[proyecto.estado]}
-          </Badge>
+          <CicloDeVida proyecto={proyecto} />
           {contadores?.entradas_bandeja ? (
             <Badge tono="advertencia">
               {contadores.entradas_bandeja} en bandeja
             </Badge>
-          ) : null}
-          {pendiente ? (
-            <span className="text-label-12 text-ds-gray-700">
-              Falta: {pendiente.etapa}
-            </span>
           ) : null}
           {typeof contadores?.agentes === 'number' ? (
             <span className="text-label-12 text-ds-gray-700">
@@ -174,7 +160,7 @@ export function PanelDeProyectos({
     <div className="flex flex-col gap-8">
       <Encabezado
         titulo="Proyectos"
-        descripcion="Una fila por proyecto, con la etapa que le falta escrita entera. No hay tarjetas: con doce proyectos, doce tarjetas son doce rectangulos que se aprenden a ignorar."
+        descripcion="Una fila por proyecto, con su recorrido del ciclo de vida y la etapa que le falta escrita entera. No hay tarjetas: con doce proyectos, doce tarjetas son doce rectangulos que se aprenden a ignorar."
         acciones={
           <Button onClick={() => navegar({ seccion: 'proyecto-nuevo', id: null })}>
             <Plus />
