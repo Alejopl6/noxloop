@@ -43,6 +43,20 @@ function politicaDeTier(config, tier) {
 }
 
 /**
+ * Si una fase es de revision. Cubre `REVIEW` y `REVIEW-SINTESIS`.
+ *
+ * Se compara por prefijo y no por igualdad para que una fase de revision nueva
+ * —otra lente, otra sintesis— herede la regla sin que nadie se acuerde de
+ * anadirla a una lista. Una lista de nombres exactos es justo lo que dejo el
+ * agujero que esto cierra.
+ *
+ * @param {string} nombre
+ */
+export function esRevision(nombre) {
+  return /^REVIEW(\b|[-_])/i.test(String(nombre));
+}
+
+/**
  * @param {string} itemId
  * @param {object} deps
  */
@@ -639,7 +653,24 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
     // Sesion NUEVA en la primera fase de la tarea, RETOMADA en las siguientes.
     // Retomar reusa el contexto que sirve; abrir nueva entre tareas evita la
     // degradacion por compactacion.
-    resume: t.sessionId || null,
+    //
+    // PERO NUNCA EN UNA REVISION, y esto era un agujero. Si el revisor retoma
+    // la sesion del implementador hereda su razonamiento entero, y la revision
+    // deja de romper para confirmar: el modelo que acaba de defender una
+    // solucion no la ataca en el turno siguiente. Es el riesgo que la
+    // definicion de producto nombra explicitamente para esta etapa, y el que
+    // hace que la metrica sea "proporcion de hallazgos que resultaron reales".
+    //
+    // El motor ya lo hacia bien por un lado: el camino de abanico
+    // (`revisionEnAbanico`) construye su peticion con `resume: null` a
+    // proposito. Este camino —la revision simple, que es la que corre con la
+    // configuracion por defecto— pasaba la sesion. Dos caminos para lo mismo y
+    // solo uno correcto; habia ademas un test que afirmaba el comportamiento
+    // equivocado, asi que nada lo delataba.
+    //
+    // Lo encontro el trabajo del contrato de adaptadores, al escribir la regla
+    // "el revisor no hereda el transcript" y comprobar contra que la cumplia.
+    resume: esRevision(nombre) ? null : (t.sessionId || null),
     model: politica.model,
     effort: politica.effort,
     prompt: promptDeFase(nombre, run, t, opts.extra),

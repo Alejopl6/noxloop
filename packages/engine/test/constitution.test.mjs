@@ -61,6 +61,12 @@ const DEL_ALMACEN = () => fuentes(join(ALMACEN, "src"));
 const NUCLEO = join(RAIZ, "packages/core");
 const DEL_NUCLEO = () => fuentes(join(NUCLEO, "src"));
 
+// Los adaptadores de runtime. Es el paquete donde un nombre propio haria mas
+// dano: el principio VI dice que soportar un runtime nuevo es anadir un
+// archivo, y en cuanto el codigo comun nombra a uno concreto deja de serlo.
+const ADAPTADORES = join(RAIZ, "packages/adapters");
+const DE_LOS_ADAPTADORES = () => fuentes(join(ADAPTADORES, "src"));
+
 // La interfaz. Sus fuentes son .ts y .tsx, asi que necesita su propio recorrido.
 const STUDIO = join(RAIZ, "apps/studio");
 
@@ -110,6 +116,7 @@ test("VII — el motor no contiene ningun nombre propio de organizacion, repo o 
     ...DEL_SCANNER(),
     ...DEL_ALMACEN(),
     ...DEL_NUCLEO(),
+    ...DE_LOS_ADAPTADORES(),
   ];
   for (const f of paquetes) {
     const texto = readFileSync(f, "utf8");
