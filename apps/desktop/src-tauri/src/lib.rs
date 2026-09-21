@@ -46,6 +46,8 @@
 //! la aplicacion la necesite. Esta declarado tambien en
 //! `capabilities/default.json`.
 
+pub mod llavero;
+
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -437,6 +439,85 @@ mod pruebas {
         );
         assert_eq!(url_de_la_marca("NOXLOOP_READY"), None);
         assert_eq!(url_de_la_marca("NOXLOOP_READY   "), None);
+    }
+
+    // T130 — LA GUARDA QUE SOSTIENE "NINGUN COMANDO DE BOVEDA SE EXPONE AL
+    // WEBVIEW". No se prueba leyendo el llavero: se prueba leyendo el codigo,
+    // porque lo que hay que impedir es que alguien AGREGUE la ruta. Un
+    // `#[tauri::command]` que devuelva un secreto, o un nombre de mas en
+    // `generate_handler!`, y la interfaz puede pedir el valor con un `invoke`
+    // desde cualquier script que se cuele en la pagina.
+    #[test]
+    fn ningun_comando_de_boveda_llega_al_webview() {
+        // Se miran las lineas de CODIGO, no los comentarios: la documentacion
+        // del modulo del llavero explica por que no hay ningun comando de
+        // Tauri, y para explicarlo tiene que nombrarlo. Una guarda que cuenta
+        // los comentarios empuja a no documentar la decision, que es justo lo
+        // que hay que conservar.
+        let sin_comentarios = |texto: &str| -> String {
+            texto
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let esta_lib = sin_comentarios(include_str!("lib.rs"));
+        let del_llavero = sin_comentarios(include_str!("llavero.rs"));
+
+        // 1. El modulo del llavero no define NINGUN comando de Tauri.
+        assert!(
+            !del_llavero.contains("#[tauri::command]"),
+            "el modulo del llavero define un comando de Tauri: el webview podria invocarlo"
+        );
+
+        // 2. La lista de comandos registrados es exactamente la que se espera.
+        //    Se compara la lista entera y no "no contiene llavero": un nombre
+        //    nuevo tiene que obligar a tocar esta prueba y explicarse.
+        let registrados = esta_lib
+            .split("generate_handler![")
+            .nth(1)
+            .expect("ya no hay generate_handler!: esta guarda dejo de mirar donde tiene que mirar")
+            .split(']')
+            .next()
+            .unwrap()
+            .trim()
+            .to_string();
+        assert_eq!(
+            registrados, "daemon_info",
+            "se registro un comando nuevo en el webview; si devuelve un secreto, el principio IX ya esta roto"
+        );
+    }
+
+    #[test]
+    fn el_llavero_nunca_recibe_el_valor_por_la_linea_de_comandos() {
+        // `ps ax -o command` muestra los argumentos de cualquier proceso a
+        // cualquier proceso del mismo usuario. El valor entra por la entrada
+        // estandar; por argv van la orden y la referencia, que es opaca.
+        let orden = llavero::Orden::partir(&[
+            "guardar".to_string(),
+            "--ref".to_string(),
+            "noxloop:w1:abc".to_string(),
+            "--servicio".to_string(),
+            "noxloop".to_string(),
+        ])
+        .expect("la orden tenia que partirse");
+        assert_eq!(orden.referencia.as_deref(), Some("noxloop:w1:abc"));
+        assert_eq!(orden.verbo, "guardar");
+
+        // Y la forma que SI lleva el valor en argv se rechaza: no hay manera de
+        // escribirla aunque alguien lo intente desde el lado de Node.
+        assert!(llavero::Orden::partir(&[
+            "guardar".to_string(),
+            "--valor".to_string(),
+            "un-secreto".to_string(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn una_orden_desconocida_se_rechaza_en_vez_de_hacer_algo_parecido() {
+        assert!(llavero::Orden::partir(&["exportar".to_string()]).is_err());
+        assert!(llavero::Orden::partir(&[]).is_err());
     }
 
     #[test]
