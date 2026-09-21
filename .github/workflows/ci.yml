@@ -11,7 +11,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["20", "22"]
+        # 22 y 24, no 20 y 22.
+        #
+        # Node 20 "Iron" salio de mantenimiento en abril de 2026, asi que probar
+        # contra el era probar contra una version que ya nadie parchea. Y el
+        # almacen consultable usa `node:sqlite`, que no existe antes de 22.5:
+        # declarar `engines: >=20` mientras el codigo importa un modulo que 20 no
+        # tiene es la clase de limite que se lee como puesto y no lo esta.
+        node: ["22", "24"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -250,3 +257,61 @@ jobs:
             echo "::error::la salida estatica tiene $archivos archivos: el export no genero la aplicacion"
             exit 1
           fi
+
+  # Las pruebas de la cascara de escritorio. Job aparte y no un paso mas del
+  # anterior por dos razones concretas:
+  #
+  #   1. El job de arriba corre DOS veces (Node 22 y 24) y compilar Tauri no
+  #      depende de la version de Node: seria pagar el compilado dos veces para
+  #      obtener el mismo resultado.
+  #   2. En Linux, compilar el crate `tauri` necesita webkit2gtk y gtk del
+  #      sistema. Esas dependencias no pintan nada en el job que prueba el
+  #      motor, que corre con Node y git y nada mas.
+  #
+  # Aqui viven DOS invariantes que no se pueden expresar desde Node:
+  #
+  #   - `ningun_comando_de_boveda_llega_al_webview` comprueba que el llavero no
+  #     tiene ningun `#[tauri::command]` y que la lista de `generate_handler!`
+  #     no crecio. Es el principio IX: el diseno se apoya en que la interfaz NO
+  #     TIENE la ruta para pedir un secreto, y un nombre de mas en esa lista la
+  #     crea. Se intento cubrirlo con una guarda en JavaScript y salio peor:
+  #     sin poder leer la lista de verdad, la expresion regular marcaba
+  #     `lib.rs` por declarar el modulo, y un falso positivo entrena a ignorar
+  #     la guarda.
+  #   - el parseo de `NOXLOOP_READY`, que es como la cascara averigua donde
+  #     escucha el servicio. Si se rompe, la ventana abre en blanco y el
+  #     sintoma no menciona ni el servicio ni la marca.
+  escritorio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Las dependencias de sistema que el crate `tauri` necesita en Linux. Sin
+      # ellas el fallo es un error de enlazado de C, que no menciona Tauri.
+      - name: dependencias de sistema de Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # `tauri-build` aborta si el binario declarado en `externalBin` no esta en
+      # disco, y ese binario es un runtime de Node de ~100 MB que no se
+      # versiona. La variable le dice al script que no hace falta materializarlo
+      # para compilar; empaquetarlo es trabajo del job de release.
+      - name: las pruebas de la cascara
+        working-directory: apps/desktop/src-tauri
+        env:
+          NOXLOOP_SIDECAR_ENLAZADO_OK: "1"
+        run: |
+          # `--lib` y no `cargo test` a secas: el binario del llavero habla con
+          # el almacen de secretos del sistema, y un runner de CI no tiene
+          # ninguno. Probarlo ahi exigiria un Secret Service falso, que probaria
+          # el falso y no el llavero.
+          cargo test --lib
+          cargo fmt --check

@@ -31,6 +31,23 @@ const DEL_MOTOR = () => [...fuentes(join(MOTOR, "src")), ...fuentes(join(MOTOR, 
 const SERVICIO = join(RAIZ, "packages/service");
 const DEL_SERVICIO = () => [...fuentes(join(SERVICIO, "src")), ...fuentes(join(SERVICIO, "bin"))];
 
+// La boveda. Se lista aparte del servicio porque las guardas que le aplican no
+// son las mismas: aqui la de "ningun secreto por argv" no admite la excepcion
+// del token de sesion, porque lo que pasa por este paquete SI son credenciales
+// del operador.
+const BOVEDA = join(RAIZ, "packages/vault");
+const DE_LA_BOVEDA = () => fuentes(join(BOVEDA, "src"));
+
+// El scanner. Entra en la guarda de genericidad porque es el paquete con mas
+// tentacion de nombres propios de todo el repositorio: un detector que busca
+// "el workflow de GitHub" o "el archivo de Linear" lo escribe cualquiera, y a
+// partir de ahi el scanner solo entiende los proyectos que se parecen a los de
+// quien lo escribio. El detector de puntos de extension del propio repo lo hace
+// bien y sirve de ejemplo: encuentra los cuatro proveedores por la FORMA —un
+// contrato arriba, implementaciones hermanas debajo— sin nombrar el directorio.
+const SCANNER = join(RAIZ, "packages/scanner");
+const DEL_SCANNER = () => fuentes(join(SCANNER, "src"));
+
 // La interfaz. Sus fuentes son .ts y .tsx, asi que necesita su propio recorrido.
 const STUDIO = join(RAIZ, "apps/studio");
 
@@ -73,7 +90,7 @@ test("VII — el motor no contiene ningun nombre propio de organizacion, repo o 
     /\.com\b/, /vstfs/i, /dev\.azure/i, /linear\.app/i, /api\.github/i,
   ];
   const hallazgos = [];
-  for (const f of [...DEL_MOTOR(), ...DEL_SERVICIO()]) {
+  for (const f of [...DEL_MOTOR(), ...DEL_SERVICIO(), ...DE_LA_BOVEDA(), ...DEL_SCANNER()]) {
     const texto = readFileSync(f, "utf8");
     for (const re of PROHIBIDOS) {
       const m = texto.match(re);
@@ -207,11 +224,15 @@ test("IX — ningun secreto llega a un subproceso por la linea de comandos", () 
     /--(?:secret|password|api-key|apikey)[=\s]/i,
   ];
   const hallazgos = [];
-  for (const f of [...DEL_MOTOR(), ...DEL_SERVICIO()]) {
+  for (const f of [...DEL_MOTOR(), ...DEL_SERVICIO(), ...DE_LA_BOVEDA()]) {
     // El token de SESION del servicio no es una credencial del operador: lo
     // genera la cascara de escritorio al arrancar, vive lo que vive la ventana
     // y no da acceso a nada fuera de esta maquina. Va por argumento porque el
     // sidecar tiene que recibirlo antes de escuchar en ningun puerto.
+    //
+    // La excepcion es SOLO del servicio. La boveda queda cubierta entera,
+    // porque lo que pasa por ella si son credenciales del operador: ahi no hay
+    // ningun valor que se pueda justificar en `argv`.
     if (f.includes("/service/")) continue;
     const texto = codigo(f);
     for (const re of SOSPECHOSOS) {
@@ -221,6 +242,24 @@ test("IX — ningun secreto llega a un subproceso por la linea de comandos", () 
   }
   assert.deepEqual(hallazgos, [], `un secreto viaja por argv:\n${hallazgos.join("\n")}`);
 });
+
+// NO hay aqui una guarda de "la boveda no llega al webview", y es deliberado.
+//
+// Se escribio una, y era PEOR que la que ya existe: miraba si un archivo
+// mencionaba el llavero y tenia algun `#[tauri::command]`, asi que marcaba
+// `lib.rs` —que declara `pub mod llavero;` y expone `daemon_info`, que no toca
+// secretos— como violacion. Un falso positivo en una guarda entrena a ignorar
+// la guarda, que es el mismo fallo que §12 de la definicion de producto mide
+// como "precision del revisor": el ruido es peor que no tener revisor.
+//
+// El invariante SI esta protegido, en `apps/desktop/src-tauri/src/lib.rs`,
+// prueba `ningun_comando_de_boveda_llega_al_webview`: comprueba que
+// `llavero.rs` no tiene ningun `#[tauri::command]` y que la lista de
+// `generate_handler!` no crecio. Esta en Rust porque ahi puede mirar la lista
+// de verdad en vez de adivinarla con una expresion regular.
+//
+// Lo que faltaba no era una guarda: era que `cargo test` corriera en CI.
+// Se anadio alli.
 
 test("VI — el motor no importa ningun proveedor por nombre: los carga por configuracion", () => {
   const hallazgos = [];

@@ -90,7 +90,7 @@ Un snapshot son sus hallazgos. Cada uno se defiende solo.
 |---|---|---|
 | `id` | uuid | |
 | `snapshot_id` | uuid | |
-| `categoria` | enum | `stack` \| `arquitectura` \| `patrones` \| `testing` \| `ci_cd` \| `dependencias` \| `guidelines` \| `agentes` \| `mcp` \| `skills` \| `hooks` \| `riesgo` |
+| `categoria` | enum | `stack` \| `arquitectura` \| `patrones` \| `testing` \| `ci` \| `dependencias` \| `guidelines` \| `agentes` \| `riesgos` |
 | `clave` | texto | `runtime.node`, `testing.runner`, `ci.workflow` |
 | `valor` | json | |
 | `origen` | enum | `detectado` \| `inferido` \| `declarado` |
@@ -101,7 +101,9 @@ Un snapshot son sus hallazgos. Cada uno se defiende solo.
 
 **Invariante (FR-013):** un hallazgo `detectado` sin `evidencia` no se persiste. Es el mismo principio del exit code aplicado a la lectura: sin el archivo que lo respalda, es una opinión del modelo.
 
-**Invariante de seguridad:** si el scanner encuentra un secreto, emite un hallazgo `categoria = riesgo` con la ruta y **nunca** el valor, ni siquiera truncado.
+**Invariante de seguridad:** si el scanner encuentra un secreto, emite un hallazgo `categoria = riesgos` con la ruta y **nunca** el valor, ni siquiera truncado.
+
+*(Este documento decía `riesgo` en singular y `ci_cd`, y el contrato del scanner decía `riesgos` y `ci`. Manda el contrato, que es lo que la implementación consume; aquí quedan alineados. La divergencia la encontró quien implementó el scanner, no una revisión — que es el argumento para que los nombres de un enum vivan en un solo sitio.)*
 
 ---
 

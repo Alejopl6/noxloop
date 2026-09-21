@@ -6,6 +6,6 @@
   "type": "module",
   "main": "src/index.mjs",
   "bin": { "noxloop-service": "bin/noxloop-service.mjs" },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "files": ["src", "bin"]
 }

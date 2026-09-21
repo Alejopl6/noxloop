@@ -23,6 +23,8 @@
     "packages/engine/bin/**/*.mjs",
     "packages/service/src/**/*.mjs",
     "packages/service/bin/**/*.mjs",
+    "packages/vault/src/**/*.mjs",
+    "packages/scanner/src/**/*.mjs",
     "providers/**/*.mjs"
   ],
   "exclude": [

@@ -204,6 +204,28 @@
   --ds-shadow-modal: var(--ds-shadow-border-base), 0px 1px 1px #00000005, 0px 8px 16px -4px #0000000a, 0px 24px 32px -8px #0000000f;
   --ds-shadow-fullscreen: var(--ds-shadow-border-base), 0px 1px 1px #00000005, 0px 8px 16px -4px #0000000a, 0px 24px 32px -8px #0000000f;
 
+  /* El velo de los overlays. Geist SI tiene token para esto; la primera
+     extraccion no lo trajo y hubo que aproximarlo a mano en el modal, lo que
+     acerto en claro y fallo en oscuro (ver el bloque .dark). Extraido del
+     bundle el 2026-09-20: `:root,:host`.
+
+     Se declara en dos piezas —color y opacidad— y no como un color con alfa
+     porque asi el velo cambia con el tema sin tocar la opacidad, y la opacidad
+     se puede bajar en un overlay concreto sin recalcular el color. */
+  --ds-overlay-backdrop-color: var(--ds-gray-100);
+  --ds-overlay-backdrop-opacity: 0.8;
+
+  /* Movimiento. La curva `swift` sobrepasa a proposito (el ultimo valor de la
+     bezier es > 1), que es lo que hace que un overlay "aterrice" en vez de
+     frenar. Las duraciones son distintas por tipo: un popover a .2s se siente
+     inmediato y un modal a .2s se siente brusco. */
+  --ds-motion-timing-swift: cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  --ds-motion-overlay-timing: var(--ds-motion-timing-swift);
+  --ds-motion-overlay-duration: 0.3s;
+  --ds-motion-overlay-scale: 0.96;
+  --ds-motion-popover-timing: var(--ds-motion-timing-swift);
+  --ds-motion-popover-duration: 0.2s;
+
   /* --- anillo de foco --------------------------------------------------- */
   /* Dos anillos: el interior del color del fondo separa el exterior del propio
      control, para que se lea igual sobre superficies claras y sobre botones de
@@ -344,6 +366,14 @@
   --ds-shadow-xs: 0px 1px 2px #00000029;
   --ds-shadow-small: 0px 1px 2px #00000029;
   --ds-shadow-medium: 0px 2px 2px #00000052, 0px 8px 8px -8px #00000029;
+
+  /* EN OSCURO EL VELO ES NEGRO, no gris. `background-200` y no `gray-100`.
+     Importa y no es un matiz: `gray-100` en oscuro es #1a1a1a, asi que un velo
+     de gris-sobre-negro ACLARA el fondo en vez de apagarlo, y el modal queda
+     compitiendo con un lienzo mas claro que el. Con negro, el fondo se hunde y
+     el modal es lo unico que queda.
+     La opacidad no se redefine: es .8 en los dos temas. */
+  --ds-overlay-backdrop-color: var(--ds-background-200);
 
   /* En oscuro Geist sube el anillo de foco al `900`, no al `800`. Verificado en
      el bundle de produccion: `--ds-focus-color:var(--ds-blue-900)`. Importa

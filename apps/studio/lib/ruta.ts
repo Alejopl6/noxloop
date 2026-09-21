@@ -25,7 +25,13 @@ import { useCallback, useEffect, useState } from 'react'
  * precio es una direccion menos bonita. Es un precio barato.
  */
 
-export type Seccion = 'inicio' | 'bandeja'
+/**
+ * `catalogo` no es una seccion de producto: es el catalogo de componentes de
+ * consola, la pantalla donde se revisan en sus estados sin inventarse una
+ * pantalla de producto para ello. Por eso no aparece en la navegacion y solo
+ * se alcanza escribiendo `?vista=catalogo`.
+ */
+export type Seccion = 'inicio' | 'bandeja' | 'catalogo'
 
 export interface Ruta {
   seccion: Seccion
@@ -41,13 +47,19 @@ export function analizarRuta(busqueda: string): Ruta {
   if (vista === 'bandeja') {
     return { seccion: 'bandeja', id: parametros.get('entrada') }
   }
+  if (vista === 'catalogo') {
+    return { seccion: 'catalogo', id: null }
+  }
   return RUTA_INICIAL
 }
 
 export function construirRuta(ruta: Ruta): string {
   if (ruta.seccion === 'inicio') return '/'
-  const parametros = new URLSearchParams({ vista: 'bandeja' })
-  if (ruta.id) parametros.set('entrada', ruta.id)
+  const parametros = new URLSearchParams({ vista: ruta.seccion })
+  // El identificador solo significa algo dentro de la bandeja. Arrastrarlo a
+  // otra seccion produciria una direccion que recarga a un sitio distinto del
+  // que se estaba mirando.
+  if (ruta.seccion === 'bandeja' && ruta.id) parametros.set('entrada', ruta.id)
   return `/?${parametros.toString()}`
 }
 

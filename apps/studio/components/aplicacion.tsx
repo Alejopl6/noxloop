@@ -12,6 +12,7 @@ import {
 import { SelectorDeTema } from '@/components/selector-tema'
 import { VistaDeInicio } from '@/components/vista-inicio'
 import { VistaDeBandeja } from '@/components/vista-bandeja'
+import { VistaDeCatalogo } from '@/components/vista-catalogo'
 import { formatearRelativo } from '@/lib/tiempo'
 import { cn } from '@/lib/utils'
 
@@ -59,6 +60,19 @@ function IndicadorDeFrescura() {
 export function Aplicacion() {
   const { ruta, navegar } = useRuta()
   const { estado } = useServicio()
+
+  // El catalogo de componentes va ANTES de la comprobacion del servicio, y a
+  // proposito: no lee nada del servicio, asi que exigir el daemon para revisar
+  // el contraste de un `Badge` seria una barrera sin motivo. De paso, montarlo
+  // desde aqui es lo que hace que el build ejercite los quince componentes en
+  // vez de dejarlos como codigo que compila y nadie ha renderizado nunca.
+  if (ruta.seccion === 'catalogo') {
+    return (
+      <main className="mx-auto w-full max-w-5xl px-6 py-10">
+        <VistaDeCatalogo navegar={navegar} />
+      </main>
+    )
+  }
 
   if (estado === 'iniciando') return <PantallaIniciando />
 
