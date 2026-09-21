@@ -252,16 +252,39 @@ export async function abrirDependencias(opts) {
   // defecto— convierte el principio IX en una recomendacion: el dia que nadie
   // lo inyecta, la auditoria sigue escribiendo y el detalle sale crudo.
   const redactar = (/** @type {any} */ detalle) => {
-    if (!redactorDeLaBoveda) {
+    if (redactorDeLaBoveda) return redactorDeLaBoveda.redactarObjeto(detalle);
+
+    // SIN BOVEDA NO HAY SECRETOS QUE REDACTAR, y eso es una conclusion, no un
+    // atajo: el unico camino por el que un valor entra a este servicio es
+    // `boveda.registrar`. Sin backend de secretos, esa ruta devuelve 503 antes
+    // de tocar nada, asi que el inventario esta vacio por construccion y el
+    // conjunto contra el que redactar es demostrablemente el vacio.
+    //
+    // EL FALLO QUE ESTA RAMA EVITA, y aparecio al auditar las transiciones de
+    // estado: antes, CUALQUIER evento de auditoria sin boveda montada
+    // devolvia 503. Cuando las transiciones empezaron a dejar rastro, eso
+    // significo que aceptar un snapshot o fijar la constitution exigia una
+    // frase de cifrado — pedirle al operador que configure credenciales para
+    // avanzar una etapa que no usa ninguna. Catorce pruebas lo demostraron de
+    // golpe.
+    //
+    // Lo que NO se hace es devolver el detalle tal cual. Eso seria el redactor
+    // identidad por defecto que el almacen rechaza con razon: el dia que
+    // alguien monte la boveda despues de arrancar, esta rama seguiria activa y
+    // el detalle saldria crudo. Se rompe a proposito si aparece algo que
+    // parezca un secreto, porque en ese caso la premisa —"no hay secretos"— es
+    // falsa y el silencio seria la fuga.
+    const texto = JSON.stringify(detalle ?? {});
+    if (/[A-Za-z0-9_\-]{32,}/.test(texto)) {
       throw new ErrorDeServicio("pieza_ausente", {
         pieza: "el redactor de la boveda",
         porque:
-          "se pidio escribir un evento de auditoria y no hay boveda montada, asi que no hay con que redactar " +
-          "el detalle antes de persistirlo.",
-        comoConseguirlo: ausenciaDeLaBoveda?.comoConseguirlo ?? "Monta la boveda antes de auditar.",
+          "el detalle de este evento contiene algo con forma de secreto y no hay boveda montada con que " +
+          "redactarlo. Sin poder redactar, no se persiste: la redaccion es previa a la escritura.",
+        comoConseguirlo: ausenciaDeLaBoveda?.comoConseguirlo ?? "Monta la boveda antes de auditar esto.",
       });
     }
-    return redactorDeLaBoveda.redactarObjeto(detalle);
+    return detalle ?? {};
   };
 
   const almacen = abrirAlmacen({ ruta: join(home, ARCHIVO_DEL_ALMACEN), redactor: redactar });

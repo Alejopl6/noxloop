@@ -61,6 +61,9 @@ export function abrirAlmacen(opciones = {}) {
   const redactor = opciones.redactor ?? null;
 
   const workspaces = repositorioDeWorkspaces(base);
+  // Se construye antes del objeto porque `proyectos` lo necesita: las
+  // transiciones de estado dejan rastro en el mismo registro append-only.
+  const auditoria = repositorioDeAuditoria(base, redactor);
 
   return {
     /** La capa fina sobre `node:sqlite`. La usa el servicio para consultas propias y las pruebas para interrogar el esquema. */
@@ -76,7 +79,10 @@ export function abrirAlmacen(opciones = {}) {
         return workspaces.crear({ ...datos, version_esquema: versionDeEsquema(base) });
       },
     },
-    proyectos: repositorioDeProyectos(base),
+    // Los dos comparten `base`, asi que la transicion y su rastro caen en la
+    // MISMA transaccion: o se escriben las dos o ninguna. Un estado que avanza
+    // sin dejar rastro es justo lo que este cableado existe para impedir.
+    proyectos: repositorioDeProyectos(base, auditoria),
     snapshots: repositorioDeSnapshots(base),
     constituciones: repositorioDeConstituciones(base),
     guidelines: repositorioDeGuidelines(base),
@@ -86,7 +92,7 @@ export function abrirAlmacen(opciones = {}) {
     bandeja: repositorioDeBandeja(base),
     politicas: repositorioDePoliticas(base),
     boveda: repositorioDeBoveda(base),
-    auditoria: repositorioDeAuditoria(base, redactor),
+    auditoria,
     inicio: vistaDeInicio(base),
     cerrar() {
       base.cerrar();

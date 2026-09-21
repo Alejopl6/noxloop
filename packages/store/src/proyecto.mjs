@@ -214,7 +214,11 @@ export const GUARDAS = {
 /**
  * @param {import("./sqlite.mjs").BaseSqlite} base
  */
-export function repositorioDeProyectos(base) {
+/**
+ * @param {any} base
+ * @param {{registrar: (e: any) => any}} [auditoria] el registro append-only, para que las transiciones dejen rastro
+ */
+export function repositorioDeProyectos(base, auditoria) {
   const leer = (id) => base.consultarUno("SELECT * FROM project WHERE id = ?", [id]);
 
   return {
@@ -345,6 +349,35 @@ export function repositorioDeProyectos(base) {
           [hasta, ahora, id, desde],
         );
         if (cambios !== 1) fallar("escritor_concurrente", { esperado: desde, actual: "otro" });
+
+        // LA TRANSICION DEJA RASTRO, y esto faltaba entero.
+        //
+        // `project.estado` guarda DONDE esta el proyecto, no COMO llego. Sin
+        // esta fila, "paso por los seis estados en orden" no es una pregunta
+        // que se pueda responder despues: solo se puede observar en vivo, y
+        // quien mira la aplicacion tres semanas mas tarde no estaba mirando.
+        //
+        // Lo encontro el recorrido de punta a punta, al intentar demostrar
+        // justo eso y descubrir que el producto no lo soporta.
+        //
+        // Va a la auditoria y no a una tabla de historia propia por una razon
+        // concreta: `audit_event` NO CUELGA DE NINGUNA CLAVE FORANEA, asi que
+        // borrar el proyecto no se lleva por delante la explicacion de lo que
+        // paso con el. Una tabla de historia con `REFERENCES project(id)` se
+        // se habria ido con la cascada justo cuando mas falta hace.
+        //
+        // `?.` y no obligatorio: el repositorio se monta tambien en pruebas que
+        // no necesitan auditoria, y exigirla ahi convertiria un test de
+        // transiciones en un test de auditoria.
+        auditoria?.registrar({
+          actor: opciones.actor,
+          accion: "proyecto.transicion",
+          objeto_tipo: "project",
+          objeto_id: id,
+          resultado: "permitido",
+          detalle: { desde, hasta, artefacto: arista.artefacto ?? null },
+          instante: ahora,
+        });
 
         return Object.freeze({ ...leer(id) });
       });

@@ -23,18 +23,23 @@
 //      home.
 //   5. Que lanzar un ciclo antes de `ACTIVE` devuelve 409 nombrando la etapa.
 //
-// LAS COSTURAS QUE EL RECORRIDO ENCONTRO, y que este archivo NO parchea. Tres
-// piezas del producto no encajan cuando se las junta de verdad, y cada una
-// tiene abajo su propio test que la deja escrita como hecho medido en vez de
-// como prosa en un informe:
+// LAS COSTURAS QUE EL RECORRIDO ENCONTRO, y que este archivo NO parchea. Una
+// pieza del producto no encaja cuando se la junta de verdad, y queda escrita
+// como hecho medido en vez de como prosa en un informe, en el `puentes` que se
+// imprime al final.
 //
-//   - `POST /v1/projects/:id/connections/authorize` conecta de verdad y no deja
-//     fila en `connection`, que es donde mira la guarda `conexion_viva`. No hay
-//     ninguna ruta que lleve un proyecto a `CONNECTED`.
-//   - `driver.mjs` y `planner.mjs` invocan `deps.runPhase(...)` sin `env` y, en
-//     PLAN, sin `taskId`: las dos cosas que `validarPeticion` del contrato de
-//     adaptadores exige, y la primera con el motivo escrito ("heredar el del
-//     motor no es un modo degradado: es la fuga").
+// Hubo otras dos y ya no estan:
+//
+//   - Conectar por HTTP no dejaba la conexion donde mira la guarda
+//     `conexion_viva`, y ninguna ruta llevaba un proyecto a `CONNECTED`. La
+//     etapa 06 la cruza el producto, mas abajo, sin puente.
+//   - `driver.mjs` y `planner.mjs` invocaban `deps.runPhase(...)` sin `env` y,
+//     en PLAN, sin `taskId`, asi que el adaptador `fake` no podia ser invocado
+//     por el motor y este archivo tenia que rellenar los dos campos por el
+//     camino. Ahora los dos call sites construyen la peticion entera y el
+//     cableado monta el runtime por el contrato: abajo se le entrega al
+//     adaptador lo que el motor construyo, tal cual.
+//
 //   - `GET /v1/projects/:id/runs` no reconoce como suyo un run que escribio el
 //     motor de verdad, porque el estado del run no lleva `project_id` ni
 //     `repoPath`.
@@ -55,7 +60,6 @@ import { arrancar } from "../src/servidor.mjs";
 import { ESTADOS, GENESIS, TRANSICIONES, hashDeEvento } from "../../store/src/index.mjs";
 import { crearAdaptadorFalso } from "../../connections/src/adaptadores/fake.mjs";
 import { crearAdaptadorFake } from "../../adapters/src/adaptadores/fake.mjs";
-import { validarPeticion } from "../../adapters/src/contrato.mjs";
 import { ejecutarComando } from "../../engine/src/comandos.mjs";
 import { loadRun } from "../../engine/src/state.mjs";
 import * as gestorFalso from "../../../providers/fake/index.mjs";
@@ -184,43 +188,15 @@ function configDelMotor({ home, repo, remoto }) {
 }
 
 /**
- * La peticion de fase tal como la construye el motor, traducida a lo que el
- * contrato de adaptadores exige.
- *
- * LOS DOS CAMPOS QUE SE AGREGAN AQUI SON LA COSTURA QUE FALTA, y estan
- * declarados uno a uno abajo, en `faltantesDelMotor`, para que la lista no se
- * pueda ampliar sin que nadie lo note. Lo que el adaptador hace con la peticion
- * —lanzar un subproceso de verdad, con ese entorno exacto, en ese worktree, sin
- * nada por argv— corre entero: lo unico que no existe aqui es el modelo.
- *
- * @param {any} fase lo que el motor pasa a `deps.runPhase`
- */
-function peticionParaElAdaptador(fase) {
-  return {
-    phase: fase.phase,
-    // El motor no manda `taskId` en PLAN: no hay tarea todavia, y el contrato
-    // exige un string no vacio porque es lo que identifica la invocacion.
-    taskId: fase.taskId || "PLAN",
-    task: fase.task ?? null,
-    item: fase.item ?? null,
-    cwd: fase.cwd,
-    resume: fase.resume ?? null,
-    model: String(fase.model || "fake"),
-    prompt: fase.prompt,
-    // El entorno EXPLICITO. El motor no lo construye todavia; el contrato se
-    // niega a invocar sin el porque heredar el del motor no es un modo
-    // degradado, es la fuga. Vacio es la respuesta correcta para un recorrido
-    // que no concedio ningun grant al implementador.
-    env: {},
-  };
-}
-
-/** Los campos que el motor NO manda y el contrato exige. Se comprueba abajo. */
-const faltantesDelMotor = ["taskId", "env"];
-
-/**
  * El modelo es lo unico que no existe, asi que el test escribe lo que un modelo
  * escribiria y el adaptador `fake` corre de verdad la fase.
+ *
+ * LO QUE ESTA FUNCION YA NO HACE, y es el punto. Antes traducia la peticion del
+ * motor a la que el contrato exige, porque `driver.mjs` no mandaba `env` y
+ * `planner.mjs` tampoco `taskId`. Ese puente tapaba que el adaptador `fake` no
+ * podia ser invocado por el motor. Ahora la peticion se le pasa TAL CUAL: si a
+ * algun call site del motor le faltara un campo, el adaptador responderia
+ * `entorno_ausente` o `peticion_invalida` y el recorrido se caeria aqui.
  *
  * @param {any} adaptador
  * @param {string[]} registro
@@ -270,7 +246,7 @@ function runPhaseConAdaptadorFake(adaptador, registro) {
       writeFileSync(join(fase.cwd, t.targetFiles[0]), 'export const catalogo = ["leer", "escribir"];\n');
     }
 
-    return await adaptador.runPhase(peticionParaElAdaptador(fase));
+    return await adaptador.runPhase(fase);
   };
 }
 
@@ -532,6 +508,31 @@ test("T196 y T205 — de un repositorio de verdad a un PR abierto, sin editar un
     assert.equal(callback.cuerpo.conexion.estado, "conectada");
     const conexionViva = callback.cuerpo.conexion;
 
+    // LA ETAPA 06, POR SU PROPIO CAMINO. Completar la autorizacion deja la fila
+    // en `connection` —la tabla donde mira la guarda `conexion_viva`, con el
+    // vocabulario del almacen— y con ella el proyecto avanza. Hasta que esto
+    // existio, el recorrido cruzaba la costura a mano por el almacen y lo
+    // apuntaba en `puentes`; ahora el puente ya no esta, y si alguien deshace la
+    // traduccion el recorrido se cae aqui en vez de seguir verde afirmando una
+    // etapa que no ocurrio.
+    assert.ok(
+      callback.cuerpo.proyecto,
+      "el `callback` conecto y no dijo que paso con el proyecto: la pantalla de conexiones no tiene forma de " +
+        "saber que la etapa avanzo, y el operador se queda mirando un estado viejo",
+    );
+    recorrido.push(callback.cuerpo.proyecto.estado);
+
+    const filaDeLaConexion = svc.dep.almacen.conexiones
+      .porProyecto(proyecto.id)
+      .find((/** @type {any} */ f) => f.id === conexionViva.id);
+    assert.ok(filaDeLaConexion, "la conexion que devolvio el servicio no tiene fila en el almacen");
+    assert.equal(
+      filaDeLaConexion.estado,
+      "viva",
+      "la fila quedo con el vocabulario de `packages/connections` (`conectada`) en una columna que solo entiende " +
+        "el del almacen (`viva`), y la guarda mira esa columna",
+    );
+
     const SECRETO_DE_LA_CLAVE = "una-clave-de-api-que-no-puede-volver";
     const porClave = await POST(`/v1/projects/${proyecto.id}/connections/authorize`, {
       proveedor: conClave.slug,
@@ -544,27 +545,10 @@ test("T196 y T205 — de un repositorio de verdad a un PR abierto, sin editar un
       "la fila de la conexion llevaba el valor del campo secreto: el valor va al deposito y la fila guarda la referencia",
     );
 
-    // LA COSTURA. Las dos conexiones existen y el almacen no ve ninguna, asi
-    // que la guarda `conexion_viva` sigue diciendo que no hay conexiones. El
-    // puente se cruza por el almacen —que es del producto— y queda apuntado.
+    // Y la guarda lo da por bueno yendo a buscarlo, que es la unica forma de
+    // que el estado del proyecto y lo que hay en la base no puedan separarse.
     const estadoDeLaGuarda = svc.dep.almacen.proyectos.artefactos(proyecto.id).conexion_viva;
-    if (!estadoDeLaGuarda.listo) {
-      puentes.push(
-        `conexion_viva: \`authorize\` + \`callback\` dejaron la conexion \`${conexionViva.estado}\` y la guarda del ` +
-          `almacen sigue diciendo "${estadoDeLaGuarda.hallado}". Ninguna ruta escribe la tabla \`connection\` ni ` +
-          "lleva un proyecto a `CONNECTED` (T157 y T158 siguen sin marcar en tasks.md).",
-      );
-      svc.dep.almacen.conexiones.crear({
-        project_id: proyecto.id,
-        clase: tracker.clase,
-        proveedor: tracker.slug,
-        id_externo: conexionViva.id,
-        estado: "viva",
-      });
-      recorrido.push(svc.dep.almacen.proyectos.transicionar(proyecto.id, "CONNECTED", { actor: "operador" }).estado);
-    } else {
-      recorrido.push((await pedir(`/v1/projects/${proyecto.id}`)).cuerpo.proyecto.estado);
-    }
+    assert.equal(estadoDeLaGuarda.listo, true, `la guarda \`conexion_viva\` dice: ${estadoDeLaGuarda.hallado}`);
     artefactosPorEtapa.push(listas((await pedir(`/v1/projects/${proyecto.id}`)).cuerpo.artefactos));
 
     // ---- 6. flota ----------------------------------------------------------
@@ -692,7 +676,16 @@ test("T196 y T205 — de un repositorio de verdad a un PR abierto, sin editar un
     pasos.push("MOTOR run");
     assert.equal(corrida.pr, "https://forge.test/pr/1", `no llego al PR: ${JSON.stringify(corrida)}`);
     assert.deepEqual(corrida.blocked, [], "quedaron tareas bloqueadas");
-    assert.deepEqual(fases, ["PLAN", "RED:T001", "GREEN:T001", "REVIEW:T001"], "el ciclo no recorrio las fases");
+    // La planificacion ya no llega sin identificar. Decia `PLAN` a secas porque
+    // el motor no mandaba `taskId`, que es lo que el contrato exige para poder
+    // invocar; ahora dice a que item pertenece la invocacion, y `plan:` no
+    // puede confundirse con una tarea del plan (`^T[0-9]{3,}$`), que todavia no
+    // existe cuando esta fase corre.
+    assert.deepEqual(
+      fases,
+      ["PLAN:plan:2", "RED:T001", "GREEN:T001", "REVIEW:T001"],
+      "el ciclo no recorrio las fases",
+    );
 
     // LO QUE QUEDO, que es lo que de verdad importa.
     const run = loadRun("2", { home: svc.home });
@@ -844,71 +837,14 @@ function listas(artefactos) {
 // Las costuras, escritas como hechos medidos
 // ---------------------------------------------------------------------------
 
-test("T196, la costura de la etapa 06: conectar por HTTP no deja la conexion donde mira la guarda", async () => {
-  // POR QUE ESTO ES UN TEST Y NO UNA LINEA DE UN INFORME. Porque un informe se
-  // lee una vez y una afirmacion sin objeto serializado detras no es un hecho.
-  // El dia que alguien cierre la costura, este test cae con el mensaje que dice
-  // que hacer, en vez de quedarse en verde afirmando algo que dejo de ser
-  // verdad. Es el unico sitio del recorrido donde el puente se cruza a mano, y
-  // tiene que doler mirarlo.
-  const org = organizacion();
-  const svc = await arrancar({
-    home: mkdtempSync(join(tmpdir(), "noxloop-p2p-costura-")),
-    token: TOKEN,
-    proveedorDeConexiones: crearAdaptadorFalso(),
-  });
-  try {
-    const pedir = (ruta, init = {}) =>
-      fetch(`${svc.url}${ruta}`, {
-        ...init,
-        headers: { "x-noxloop-token": TOKEN, origin: ORIGEN, "content-type": "application/json", ...(init.headers || {}) },
-      });
-
-    const proyecto = (
-      await (
-        await pedir("/v1/projects", {
-          method: "POST",
-          body: JSON.stringify({ origen: "local", nombre: "Solo Para La Costura", ruta_local: org.repo }),
-        })
-      ).json()
-    ).proyecto;
-
-    const r = await pedir(`/v1/projects/${proyecto.id}/connections/authorize`, {
-      method: "POST",
-      body: JSON.stringify({ proveedor: "falso-pat", valores: { pat: "un-token", usuario: "alguien" } }),
-    });
-    const { conexion } = await r.json();
-    assert.equal(r.status, 201);
-    assert.equal(conexion.estado, "conectada", "el adaptador si conecta: la costura no esta en el adaptador");
-
-    const guarda = svc.dep.almacen.proyectos.artefactos(proyecto.id).conexion_viva;
-    assert.equal(
-      guarda.listo,
-      false,
-      "la guarda `conexion_viva` ya ve la conexion que creo `authorize`: la costura se cerro. Borra este test y " +
-        "el puente de `punta-a-punta`, que dejo de hacer falta.",
-    );
-    assert.match(
-      guarda.hallado,
-      /no tiene ninguna conexion/,
-      "el almacen ve algo en `connection` pero no lo da por vivo: la costura cambio de sitio y el puente ya no aplica",
-    );
-
-    // Y no hay ninguna ruta por la que un proyecto llegue a `CONNECTED`: el
-    // unico `transicionar` a ese estado no existe en `packages/service/src/`.
-    const fuentes = readdirSync(new URL("../src/", import.meta.url).pathname)
-      .filter((f) => f.endsWith(".mjs"))
-      .map((f) => readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"))
-      .join("\n");
-    assert.equal(
-      /transicionar\([^)]*"CONNECTED"/.test(fuentes),
-      false,
-      "ya hay una ruta que lleva el proyecto a `CONNECTED`: revisa el puente de `punta-a-punta`",
-    );
-  } finally {
-    await svc.detener();
-  }
-});
+// La costura de la etapa 06 —`authorize` conectaba y no dejaba fila en
+// `connection`, y ninguna ruta llevaba un proyecto a `CONNECTED`— estaba escrita
+// aqui como hecho medido. Se cerro: la traduccion entre los dos vocabularios
+// vive en `packages/service/src/credenciales.mjs` y el recorrido de arriba pasa
+// por `CONNECTED` por su propio camino. El test que la documentaba se borro con
+// ella, porque un test que describe un hueco ya tapado miente sobre el estado
+// del producto. Lo que lo sostiene ahora esta en el recorrido y en
+// `credenciales.test.mjs`.
 
 test("el recorrido discrimina: las dos busquedas del centinela SI lo encuentran cuando esta", () => {
   // EL CONTROL. Sin el, "no aparece en ninguna respuesta ni en ningun archivo"
@@ -936,57 +872,5 @@ test("el recorrido discrimina: las dos busquedas del centinela SI lo encuentran 
     readFileSync(archivo).includes(CENTINELA),
     true,
     "la busqueda en bytes no encuentra el centinela en un archivo que lo tiene: el recorrido del home no prueba nada",
-  );
-});
-
-test("T196, la costura del contrato de adaptadores: el motor invoca sin `env` y, en PLAN, sin `taskId`", () => {
-  // El motor construye su peticion de fase en `driver.mjs` y `planner.mjs`. Lo
-  // que sigue es esa misma forma, campo por campo, pasada por el validador del
-  // contrato que T180 formalizo. Los dos problemas que salen son exactamente
-  // los dos campos que `peticionParaElAdaptador` tiene que poner arriba: si esa
-  // lista cambia, el puente del recorrido esta tapando algo mas.
-  const delDriver = {
-    phase: "GREEN",
-    taskId: "T001",
-    task: {},
-    item: {},
-    cwd: "/un/worktree",
-    resume: null,
-    model: "un-modelo",
-    effort: "medium",
-    prompt: "/noxloop-task 2 T001 --phase GREEN",
-    tier: "small",
-  };
-  const delPlanner = {
-    phase: "PLAN",
-    item: {},
-    cwd: "/un/worktree",
-    prompt: "/noxloop-plan 2 --out /un/home/plan.json",
-    model: null,
-    effort: "high",
-    resume: null,
-  };
-
-  const problemasDelDriver = validarPeticion(delDriver).problems.join(" | ");
-  assert.match(problemasDelDriver, /^env:/, `el driver ya manda el entorno explicito: ${problemasDelDriver}`);
-  assert.equal(
-    validarPeticion({ ...delDriver, env: {} }).ok,
-    true,
-    "al driver le falta algo mas que `env`: el puente del recorrido esta tapando un segundo hueco",
-  );
-
-  const problemasDelPlanner = validarPeticion(delPlanner).problems.join(" | ");
-  assert.match(problemasDelPlanner, /taskId/, `el planner ya manda taskId: ${problemasDelPlanner}`);
-  assert.match(problemasDelPlanner, /env/, `el planner ya manda el entorno: ${problemasDelPlanner}`);
-  assert.equal(
-    validarPeticion({ ...delPlanner, taskId: "PLAN", env: {} }).ok,
-    true,
-    `al planner le falta algo mas que taskId y env: ${validarPeticion({ ...delPlanner, taskId: "PLAN", env: {} }).problems.join(" | ")}`,
-  );
-
-  assert.deepEqual(
-    faltantesDelMotor,
-    ["taskId", "env"],
-    "la lista de campos que el recorrido rellena por el motor cambio sin que este test lo dijera",
   );
 });

@@ -17,9 +17,33 @@ import assert from "node:assert/strict";
 
 import { TABLA } from "../src/tabla.mjs";
 import { concretar } from "../src/rutas.mjs";
+import { crearAdaptadorFalso } from "../../connections/src/adaptadores/fake.mjs";
 import { conServicio, pedir, repoDePrueba, FRASE } from "./ayuda.mjs";
 
 const conBoveda = { frase: FRASE };
+
+/**
+ * El servicio con el adaptador de conexiones falso: sin red, sin contenedores y
+ * sin credenciales de nadie.
+ *
+ * `sondeosAntesDeAutorizar: 0` para que el `callback` conteste en el primer
+ * sondeo. El valor por defecto obliga a dar una vuelta durmiendo, y el `callback`
+ * de la ruta espera con `timeoutMs: 1`: la diferencia entre pasar y no pasar
+ * acaba siendo cuanto tardo la primera vuelta, que es una carrera y no una
+ * prueba.
+ */
+const conConexiones = () => ({
+  frase: FRASE,
+  // Uno nuevo por servicio y no una constante compartida: el repositorio del
+  // adaptador vive en memoria, y un adaptador reusado hace que las conexiones
+  // de un test aparezcan en el inventario del siguiente.
+  proveedorDeConexiones: crearAdaptadorFalso({ sondeosAntesDeAutorizar: 0 }),
+});
+
+const json = (cuerpo) => ({ headers: { "content-type": "application/json" }, body: JSON.stringify(cuerpo) });
+
+/** @param {any} svc @param {string} projectId */
+const filasDeConexion = (svc, projectId) => svc.dep.almacen.conexiones.porProyecto(projectId);
 
 async function proyecto(svc, nombre = "Con Credenciales") {
   const r = await pedir(svc, "/v1/projects", {
@@ -296,5 +320,141 @@ test("FR-047: rotar da huella nueva y CONSERVA los grants", async () => {
       [agente.agente.id],
       "rotar se llevo los grants por delante: el efecto medible de eso no es que se pierdan permisos, es que nadie rota",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Conexiones: la etapa 06 llega hasta donde mira la guarda
+// ---------------------------------------------------------------------------
+//
+// LO QUE ESTAS PRUEBAS MIDEN, Y POR QUE NO BASTA CON QUE `authorize` DEVUELVA
+// 201. `packages/connections` habla de conexiones `pendiente | conectada |
+// revocada` en un repositorio en memoria, y la guarda `conexion_viva` de
+// `packages/store` cuenta filas de la tabla `connection` con `estado = 'viva'`.
+// Son dos vocabularios y dos almacenes: conectar de verdad por HTTP y dejar la
+// guarda en rojo es exactamente lo que pasaba, y el sintoma para el operador era
+// un proyecto que se quedaba en `BOOTSTRAPPED` sin que nada fallara.
+
+test("conectar por HTTP deja la conexion donde mira la guarda, con el vocabulario del almacen", async () => {
+  await conServicio(conConexiones(), async (svc) => {
+    const p = await proyecto(svc, "Que Se Conecta");
+
+    const r = await pedir(
+      svc,
+      `/v1/projects/${p.id}/connections/authorize`,
+      { method: "POST", ...json({ proveedor: "falso-api-key", valores: { api_key: "una-clave-que-no-vuelve" } }) },
+    );
+    assert.equal(r.status, 201, await r.clone().text());
+    const cuerpo = await r.json();
+
+    const filas = filasDeConexion(svc, p.id);
+    assert.equal(filas.length, 1, "la conexion no dejo fila en `connection`, que es la tabla donde mira la guarda");
+    assert.equal(filas[0].id, cuerpo.conexion.id, "la fila y la conexion que devolvio el servicio no son la misma");
+    assert.equal(
+      filas[0].estado,
+      "viva",
+      "la fila guardo el estado de `packages/connections` (`conectada`) en una columna que solo entiende el del " +
+        "almacen: la guarda cuenta `viva` y no encontraria ninguna",
+    );
+    assert.equal(filas[0].proveedor, "falso-api-key");
+    assert.equal(filas[0].clase, "infra", "la clase sale del catalogo del adaptador, no se adivina del slug");
+    assert.equal(filas[0].id_externo, cuerpo.session_token);
+
+    const guarda = svc.dep.almacen.proyectos.artefactos(p.id).conexion_viva;
+    assert.equal(guarda.listo, true, `la guarda sigue en rojo: ${guarda.hallado}`);
+
+    // Y NO SE SALTEA LA MAQUINA DE ESTADOS. Este proyecto no paso por snapshot,
+    // constitution ni bootstrap: conectar un proveedor no lo puede empujar a
+    // `CONNECTED`, porque la unica arista que llega ahi sale de `BOOTSTRAPPED`.
+    assert.equal(
+      svc.dep.almacen.proyectos.porId(p.id).estado,
+      "CREATED",
+      "conectar movio el estado de un proyecto que no habia pasado por las etapas anteriores",
+    );
+    assert.equal(cuerpo.proyecto, undefined, "la respuesta anuncia un avance de etapa que no ocurrio");
+  });
+});
+
+test("FR-032: una conexion `scm` se guarda SIN identificador de la capa de integracion", async () => {
+  // El `CHECK (clase <> 'scm' OR id_externo IS NULL)` del esquema no es una
+  // manía: `scm` no es una integracion, git se habla directo, y un `id_externo`
+  // en esa fila es la señal de que alguien metio el repositorio por el
+  // proveedor — a partir de ese dia clonar depende de que el proveedor conteste.
+  // Arrastrar el handle del adaptador a esa columna revienta con
+  // SQLITE_CONSTRAINT, y el proveedor `github` del catalogo por defecto es
+  // `clase: "scm"`: esto no es un caso del adaptador falso.
+  await conServicio(conConexiones(), async (svc) => {
+    const p = await proyecto(svc, "Con El Scm");
+
+    const r = await pedir(
+      svc,
+      `/v1/projects/${p.id}/connections/authorize`,
+      { method: "POST", ...json({ proveedor: "falso-pat", valores: { pat: "un-token", usuario: "alguien" } }) },
+    );
+    assert.equal(r.status, 201, await r.clone().text());
+
+    const filas = filasDeConexion(svc, p.id);
+    assert.equal(filas.length, 1, "la conexion `scm` no se guardo: es inventario y tiene que estar");
+    assert.equal(filas[0].clase, "scm");
+    assert.equal(
+      filas[0].id_externo,
+      null,
+      "la fila `scm` se llevo el identificador de la capa de integracion adentro (FR-032)",
+    );
+    assert.equal(svc.dep.almacen.proyectos.artefactos(p.id).conexion_viva.listo, true);
+  });
+});
+
+test("oauth2: `authorize` deja la fila pendiente y el `callback` la pone viva, sin crear una segunda", async () => {
+  await conServicio(conConexiones(), async (svc) => {
+    const p = await proyecto(svc, "Que Autoriza");
+
+    const r = await pedir(svc, `/v1/projects/${p.id}/connections/authorize`, {
+      method: "POST",
+      ...json({ proveedor: "falso-oauth2" }),
+    });
+    assert.equal(r.status, 201, await r.clone().text());
+    const { session_token } = await r.json();
+
+    const pendiente = filasDeConexion(svc, p.id);
+    assert.equal(pendiente.length, 1, "una autorizacion en curso tambien es inventario: el operador la ve esperando");
+    assert.equal(pendiente[0].estado, "pendiente");
+    const guardaAntes = svc.dep.almacen.proyectos.artefactos(p.id).conexion_viva;
+    assert.equal(guardaAntes.listo, false, "una conexion que todavia no contesto no habilita la etapa");
+    assert.match(
+      guardaAntes.hallado,
+      /ninguna viva/,
+      "la guarda no distingue 'no hay conexiones' de 'hay una esperando', y mandan al operador a sitios distintos",
+    );
+
+    const cb = await pedir(svc, `/v1/connections/${session_token}/callback`, { method: "POST", ...json({}) });
+    assert.equal(cb.status, 200, await cb.clone().text());
+
+    const viva = filasDeConexion(svc, p.id);
+    assert.equal(viva.length, 1, "el `callback` creo una fila nueva en vez de completar la que `authorize` dejo");
+    assert.equal(viva[0].id, pendiente[0].id);
+    assert.equal(viva[0].estado, "viva");
+  });
+});
+
+test("revocar una conexion la marca revocada TAMBIEN donde mira la guarda", async () => {
+  // La otra direccion de la misma costura, y la peor: una fila `viva` que
+  // sobrevive a la revocacion deja al proyecto en `CONNECTED` apoyado en una
+  // conexion que ya no entrega credenciales.
+  await conServicio(conConexiones(), async (svc) => {
+    const p = await proyecto(svc, "Que Revoca");
+    const r = await pedir(svc, `/v1/projects/${p.id}/connections/authorize`, {
+      method: "POST",
+      ...json({ proveedor: "falso-api-key", valores: { api_key: "una-clave-que-no-vuelve" } }),
+    });
+    const { conexion } = await r.json();
+
+    const borrada = await pedir(svc, `/v1/connections/${conexion.id}`, { method: "DELETE" });
+    assert.equal(borrada.status, 200, await borrada.clone().text());
+
+    const filas = filasDeConexion(svc, p.id);
+    assert.equal(filas.length, 1);
+    assert.equal(filas[0].estado, "revocada", "la fila del almacen sigue diciendo que la conexion esta viva");
+    assert.equal(svc.dep.almacen.proyectos.artefactos(p.id).conexion_viva.listo, false);
   });
 });

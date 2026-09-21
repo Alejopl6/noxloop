@@ -337,6 +337,145 @@ export async function auditoria(p) {
 // ---------------------------------------------------------------------------
 // Conexiones
 // ---------------------------------------------------------------------------
+//
+// LA COSTURA DE LA ETAPA 06, Y POR QUE SE TRADUCE AQUI.
+//
+// `packages/connections` guarda sus conexiones en un repositorio EN MEMORIA y
+// las llama `pendiente | conectada | revocada`. La guarda `conexion_viva` de
+// `packages/store` cuenta filas de la tabla `connection` con `estado = 'viva'`.
+// Son dos vocabularios y dos almacenes, y hasta que esto existio el resultado
+// medido era: `authorize` + `callback` devolvian 201 y 200, la conexion
+// funcionaba, y `artefactos().conexion_viva` seguia diciendo "este proyecto no
+// tiene ninguna conexion" — el proyecto se quedaba en `BOOTSTRAPPED` sin que
+// nada fallara, que es la peor forma de fallar.
+//
+// POR QUE EN EL SERVICIO Y NO EN UN ADAPTADOR DE ALMACEN DENTRO DE
+// `packages/connections`. Ese sitio es mas limpio de nombrar —hasta hay un
+// `TODO(persistencia)` en su `repositorio.mjs` pidiendolo— y esta CERRADO por
+// tres cosas medibles, no por gusto:
+//
+//   1. `packages/connections/test/paquete-autocontenido.test.mjs` prohibe que
+//      una fuente de `src/` importe fuera del paquete Y prohibe `INSERT INTO`,
+//      `CREATE TABLE` y `node:sqlite` dentro. El paquete viaja solo al
+//      escritorio: un adaptador de almacen ahi dentro lo rompe.
+//   2. Su repositorio se escribe en CADA `conectar`, incluida la conexion
+//      `pendiente` de un proyecto que no existe en el almacen: su propia suite
+//      de contrato conecta contra `projectId: "proyecto-de-contrato"`, que no
+//      es fila de `project`. Con un repositorio sobre el almacen, la clave
+//      foranea tumba las pruebas del paquete — y esas pruebas existen para
+//      correrse sin base de datos.
+//   3. El proveedor llega ya CONSTRUIDO a `arrancar({ proveedorDeConexiones })`.
+//      El servicio no tiene por donde inyectarle un repositorio sin cambiar
+//      todos los sitios que lo montan.
+//
+// Asi que se traduce aqui, que es el unico sitio que ya conoce los dos
+// paquetes, Y EN UNA SOLA FUNCION. Es el mismo criterio con el que
+// `dependencias.mjs` traduce el vocabulario de la boveda al del modelo de
+// datos: repartida, la traduccion es donde se pierde el invariante el dia que
+// alguien mapea un estado a otro porque el campo se llamaba distinto.
+
+/**
+ * Los dos vocabularios de estado, en UNA tabla.
+ *
+ * No es un renombre cosmetico: `conectada` -> `viva` es lo que la guarda cuenta,
+ * y un estado que no este aqui tiene que hacer ruido en vez de guardarse como
+ * `pendiente` por defecto — una conexion rota archivada como "esperando" deja al
+ * operador esperando con ella.
+ */
+const ESTADO_EN_EL_ALMACEN = Object.freeze({ pendiente: "pendiente", conectada: "viva", revocada: "revocada" });
+
+/**
+ * Escribe la conexion en la tabla que mira la guarda y, si con ella el proyecto
+ * ya tiene una viva, lo lleva a `CONNECTED`.
+ *
+ * LA FILA COMPARTE EL `id` CON LA CONEXION, y es la correspondencia entre las
+ * dos mitades — no un atajo. `DELETE /v1/connections/:id` recibe el id de
+ * `packages/connections` y tiene que poder marcar revocada la fila del almacen:
+ * sin id compartido no hay forma de encontrarla. Es lo mismo que ya se hace con
+ * los grants unas lineas mas arriba.
+ *
+ * `id_externo` lleva el `handle`, que es por lo que se le pregunta a la capa de
+ * integracion por esta conexion — EXCEPTO cuando la clase es `scm`, donde va
+ * `null` por FR-032. No es un rodeo al `CHECK (clase <> 'scm' OR id_externo IS
+ * NULL)` del esquema: es lo que el CHECK dice. `scm` no es una integracion, git
+ * y la forja se hablan directo, y un identificador de esa capa en esa fila es la
+ * señal de que a partir de ese dia clonar depende de que el proveedor conteste.
+ * Y no es un caso del adaptador falso: `github` es `clase: "scm"` en el catalogo
+ * por defecto de `packages/connections`.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} conexion la conexion tal como la devuelve `packages/connections`
+ * @returns {Promise<any|null>} el proyecto, si esta conexion lo hizo avanzar
+ */
+async function reflejarConexion(p, conexion) {
+  const proveedor = exigirConexiones(p.dep);
+  const estado = ESTADO_EN_EL_ALMACEN[conexion.estado];
+  if (!estado) {
+    throw new ErrorDeServicio("estado_de_conexion_desconocido", {
+      estado: conexion.estado,
+      traducidos: Object.keys(ESTADO_EN_EL_ALMACEN).join(", "),
+    });
+  }
+
+  const entrada = (await proveedor.catalogo()).find((/** @type {any} */ e) => e.slug === conexion.slug);
+  if (!entrada) {
+    throw new ErrorDeServicio("proveedor_fuera_del_catalogo", {
+      proveedor: conexion.slug,
+      detalle:
+        "la conexion dice ser de un proveedor que el catalogo del adaptador ya no declara, y la `clase` de la " +
+        "fila sale de ahi: inventarla la clasificaria mal en la pantalla y en la guarda",
+    });
+  }
+
+  const yaEsta = p.dep.almacen.conexiones
+    .porProyecto(conexion.project_id)
+    .some((/** @type {any} */ f) => f.id === conexion.id);
+
+  if (yaEsta) p.dep.almacen.conexiones.cambiarEstado(conexion.id, estado);
+  else {
+    p.dep.almacen.conexiones.crear({
+      id: conexion.id,
+      project_id: conexion.project_id,
+      clase: entrada.clase,
+      proveedor: conexion.slug,
+      id_externo: entrada.clase === "scm" ? null : conexion.handle,
+      estado,
+    });
+  }
+
+  return avanzarSiHayConexionViva(p, conexion.project_id);
+}
+
+/**
+ * La transicion a `CONNECTED`, y la unica que hay.
+ *
+ * POR QUE SE COMPRUEBA EL ESTADO ANTES DE LLAMAR, EN VEZ DE INTENTAR Y ATRAPAR.
+ * Conectar un proveedor es legitimo en cualquier etapa —el operador puede
+ * hacerlo antes de aceptar el snapshot— y en ese caso NO pasa nada: la unica
+ * arista que llega a `CONNECTED` sale de `BOOTSTRAPPED`. Intentar la transicion
+ * siempre convertiria ese caso normal en un error que la pantalla de conexiones
+ * tendria que aprender a ignorar, y una pantalla que ignora errores termina
+ * ignorando el que importaba.
+ *
+ * La guarda NO se replica aqui: se le pregunta al almacen, que va a buscar la
+ * fila. Comprobarlo en los dos sitios serian dos verdades que se pueden separar.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {string} projectId
+ */
+function avanzarSiHayConexionViva(p, projectId) {
+  const proyecto = p.dep.almacen.proyectos.porId(projectId);
+  if (!proyecto || proyecto.estado !== "BOOTSTRAPPED") return null;
+  if (!p.dep.almacen.proyectos.artefactos(projectId).conexion_viva.listo) return null;
+
+  const actualizado = p.dep.almacen.proyectos.transicionar(projectId, "CONNECTED", { actor: "operador" });
+  p.estado.bus.emitir(
+    "proyecto.estado",
+    { estado: actualizado.estado, motivo: "hay al menos una conexion viva" },
+    { project_id: projectId },
+  );
+  return actualizado;
+}
 
 /** @param {import("./rutas.mjs").Peticion} p */
 export async function conexionesDelProyecto(p) {
@@ -371,6 +510,13 @@ export async function autorizarConexion(p) {
     valores: cuerpo.valores ?? {},
   });
 
+  // La conexion que hay que reflejar. En los modos sin autorizacion viene en la
+  // salida; en oauth2 no, porque lo que vuelve es una URL — y la fila hay que
+  // escribirla igual, `pendiente`: la guarda distingue "no hay conexiones" de
+  // "hay una esperando" y mandan al operador a sitios distintos.
+  const conexion = salida.conexion ?? (await proveedor.listar(proyecto.id)).find((c) => c.handle === salida.handle);
+  const avanzado = conexion ? await reflejarConexion(p, conexion) : null;
+
   p.estado.bus.emitir(
     "conexion.estado",
     { proveedor: cuerpo.proveedor, handle: salida.handle, estado: salida.url ? "pendiente" : "conectada" },
@@ -389,7 +535,10 @@ export async function autorizarConexion(p) {
           // URL a secas no dice donde abrirla.
           abrir_en: salida.abrir_en,
         }
-      : { session_token: salida.handle, conexion: salida.conexion },
+      : // El proyecto va SOLO si esta conexion lo hizo avanzar de etapa. Un
+        // campo que viaja siempre obliga a comparar contra el estado anterior
+        // para saber si paso algo, y la pantalla no lo tiene a mano.
+        { session_token: salida.handle, conexion: salida.conexion, ...(avanzado ? { proyecto: avanzado } : {}) },
   };
 }
 
@@ -399,7 +548,27 @@ export async function callbackDeConexion(p) {
   // El `:id` de esta ruta es el `handle` que devolvio `authorize`: es lo que el
   // flujo de autorizacion lleva y trae, y no sobrevive a un reinicio del
   // servicio a proposito.
-  const conexion = await proveedor.esperarConexion(p.parametros.id, { timeoutMs: 1, intervaloMs: 1 });
+  // LA ESPERA ES CORTA PERO NO INSTANTANEA, y la diferencia es una carrera real.
+  //
+  // Estaba en `timeoutMs: 1`, que hace depender el exito de que el PRIMER
+  // sondeo del adaptador conteste en menos de un milisegundo. Con el adaptador
+  // falso pasa siempre; contra un servicio de verdad, el callback devolveria
+  // `espera_agotada` con la autorizacion a punto de llegar — y el operador ve
+  // "no se pudo conectar" justo despues de haber autorizado en su navegador,
+  // que es el momento en que menos se entiende.
+  //
+  // No se espera mas porque no hace falta: cuando el navegador llega a esta
+  // ruta, el proveedor YA registro la conexion. Este margen cubre el viaje
+  // entre los dos, no el flujo entero.
+  const conexion = await proveedor.esperarConexion(p.parametros.id, {
+    timeoutMs: p.dep.esperaDelCallbackMs ?? 2000,
+    intervaloMs: 25,
+  });
+
+  // AQUI ES DONDE LA ETAPA 06 SE CIERRA en el camino de oauth2: la fila que
+  // `authorize` dejo `pendiente` pasa a `viva` —misma fila, mismo id— y con ella
+  // el proyecto avanza si estaba esperando esto.
+  const avanzado = await reflejarConexion(p, conexion);
 
   p.estado.bus.emitir(
     "conexion.estado",
@@ -407,13 +576,22 @@ export async function callbackDeConexion(p) {
     { project_id: conexion.project_id },
   );
 
-  return { cuerpo: { conexion } };
+  return { cuerpo: { conexion, ...(avanzado ? { proyecto: avanzado } : {}) } };
 }
 
 /** @param {import("./rutas.mjs").Peticion} p */
 export async function revocarConexion(p) {
   const proveedor = exigirConexiones(p.dep);
   await proveedor.revocar(p.parametros.id);
+
+  // Y LA MISMA TRADUCCION EN LA OTRA DIRECCION, que es la que mas duele si
+  // falta: una fila `viva` que sobrevive a la revocacion deja al proyecto en
+  // `CONNECTED` apoyado en una conexion que ya no entrega credenciales. La fila
+  // comparte el `id` con la conexion, asi que se encuentra con el mismo que
+  // trajo la ruta; si no hay fila, el `UPDATE` no toca nada y no hay que
+  // distinguir el caso.
+  p.dep.almacen.conexiones.cambiarEstado(p.parametros.id, "revocada");
+
   p.estado.bus.emitir("conexion.estado", { conexion_id: p.parametros.id, estado: "revocada" });
   return { cuerpo: { revocada: p.parametros.id } };
 }
