@@ -21,6 +21,14 @@ import { congelar, crearConexion, validarEntradaDeCatalogo, MODOS_SIN_AUTORIZACI
 import { repositorioEnMemoria } from "./repositorio.mjs";
 import { acotarVigencia, VIGENCIA_POR_DEFECTO_MS } from "./vigencia.mjs";
 import { PUERTO_DE_CALLBACK, problemaDePuertoOcupado, sondearPuertoConNet } from "./preflight.mjs";
+import {
+  LIMITE_DE_REPOSITORIOS,
+  POR_PAGINA_POR_DEFECTO,
+  filtrar,
+  listaCruda,
+  proyectar,
+  rellenarRuta,
+} from "./repositorios.mjs";
 
 /** Las funciones que un motor de adaptador tiene que traer. Sin una, no monta. */
 const FUNCIONES_DEL_MOTOR = ["requisitos", "salud", "iniciar", "guardar", "leer", "olvidar", "sondear", "llamar"];
@@ -442,6 +450,84 @@ export function crearProveedorDeConexiones({
         estado: respuesta.estado,
         cuerpo: respuesta.cuerpo,
         cabeceras: cabecerasSinSecretos(respuesta.cabeceras),
+      });
+    },
+
+    /**
+     * Los repositorios que esta conexion alcanza.
+     *
+     * POR QUE VIVE EN LA FACHADA Y NO EN UN MODULO QUE HABLE CON LA FORJA. La
+     * pregunta es la misma tenga detras un token personal o una autorizacion
+     * delegada: cambia QUIEN guarda la credencial, no que repositorios alcanza.
+     * Con el listado aqui, el dia que entre el adaptador alojado la MISMA
+     * pantalla sirve; con el listado pegado a la forja, ese dia se reescribe.
+     *
+     * Y LO QUE ESTO PROTEGE DE PASO. Va por `llamar`, que es el camino que mete
+     * la credencial en la cabecera y no la devuelve. Si el listado lo hiciera
+     * quien dibuja la pantalla, necesitaria el valor del token del lado del
+     * cliente — y esa es la regla que este paquete no rompe.
+     *
+     * @param {string} conexionId
+     * @param {{texto?: string, limite?: number, pagina?: number, porPagina?: number}} [opciones]
+     */
+    async repositorios(conexionId, opciones = {}) {
+      const conexion = exigirConectada(conexionId);
+      const entrada = entradaDe(conexion.slug);
+      const declaracion = entrada.repos;
+      if (!declaracion || typeof declaracion.ruta !== "string") {
+        fallar(
+          "sin_listado_de_repositorios",
+          `'${entrada.slug}' no declara como se listan los repositorios que alcanza`,
+          "declara `repos` en su entrada del catalogo —la ruta y de que campo crudo sale cada campo del contrato—, o elige el repositorio en un proveedor que si lo declare",
+        );
+      }
+
+      /** Un entero positivo, o el valor por defecto. */
+      const entero = (valor, porDefecto) =>
+        typeof valor === "number" && Number.isInteger(valor) && valor > 0 ? valor : porDefecto;
+
+      const pagina = entero(opciones.pagina, 1);
+      const porPagina = Math.min(entero(opciones.porPagina, POR_PAGINA_POR_DEFECTO), POR_PAGINA_POR_DEFECTO);
+      const limite = entero(opciones.limite, LIMITE_DE_REPOSITORIOS);
+
+      const respuesta = await proveedor.llamar({
+        conexionId,
+        metodo: "GET",
+        ruta: rellenarRuta(declaracion.ruta, { pagina, por_pagina: porPagina }),
+      });
+
+      if (respuesta.estado >= 400) {
+        // EL MENSAJE DEL PROVEEDOR VIAJA DENTRO DE LA CAUSA, y es lo unico util
+        // que hay cuando falla del otro lado: un 401 que solo dice "no se pudo
+        // listar" manda a revisar la red, y lo que pasa es que el token no
+        // tiene el permiso de leer repositorios. El valor de la credencial no
+        // esta aqui: `llamar` lo pone en la cabecera y no lo devuelve.
+        const mensaje =
+          (respuesta.cuerpo && typeof respuesta.cuerpo === "object" && respuesta.cuerpo.message) ||
+          (typeof respuesta.cuerpo === "string" ? respuesta.cuerpo : "") ||
+          "sin mensaje";
+        fallar(
+          "listado_rechazado",
+          `'${entrada.slug}' rechazo el listado de repositorios con estado ${respuesta.estado}: ${mensaje}`,
+          "comprueba que la credencial de esta conexion sigue vigente y que su permiso alcanza a leer repositorios; si caduco, vuelve a conectarla desde la pantalla de conexiones",
+        );
+      }
+
+      const crudos = listaCruda(respuesta.cuerpo, declaracion.lista, entrada.slug);
+      const filtrados = filtrar(crudos.map((r) => proyectar(r, declaracion.campos ?? {})), opciones.texto ?? "");
+      const items = filtrados.slice(0, limite);
+
+      return congelar({
+        // `total` es el del filtro entero y no el de la pagina: una pantalla
+        // que dice "50" cuando hay 120 hace que el operador deje de buscar el
+        // suyo y lo escriba a mano, que es de lo que veniamos.
+        total: filtrados.length,
+        mostrados: items.length,
+        hay_mas: filtrados.length > items.length,
+        limite,
+        pagina,
+        por_pagina: porPagina,
+        items,
       });
     },
 

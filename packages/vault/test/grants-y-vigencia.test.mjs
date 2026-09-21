@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { crearBoveda } from "../src/boveda.mjs";
+import { estadoDelGrant } from "../src/modelo.mjs";
 import { repositorioEnMemoria } from "../src/repositorio.mjs";
 import { crearAuditoria } from "../src/auditoria.mjs";
 import { crearBackendDeArchivo } from "../src/backends/archivo.mjs";
@@ -202,4 +203,37 @@ test("EL INVARIANTE: la vista inversa no devuelve grants revocados ni expirados"
   // Y en el otro sentido: que alcanza un proyecto.
   const porProyecto = await boveda.reach({ project_id: "p3" });
   assert.deepEqual(porProyecto.grants, [], "un proyecto con el grant revocado no alcanza nada");
+});
+
+test("EL AGUJERO: un grant revocado en el vocabulario del almacen NO autoriza", () => {
+  // La funcion leia solo `revocadoEn`/`vigenciaHasta`, y el almacen guarda
+  // `revocado_en`/`vigencia_hasta`. Sobre una fila del almacen los dos campos
+  // eran `undefined`, asi que un grant revocado hacia meses seguia diciendo que
+  // si — y el evento de auditoria quedaba escrito como `concedido`. El registro
+  // afirmaba que el acceso fue legitimo.
+  //
+  // Se prueba con las DOS grafias porque cerrar una y dejar la otra es el mismo
+  // fallo con el nombre cambiado.
+  const ahora = Date.parse("2026-09-21T00:00:00.000Z");
+
+  for (const grant of [
+    { id: "g1", revocado_en: "2020-01-01T00:00:00.000Z" },
+    { id: "g2", revocadoEn: "2020-01-01T00:00:00.000Z" },
+  ]) {
+    const v = estadoDelGrant(grant, ahora);
+    assert.equal(v.vigente, false, `${JSON.stringify(grant)} autorizo estando revocado`);
+    assert.match(v.causa, /revocado/);
+  }
+
+  for (const grant of [
+    { id: "g3", vigencia_hasta: "2020-01-02T00:00:00.000Z" },
+    { id: "g4", vigenciaHasta: "2020-01-02T00:00:00.000Z" },
+  ]) {
+    const v = estadoDelGrant(grant, ahora);
+    assert.equal(v.vigente, false, `${JSON.stringify(grant)} autorizo estando vencido`);
+    assert.match(v.causa, /vigencia/);
+  }
+
+  // Y lo que NO puede romperse al arreglarlo: un grant limpio sigue valiendo.
+  assert.equal(estadoDelGrant({ id: "g5" }, ahora).vigente, true);
 });

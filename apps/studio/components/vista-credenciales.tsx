@@ -13,6 +13,7 @@ import { ErrorText, Fieldset, FieldsetContent, FieldsetFooter } from '@/componen
 import { ModalDeAccionDestructiva } from '@/components/ui/modal-de-accion-destructiva'
 import { Note } from '@/components/ui/nota'
 import { SecretValue } from '@/components/ui/valor-secreto'
+import { Seleccion } from '@/components/ui/seleccion'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { Instante } from '@/components/ui/tabla'
 import {
@@ -22,14 +23,21 @@ import {
 } from '@/components/pantalla'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import { useMutacion } from '@/lib/mutacion'
+import { etiquetaDe, useOpciones, useValorConPreseleccion } from '@/lib/opciones'
 import { contiene } from '@/lib/texto'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import {
   ETIQUETA_ESTADO_CREDENCIAL,
+  GRUPO,
+  type Agente,
   type AlcanceDeCredencial,
+  type AmbitoDeCredencial,
   type Capacidades,
   type Credencial,
   type EstadoDeCredencial,
+  type GrupoDeOpciones,
+  type Proyecto,
+  type TipoDeCredencial,
 } from '@/lib/tipos'
 import type { Navegar } from '@/lib/ruta'
 
@@ -180,6 +188,9 @@ export function VistaInversa({
 function DetalleDeCredencial({
   credencial,
   alcance,
+  proyectos,
+  tipos,
+  ambitos,
   ahora,
   trabajando,
   errorDeMutacion,
@@ -190,6 +201,10 @@ function DetalleDeCredencial({
 }: {
   credencial: Credencial
   alcance: Lectura<AlcanceDeCredencial>
+  /** Los proyectos del workspace: la tripleta se concede sobre uno concreto. */
+  proyectos: Proyecto[]
+  tipos: GrupoDeOpciones
+  ambitos: GrupoDeOpciones
   ahora: number
   trabajando: boolean
   errorDeMutacion: ErrorDelServicio | null
@@ -203,6 +218,48 @@ function DetalleDeCredencial({
   const [proyecto, setProyecto] = useState(credencial.project_id ?? '')
   const [agente, setAgente] = useState('')
   const [hasta, setHasta] = useState('')
+
+  // LOS AGENTES SE PIDEN DEL PROYECTO ELEGIDO, no de todos. No es una
+  // optimizacion: un grant es la tripleta proyecto + agente + credencial, y un
+  // agente de OTRO proyecto en esa lista es una fila que el servicio va a
+  // rechazar. Ofrecerla es ofrecer un error.
+  const agentes = useLectura<Agente[]>(
+    proyecto ? `/v1/projects/${encodeURIComponent(proyecto)}/agents` : null,
+  )
+
+  // Proyectos y agentes NO salen de `/v1/options`: no son un enum del dominio,
+  // son filas del almacen que cambian cada dia. El catalogo publica conjuntos
+  // cerrados; esto es una lista, y su sitio es la ruta que ya la sirve.
+  const grupoDeProyectos: GrupoDeOpciones = {
+    opciones: proyectos.map((p) => ({
+      valor: p.id,
+      etiqueta: p.nombre,
+      descripcion: p.ruta_local ?? undefined,
+    })),
+    unica: proyectos.length === 1,
+    origen: 'detectado',
+    porque: 'son los proyectos que este servicio gestiona en este home.',
+    como_conseguirlo:
+      'Da de alta un proyecto desde la pantalla de proyectos: un grant se concede sobre uno concreto, nunca en abstracto.',
+    preseleccion: null,
+  }
+
+  const grupoDeAgentes: GrupoDeOpciones = {
+    opciones: (agentes.datos ?? []).map((a) => ({
+      valor: a.id,
+      etiqueta: a.nombre,
+      descripcion: `${a.rol} · ${a.runtime}`,
+    })),
+    unica: (agentes.datos ?? []).length === 1,
+    origen: proyecto ? 'detectado' : 'vacio',
+    porque: proyecto
+      ? 'son los agentes declarados en el proyecto elegido.'
+      : 'todavia no hay ningun proyecto elegido, y un agente solo existe dentro de uno.',
+    como_conseguirlo: proyecto
+      ? 'Declara un agente en la pantalla de flota de ese proyecto. Sin agente no hay a quien conceder nada.'
+      : 'Elige primero el proyecto de arriba.',
+    preseleccion: null,
+  }
 
   return (
     <div className="flex flex-col gap-6 border-l-2 border-ds-gray-400 pl-5">
@@ -220,10 +277,10 @@ function DetalleDeCredencial({
 
       <ListaDeDescripciones>
         <Description titulo="Proveedor" contenido={credencial.proveedor} />
-        <Description titulo="Tipo" contenido={credencial.tipo} />
+        <Description titulo="Tipo" contenido={etiquetaDe(tipos, credencial.tipo)} />
         <Description
           titulo="Ambito"
-          contenido={credencial.ambito === 'global' ? 'Global' : 'Solo este proyecto'}
+          contenido={etiquetaDe(ambitos, credencial.ambito)}
           nota={
             credencial.ambito === 'global'
               ? 'Visible para cualquier proyecto, pero solo alcanzable con grant.'
@@ -274,22 +331,33 @@ function DetalleDeCredencial({
           titulo="Conceder un grant"
           descripcion="La autorizacion es la tripleta proyecto + agente + credencial, con vigencia opcional. No hay forma de autorizar a un agente en abstracto: siempre es sobre un proyecto concreto."
         >
+          {/* LOS DOS PRIMEROS ERAN CAMPOS DE TEXTO que pedian `prj_...` y
+              `agt_...`. Esos identificadores no estan escritos en ninguna
+              pantalla donde el operador pueda copiarlos: habia que sacarlos de
+              la barra de direcciones o de una respuesta cruda. Y equivocarse no
+              daba un error util — daba un 404 sobre un id que nadie reconoce.
+              El tercero sigue siendo texto porque una fecha no es un enum. */}
           <div className="grid gap-4 sm:grid-cols-3">
-            <Campo
+            <Seleccion
               etiqueta="Proyecto"
+              grupo={grupoDeProyectos}
               valor={proyecto}
-              alCambiar={setProyecto}
-              operativo
+              alCambiar={(valor) => {
+                setProyecto(valor)
+                // El agente elegido pertenecia al proyecto anterior. Dejarlo
+                // puesto manda una tripleta que el servicio rechaza, y el
+                // rechazo habla de un agente que en la pantalla se ve bien.
+                setAgente('')
+              }}
               requerido
-              marcador="prj_..."
             />
-            <Campo
+            <Seleccion
               etiqueta="Agente"
+              grupo={grupoDeAgentes}
               valor={agente}
               alCambiar={setAgente}
-              operativo
+              cargando={Boolean(proyecto) && agentes.datos === null && agentes.error === null}
               requerido
-              marcador="agt_..."
             />
             <Campo
               etiqueta="Vigente hasta"
@@ -365,6 +433,171 @@ function DetalleDeCredencial({
 }
 
 /* -------------------------------------------------------------------------- */
+/* El formulario de alta                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Registrar una credencial.
+ *
+ * ESTA EXPORTADO Y SEPARADO DEL PANEL POR UNA RAZON MEDIDA, no por estilo.
+ * Vivia dentro de `PanelDeCredenciales`, detras de un `useState` que empieza en
+ * `false`, asi que NADA lo renderizaba nunca: ni el catalogo de pantallas, ni
+ * el `next build`, ni ningun test. Y ahi dentro habia un fallo que no podia
+ * salir de otra manera — el formulario no mandaba `tipo`, que
+ * `POST /v1/credentials` EXIGE, asi que registrar una credencial desde la
+ * interfaz contestaba 400 siempre y no habia ningun control con el que
+ * arreglarlo.
+ *
+ * Es exactamente el motivo que ya tenia escrito `FormularioDeAgente`: un
+ * componente que nadie importa se queda fuera del bundle y su primer render de
+ * verdad ocurre en la maquina del operador.
+ */
+export function FormularioDeCredencial({
+  tipos,
+  ambitos,
+  cargandoOpciones = false,
+  trabajando,
+  errorDeMutacion,
+  alRegistrar,
+  alCerrar,
+}: {
+  tipos: GrupoDeOpciones
+  ambitos: GrupoDeOpciones
+  cargandoOpciones?: boolean
+  trabajando: boolean
+  errorDeMutacion: ErrorDelServicio | null
+  alRegistrar: (credencial: Partial<Credencial> & { valor: string }) => void
+  alCerrar: () => void
+}) {
+  const [nueva, setNueva] = useState({
+    nombre: '',
+    proveedor: '',
+    alcance_declarado: '',
+    valor: '',
+  })
+  // EL FALLO QUE ESTOS DOS CIERRAN, y estaba en la pantalla: `POST
+  // /v1/credentials` EXIGE `tipo` —`exigir(cuerpo, ["nombre", "proveedor",
+  // "tipo", "alcance_declarado", "valor"])`— y este formulario no lo mandaba.
+  // O sea: registrar una credencial desde la interfaz devolvia 400 «falta el
+  // campo `tipo`» SIEMPRE, y no habia ningun control con el que ponerlo. El
+  // boton estaba, se pulsaba, y no podia funcionar nunca.
+  //
+  // `ambito` no era obligatorio —el servicio lo deduce de si hay `project_id`—
+  // pero tampoco se podia decidir, asi que toda credencial nacia global sin
+  // que nadie lo eligiera.
+  const [tipo, setTipo] = useValorConPreseleccion(tipos)
+  const [ambito, setAmbito] = useValorConPreseleccion(ambitos)
+
+  return (
+      <Fieldset>
+        <FieldsetContent
+          titulo="Registrar credencial"
+          descripcion="El valor se manda una vez y va directo a la boveda. Lo que vuelve es la huella; esta pantalla no lo guarda ni lo vuelve a pedir."
+        >
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Campo
+                etiqueta="Nombre"
+                valor={nueva.nombre}
+                alCambiar={(valor) => setNueva((antes) => ({ ...antes, nombre: valor }))}
+                requerido
+                marcador="token de despliegue"
+              />
+              <Campo
+                etiqueta="Proveedor"
+                valor={nueva.proveedor}
+                alCambiar={(valor) => setNueva((antes) => ({ ...antes, proveedor: valor }))}
+                requerido
+                operativo
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Seleccion
+                etiqueta="Tipo"
+                grupo={tipos}
+                valor={tipo}
+                alCambiar={setTipo}
+                cargando={cargandoOpciones}
+                requerido
+                ayuda="Que clase de credencial es. El servicio lo exige y no lo deduce del proveedor: dos tokens del mismo sitio pueden servir para cosas distintas."
+              />
+              <Seleccion
+                etiqueta="Ambito"
+                grupo={ambitos}
+                valor={ambito}
+                alCambiar={setAmbito}
+                cargando={cargandoOpciones}
+              />
+            </div>
+
+            {/* EL ALCANCE DECLARADO SIGUE SIENDO TEXTO LIBRE, y eso es
+                deliberado: no es un enum ni lo puede ser. Es lo que el
+                operador afirma que esta credencial puede hacer, con sus
+                palabras, y no se verifica contra el proveedor. Convertirlo en
+                un desplegable obligaria a inventarse una lista de alcances
+                que ningun proveedor comparte, y el operador elegiria el que
+                mas se parezca — que es peor que la frase que habria escrito. */}
+            <Campo
+              etiqueta="Alcance declarado"
+              valor={nueva.alcance_declarado}
+              alCambiar={(valor) =>
+                setNueva((antes) => ({ ...antes, alcance_declarado: valor }))
+              }
+              requerido
+              ayuda="Lo que esta credencial puede hacer, escrito por ti. No se verifica contra el proveedor: es lo que declaras, y sirve para decidir a quien se la concedes."
+            />
+            <Campo
+              etiqueta="Valor"
+              valor={nueva.valor}
+              alCambiar={(valor) => setNueva((antes) => ({ ...antes, valor }))}
+              secreto
+              requerido
+              ayuda="Esta es la unica pantalla de noxloop donde un secreto pasa por la interfaz, y solo de paso. En cuanto el servicio lo guarde, lo unico que vuelve es la huella."
+            />
+            {errorDeMutacion ? (
+              <ErrorText causa={errorDeMutacion.causa} accion={errorDeMutacion.accion} />
+            ) : null}
+          </div>
+        </FieldsetContent>
+        <FieldsetFooter nota="Registrar no concede nada: sin grant, ningun agente la alcanza.">
+          <Button variant="secondary" onClick={() => alCerrar()} disabled={trabajando}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => {
+              alRegistrar({
+                ...nueva,
+                // Los dos vienen del catalogo del servicio, que los deriva
+                // del mismo enum que la base impone con un CHECK: el
+                // estrechamiento es lo que el tipo del cliente afirma, y el
+                // servicio lo vuelve a comprobar de todas formas.
+                tipo: tipo as TipoDeCredencial,
+                ambito: ambito as AmbitoDeCredencial,
+              })
+              setNueva({ nombre: '', proveedor: '', alcance_declarado: '', valor: '' })
+              alCerrar()
+            }}
+            disabled={
+              trabajando ||
+              !nueva.nombre.trim() ||
+              !nueva.proveedor.trim() ||
+              !nueva.alcance_declarado.trim() ||
+              !nueva.valor ||
+              // Sin tipo el servicio contesta 400. El boton lo dice
+              // apagandose en vez de dejar mandar algo que no puede salir
+              // bien, que es lo que hacia antes.
+              !tipo
+            }
+          >
+            {trabajando ? <Spinner tamano="sm" etiqueta="Registrando" /> : null}
+            Registrar credencial
+          </Button>
+        </FieldsetFooter>
+      </Fieldset>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
 /* El panel                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -373,6 +606,12 @@ export interface PropsDePanelDeCredenciales {
   seleccionada: string | null
   alSeleccionar: (id: string | null) => void
   alcance: Lectura<AlcanceDeCredencial>
+  /** Los proyectos del workspace: el grant se concede sobre uno concreto. */
+  proyectos: Proyecto[]
+  /** `credential.tipo` y `credential.ambito` del catalogo del servicio. */
+  tipos: GrupoDeOpciones
+  ambitos: GrupoDeOpciones
+  cargandoOpciones?: boolean
   capacidades: Capacidades | null
   ahora: number
   cargando: boolean
@@ -392,6 +631,10 @@ export function PanelDeCredenciales({
   seleccionada,
   alSeleccionar,
   alcance,
+  proyectos,
+  tipos,
+  ambitos,
+  cargandoOpciones = false,
   capacidades,
   ahora,
   cargando,
@@ -408,13 +651,6 @@ export function PanelDeCredenciales({
   const [consulta, setConsulta] = useState('')
   const [registrando, setRegistrando] = useState(false)
   const [porRevocar, setPorRevocar] = useState<Credencial | null>(null)
-  const [nueva, setNueva] = useState({
-    nombre: '',
-    proveedor: '',
-    alcance_declarado: '',
-    valor: '',
-  })
-
   const filtradas = useMemo(
     () =>
       credenciales.filter((credencial) =>
@@ -451,67 +687,15 @@ export function PanelDeCredenciales({
       ) : null}
 
       {registrando ? (
-        <Fieldset>
-          <FieldsetContent
-            titulo="Registrar credencial"
-            descripcion="El valor se manda una vez y va directo a la boveda. Lo que vuelve es la huella; esta pantalla no lo guarda ni lo vuelve a pedir."
-          >
-            <div className="flex flex-col gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Campo
-                  etiqueta="Nombre"
-                  valor={nueva.nombre}
-                  alCambiar={(valor) => setNueva((antes) => ({ ...antes, nombre: valor }))}
-                  requerido
-                  marcador="token de despliegue"
-                />
-                <Campo
-                  etiqueta="Proveedor"
-                  valor={nueva.proveedor}
-                  alCambiar={(valor) => setNueva((antes) => ({ ...antes, proveedor: valor }))}
-                  requerido
-                  operativo
-                />
-              </div>
-              <Campo
-                etiqueta="Alcance declarado"
-                valor={nueva.alcance_declarado}
-                alCambiar={(valor) =>
-                  setNueva((antes) => ({ ...antes, alcance_declarado: valor }))
-                }
-                requerido
-                ayuda="Lo que esta credencial puede hacer, escrito por ti. No se verifica contra el proveedor: es lo que declaras, y sirve para decidir a quien se la concedes."
-              />
-              <Campo
-                etiqueta="Valor"
-                valor={nueva.valor}
-                alCambiar={(valor) => setNueva((antes) => ({ ...antes, valor }))}
-                secreto
-                requerido
-                ayuda="Esta es la unica pantalla de noxloop donde un secreto pasa por la interfaz, y solo de paso. En cuanto el servicio lo guarde, lo unico que vuelve es la huella."
-              />
-              {errorDeMutacion ? (
-                <ErrorText causa={errorDeMutacion.causa} accion={errorDeMutacion.accion} />
-              ) : null}
-            </div>
-          </FieldsetContent>
-          <FieldsetFooter nota="Registrar no concede nada: sin grant, ningun agente la alcanza.">
-            <Button variant="secondary" onClick={() => setRegistrando(false)} disabled={trabajando}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => {
-                alRegistrar(nueva)
-                setNueva({ nombre: '', proveedor: '', alcance_declarado: '', valor: '' })
-                setRegistrando(false)
-              }}
-              disabled={trabajando || !nueva.nombre.trim() || !nueva.valor}
-            >
-              {trabajando ? <Spinner tamano="sm" etiqueta="Registrando" /> : null}
-              Registrar credencial
-            </Button>
-          </FieldsetFooter>
-        </Fieldset>
+        <FormularioDeCredencial
+          tipos={tipos}
+          ambitos={ambitos}
+          cargandoOpciones={cargandoOpciones}
+          trabajando={trabajando}
+          errorDeMutacion={errorDeMutacion}
+          alRegistrar={alRegistrar}
+          alCerrar={() => setRegistrando(false)}
+        />
       ) : null}
 
       {credenciales.length > 6 ? (
@@ -588,6 +772,9 @@ export function PanelDeCredenciales({
         <DetalleDeCredencial
           credencial={detalle}
           alcance={alcance}
+          proyectos={proyectos}
+          tipos={tipos}
+          ambitos={ambitos}
           ahora={ahora}
           trabajando={trabajando}
           errorDeMutacion={errorDeMutacion}
@@ -648,6 +835,10 @@ export function VistaDeCredenciales({
     relerEn: EVENTOS_DE_CREDENCIALES,
   })
   const capacidades = useLectura<Capacidades>('/v1/capabilities')
+  // Los proyectos, para que conceder un grant sea elegir y no teclear un
+  // `prj_...` que no esta escrito en ninguna pantalla.
+  const proyectos = useLectura<Proyecto[]>('/v1/projects')
+  const opciones = useOpciones()
   const mutacion = useMutacion()
 
   // La vista inversa se pide SOLO de la credencial abierta. Pedir el alcance
@@ -709,6 +900,10 @@ export function VistaDeCredenciales({
       seleccionada={credencialAbierta}
       alSeleccionar={(id) => navegar({ seccion: 'credenciales', id })}
       alcance={alcance}
+      proyectos={proyectos.datos ?? []}
+      tipos={opciones.grupoDe(GRUPO.tipoDeCredencial)}
+      ambitos={opciones.grupoDe(GRUPO.ambitoDeCredencial)}
+      cargandoOpciones={opciones.catalogo === null && opciones.lectura.error === null}
       capacidades={capacidades.datos}
       ahora={ahora}
       cargando={lectura.datos === null && lectura.error === null}

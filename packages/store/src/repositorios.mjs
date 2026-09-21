@@ -388,6 +388,28 @@ export function repositorioDeConexiones(base) {
       return congelar(base.consultarUno("SELECT * FROM connection WHERE id = ?", [id]));
     },
 
+    /**
+     * Suelta el vinculo con la credencial, sin tocar ninguna de las dos filas.
+     *
+     * POR QUE EXISTE, Y NO ES UN ATAJO. `credential_id` apunta con
+     * `ON DELETE RESTRICT`: el almacen se niega a borrar una credencial
+     * mientras una conexion dependa de ella, y tiene razon —una conexion viva
+     * apoyada en una credencial que ya no esta es una conexion que falla al
+     * usarse—. Pero revocar una conexion es exactamente eso: borrar el valor
+     * que la sostenia. Sin soltar el vinculo primero, revocar falla con
+     * `FOREIGN KEY constraint failed` y deja la conexion viva, que es el peor
+     * de los dos resultados posibles.
+     *
+     * Lo que NO hace es borrar nada: la fila de la conexion sigue, con su
+     * historia, y la credencial la borra quien corresponda despues.
+     *
+     * @param {string} id
+     */
+    desasociarCredencial(id) {
+      base.escribir("UPDATE connection SET credential_id = NULL WHERE id = ?", [id]);
+      return congelar(base.consultarUno("SELECT * FROM connection WHERE id = ?", [id]));
+    },
+
     porProyecto(projectId) {
       return congelarTodas(base.consultar("SELECT * FROM connection WHERE project_id = ? ORDER BY clase", [projectId]));
     },

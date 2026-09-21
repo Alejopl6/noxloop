@@ -45,6 +45,65 @@ export const CATALOGO_POR_DEFECTO = Object.freeze([
     api: { base: "https://api.github.com", auth: { tipo: "bearer", campo: "access_token" } },
   },
   {
+    // VERIFICADO: la misma forja publica DOS formas de conectarse, y la
+    // diferencia no es cosmetica. `github` de arriba es oauth2 y necesita una
+    // aplicacion registrada por el operador; esta se conecta pegando un token
+    // personal, que es lo que se puede hacer HOY sin registrar nada ni levantar
+    // ningun contenedor.
+    //
+    // EL FALLO CONCRETO QUE ESTA ENTRADA CIERRA. El unico proveedor de codigo
+    // del catalogo propio era oauth2, y oauth2 lo atiende el adaptador alojado,
+    // que es un hueco declarado. Resultado medido: no habia NINGUN camino por
+    // el que un operador conectara su cuenta de codigo y eligiera un
+    // repositorio — el boton existia, el flujo no.
+    //
+    // POR QUE `api_key` Y NO `pat`. El modo sale del catalogo del origen, que
+    // declara esta integracion como clave de API, y los dos van por el mismo
+    // adaptador. Inventarle un modo distinto aqui seria la unica diferencia
+    // entre lo que dice el origen y lo que esta capa hizo con el, y esa
+    // diferencia tiene que ser legible.
+    slug: "github-pat",
+    nombre: "GitHub (token personal)",
+    modo: "api_key",
+    clase: "scm",
+    campos: [
+      {
+        nombre: "token",
+        etiqueta: "Token personal",
+        secreto: true,
+        requerido: true,
+        ayuda:
+          "Un token classic con el permiso `repo`, o uno fine-grained con lectura de contenido y metadatos. " +
+          "Se guarda en el deposito de secretos del sistema y no vuelve a salir de ahi.",
+        alcance: "leer los repositorios que la cuenta alcanza",
+      },
+    ],
+    entorno: { token: "GITHUB_TOKEN" },
+    api: { base: "https://api.github.com", auth: { tipo: "bearer", campo: "token" } },
+    // Como se le pregunta a este proveedor por los repositorios que la conexion
+    // alcanza. Es DECLARACION, no codigo: la ruta con sus huecos y de que campo
+    // crudo sale cada campo del contrato. Quien agregue otra forja escribe esto
+    // y no toca la fachada.
+    repos: {
+      ruta: "/user/repos?per_page={por_pagina}&page={pagina}&sort=updated&affiliation=owner,collaborator,organization_member",
+      // La respuesta ES la lista. Una forja que la envuelva declara aqui el
+      // nombre de la propiedad que la contiene.
+      lista: null,
+      campos: {
+        id: "id",
+        nombre: "name",
+        nombre_completo: "full_name",
+        descripcion: "description",
+        privado: "private",
+        rama_por_defecto: "default_branch",
+        url_clon: "clone_url",
+        url_ssh: "ssh_url",
+        url_web: "html_url",
+        actualizado: "updated_at",
+      },
+    },
+  },
+  {
     slug: "slack",
     nombre: "Slack",
     modo: "oauth2",
@@ -69,7 +128,13 @@ export const CATALOGO_POR_DEFECTO = Object.freeze([
     clase: "tracker",
     campos: [
       { nombre: "organizacion", etiqueta: "Organizacion", secreto: false, requerido: true },
-      { nombre: "pat", etiqueta: "Personal Access Token", secreto: true, requerido: true },
+      {
+        nombre: "pat",
+        etiqueta: "Personal Access Token",
+        secreto: true,
+        requerido: true,
+        alcance: "leer y actualizar los work items de la organizacion",
+      },
     ],
     entorno: { organizacion: "AZURE_DEVOPS_ORG", pat: "AZURE_DEVOPS_PAT" },
     api: {
@@ -83,7 +148,15 @@ export const CATALOGO_POR_DEFECTO = Object.freeze([
     nombre: "Vercel",
     modo: "api_key",
     clase: "infra",
-    campos: [{ nombre: "api_key", etiqueta: "Clave de API", secreto: true, requerido: true }],
+    campos: [
+      {
+        nombre: "api_key",
+        etiqueta: "Clave de API",
+        secreto: true,
+        requerido: true,
+        alcance: "consultar los despliegues y su estado",
+      },
+    ],
     entorno: { api_key: "VERCEL_TOKEN" },
     api: { base: "https://api.vercel.com", auth: { tipo: "bearer", campo: "api_key" } },
   },

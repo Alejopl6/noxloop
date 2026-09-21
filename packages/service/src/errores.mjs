@@ -159,6 +159,48 @@ export const CATALOGO = {
       "decir una carpeta con contenido— o apunta `ruta_local` a un destino vacio.",
   },
 
+  // LOS TRES DEL EXPLORADOR DE CARPETAS. El primero es el unico que es una
+  // decision de diseño y no un accidente del disco, y por eso su causa nombra
+  // las raices: un limite que no dice donde SI se puede navegar se lee como un
+  // fallo del producto, y el operador prueba otra ruta, y otra.
+  ruta_fuera_del_alcance: {
+    estado: 403,
+    causa: (d) =>
+      `\`${d.ruta}\` esta fuera de lo que este servicio deja explorar. Se puede navegar dentro de ` +
+      `${(d.raices || []).map((/** @type {any} */ r) => `\`${r.ruta}\``).join(", ")} y nada mas. El explorador ` +
+      "se acota a proposito: convertir «se una ruta» en «enumerame el disco» es la capacidad que merece un " +
+      "limite, y el dia que la puerta de este servicio tenga un fallo, ese limite es la diferencia entre " +
+      "filtrar las carpetas del home y filtrar el equipo entero.",
+    accion: () =>
+      "Navega desde una de las raices que la respuesta lista, o escribe la ruta absoluta en el campo de la " +
+      "pantalla de alta: dar de alta un proyecto acepta cualquier ruta, y su carpeta queda explorable desde " +
+      "ese momento.",
+  },
+
+  carpeta_inexistente: {
+    estado: 404,
+    causa: (d) =>
+      d.es_archivo
+        ? `\`${d.ruta}\` existe pero es un archivo, no una carpeta. Un proyecto se apunta a un directorio: es ` +
+          "donde van el repositorio, el worktree de cada tarea y los archivos que el bootstrap escribe."
+        : `\`${d.ruta}\` no existe en el disco de esta maquina. Puede haberse movido o borrado fuera de la ` +
+          "aplicacion —este servicio no vigila el sistema de archivos— o puede ser la ruta de otro equipo.",
+    accion: () =>
+      "Vuelve a pedir la carpeta que la contiene para ver lo que hay ahora mismo, o empieza desde una de las " +
+      "raices que esa respuesta lista.",
+  },
+
+  carpeta_ilegible: {
+    estado: 403,
+    causa: (d) =>
+      `\`${d.ruta}\` existe y este proceso no la puede leer: ${d.detalle || "el sistema nego el acceso"}. No se ` +
+      "devuelve como carpeta vacia a proposito: una lista vacia haria concluir que el proyecto no esta ahi, " +
+      "cuando lo que pasa es que faltan permisos.",
+    accion: () =>
+      "Dale permiso de lectura al usuario que corre este servicio, o elige otra carpeta. `/v1/health` dice " +
+      "sobre que home esta corriendo, que es el del mismo usuario.",
+  },
+
   proyecto_desconocido: {
     estado: 404,
     causa: (d) =>
@@ -348,6 +390,14 @@ const ESTADO_DE_DOMINIO = {
   conexion_pendiente: 409,
   adaptador_caido: 503,
   espera_agotada: 504,
+  // El proveedor externo contesto, y contesto que no. La peticion de quien
+  // llamo estaba bien escrita: lo que fallo esta del otro lado del cable —un
+  // token sin el permiso que hace falta, o caducado— y un 400 haria que la
+  // pantalla lo tratara como un error de formato suyo y dejara de ofrecer la
+  // salida que si sirve, que es volver a conectar el proveedor.
+  listado_rechazado: 502,
+  respuesta_inesperada: 502,
+  sin_listado_de_repositorios: 409,
   // Una fuga detectada es un fallo DE ESTE SERVICIO, no de quien llamo: la
   // peticion era correcta y el que se equivoco fue el adaptador al devolver un
   // valor donde iba una referencia.

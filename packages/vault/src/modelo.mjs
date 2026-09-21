@@ -178,16 +178,43 @@ export function crearGrant({
  * en el instante del uso, no al planificar: entre planificar y usar puede haber
  * horas, y en esas horas alguien pudo revocar.
  *
- * @param {Grant} grant
+ * El tipo admite las dos grafias a proposito: esta funcion recibe tanto un
+ * `Grant` de este paquete como una fila cruda del almacen, y el dia que el tipo
+ * solo declaraba una, la otra entraba como `undefined` y autorizaba. Declarar
+ * lo que de verdad llega es parte del arreglo, no un adorno del arreglo.
+ *
+ * @param {{id: string, revocadoEn?: string|null, vigenciaHasta?: string|null, revocado_en?: string|null, vigencia_hasta?: string|null}} grant
  * @param {number} ahora
  * @returns {{ vigente: boolean, causa: string|null }}
  */
 export function estadoDelGrant(grant, ahora) {
-  if (grant.revocadoEn) {
-    return { vigente: false, causa: `el grant ${grant.id} fue revocado el ${grant.revocadoEn}` };
+  // LOS DOS VOCABULARIOS SE ACEPTAN AQUI, Y NO ES COMODIDAD: ERA UN AGUJERO.
+  //
+  // Esta funcion leia solo `revocadoEn`/`vigenciaHasta` —el vocabulario de este
+  // paquete— y el almacen guarda `revocado_en`/`vigencia_hasta`. Sobre una fila
+  // venida del almacen los dos campos eran `undefined`, asi que:
+  //
+  //   estadoDelGrant({ revocado_en: "2020-01-01" }, Date.now())  ->  { vigente: true }
+  //
+  // Un grant revocado hacia meses seguia entregando el valor de cualquier
+  // credencial, y el evento de auditoria quedaba escrito como `concedido`. El
+  // registro decia que el acceso fue legitimo.
+  //
+  // El fallo NO ESTABA en quien llamaba: estaba aqui, en una funcion que es la
+  // unica guarda entre "existe la fila" y "autoriza ahora" y que se creia la
+  // unica forma de escribir un nombre. La traduccion en la costura tapaba el
+  // sintoma en un camino; esto cierra la funcion para todos.
+  //
+  // `??` y no `||`: una cadena vacia es un dato distinto de la ausencia, y con
+  // `||` un `revocadoEn: ""` caeria al otro campo en silencio.
+  const revocado = grant.revocadoEn ?? grant.revocado_en;
+  const hasta = grant.vigenciaHasta ?? grant.vigencia_hasta;
+
+  if (revocado) {
+    return { vigente: false, causa: `el grant ${grant.id} fue revocado el ${revocado}` };
   }
-  if (grant.vigenciaHasta && Date.parse(grant.vigenciaHasta) <= ahora) {
-    return { vigente: false, causa: `el grant ${grant.id} existe pero su vigencia termino el ${grant.vigenciaHasta}` };
+  if (hasta && Date.parse(hasta) <= ahora) {
+    return { vigente: false, causa: `el grant ${grant.id} existe pero su vigencia termino el ${hasta}` };
   }
   return { vigente: true, causa: null };
 }

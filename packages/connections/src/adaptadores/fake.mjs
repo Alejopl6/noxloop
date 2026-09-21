@@ -30,7 +30,7 @@ export const CATALOGO_FALSO = Object.freeze([
     modo: "pat",
     clase: "scm",
     campos: [
-      { nombre: "pat", etiqueta: "Token personal", secreto: true, requerido: true },
+      { nombre: "pat", etiqueta: "Token personal", secreto: true, requerido: true, alcance: "leer del proveedor falso" },
       { nombre: "usuario", etiqueta: "Cuenta", secreto: false, requerido: false },
     ],
     entorno: { pat: "FALSO_PAT", usuario: "FALSO_USUARIO" },
@@ -41,7 +41,9 @@ export const CATALOGO_FALSO = Object.freeze([
     nombre: "Falso con clave de API",
     modo: "api_key",
     clase: "infra",
-    campos: [{ nombre: "api_key", etiqueta: "Clave de API", secreto: true, requerido: true }],
+    campos: [
+      { nombre: "api_key", etiqueta: "Clave de API", secreto: true, requerido: true, alcance: "leer del proveedor falso" },
+    ],
     entorno: { api_key: "FALSO_API_KEY" },
     api: { base: "https://falso.invalido/api", auth: { tipo: "cabecera", cabecera: "X-Clave", campo: "api_key" } },
   },

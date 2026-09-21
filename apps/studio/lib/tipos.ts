@@ -410,6 +410,15 @@ export interface AltaDeProyecto {
   ruta_local?: string
   remoto?: string
   plantilla?: string
+  /**
+   * El nivel de autonomia con el que nace el proyecto.
+   *
+   * `POST /v1/projects` lo aceptaba desde el principio y NINGUNA pantalla lo
+   * pedia, asi que todo proyecto nacia en L0 y los otros dos niveles no
+   * existian para quien usa el producto. Un ajuste sin superficie no es un
+   * valor por defecto: es una funcion escondida.
+   */
+  autonomia?: string
 }
 
 /**
@@ -595,25 +604,20 @@ export type AreaDeGuideline =
   | 'agentes'
   | 'diseno'
 
-export const ETIQUETA_AREA: Record<AreaDeGuideline, string> = {
-  frontend: 'Frontend',
-  backend: 'Backend',
-  testing: 'Testing',
-  git: 'Git',
-  seguridad: 'Seguridad',
-  agentes: 'Agentes',
-  diseno: 'Diseno',
-}
-
-export const AREAS_DE_GUIDELINE: readonly AreaDeGuideline[] = [
-  'frontend',
-  'backend',
-  'testing',
-  'git',
-  'seguridad',
-  'agentes',
-  'diseno',
-] as const
+/**
+ * LA LISTA DE AREAS YA NO VIVE AQUI. Estaba escrita en este archivo —las siete,
+ * con sus etiquetas— copiada del `CHECK` de la tabla `guideline`. Mientras las
+ * dos copias coincidieran no se notaba nada; el dia que el enum creciera, la
+ * pantalla habria seguido ofreciendo siete y la octava no habria existido para
+ * el operador, sin un solo error por ningun lado.
+ *
+ * Ahora sale de `GET /v1/options`, que las deriva de `ENUMS` del almacen y
+ * ademas trae lo que significa cada una. Ver `lib/opciones.ts`.
+ *
+ * El TIPO se queda: describe la forma de un `Guideline` que llega del servicio,
+ * y eso no es una lista de opciones que nadie mantiene — es lo que el contrato
+ * dice que puede venir en ese campo.
+ */
 
 export interface Guideline {
   project_id?: string
@@ -716,10 +720,129 @@ export interface Conexion {
 }
 
 /** `POST /v1/projects/:id/connections/authorize`. */
+/**
+ * `POST /v1/projects/:id/connections/authorize`.
+ *
+ * LOS DOS MODOS VIENEN EN LA MISMA RESPUESTA Y SON EXCLUYENTES, y ese es el
+ * dato que este tipo tenia mal. Solo declaraba `url_autorizacion`, que es la
+ * forma del modo `oauth2`; en los modos que se conectan pegando un valor el
+ * servicio NO manda ninguna URL —no la manda a `null`, es que no esta— y manda
+ * la conexion ya lista. Con el tipo anterior, la pantalla esperaba una URL que
+ * nunca llegaba y ensenaba "el flujo de autorizacion esta abierto" para un
+ * token que ya estaba guardado.
+ */
 export interface AutorizacionDeConexion {
-  url_autorizacion: string
   session_token: string
-  expira: string
+  /** Solo en `oauth2`. Se abre en el navegador del sistema, no en el webview. */
+  url_autorizacion?: string
+  abrir_en?: string
+  expira?: string | null
+  /** Solo en los modos sin flujo de autorizacion: la conexion queda lista de inmediato. */
+  conexion?: {
+    id: string
+    project_id: string
+    slug: string
+    modo: string
+    estado: string
+    handle: string
+  }
+  /** Solo si esta conexion hizo avanzar de etapa al proyecto. */
+  proyecto?: Proyecto
+}
+
+/**
+ * Una capacidad tal como la DECLARA `/v1/capabilities`.
+ *
+ * POR QUE EXISTE ESTE SOBRE Y POR QUE NO SE PUEDE APLANAR. El servicio no
+ * contesta el valor a secas: contesta el valor y de donde salio. `detectado`
+ * trae la evidencia que lo respalda; `vacio` trae el motivo de que no haya
+ * nada. Es el principio X aplicado al propio servicio, y la pantalla lo
+ * necesita entero: sin el `motivo`, una capacidad ausente se dibuja como una
+ * linea en gris y el operador no sabe si le falta configurar algo o si el
+ * producto no lo hace.
+ */
+export interface CapacidadDeclarada<V> {
+  valor: V | null
+  origen: 'detectado' | 'vacio'
+  motivo?: string
+  evidencia?: string
+}
+
+/**
+ * `GET /v1/capabilities`, con la forma que el servicio devuelve HOY.
+ *
+ * SE DECLARA APARTE DE `Capacidades` A PROPOSITO. `Capacidades` describe una
+ * forma aplanada —`conexiones.proveedor`, `boveda.backend`— que el servicio no
+ * manda: el efecto medido en la pantalla de conexiones era que
+ * `capacidades.conexiones.proveedor` siempre era `undefined` y el aviso "no hay
+ * proveedor de integraciones declarado" salia SIEMPRE, incluido con el
+ * adaptador montado y funcionando. Tres pantallas leen la forma vieja y no son
+ * de esta tarea; este tipo es el correcto y va ganando terreno por donde se
+ * toca.
+ */
+export interface CapacidadesDelServicio {
+  esquema?: number
+  runtimes?: CapacidadDeclarada<string[]>
+  boveda?: CapacidadDeclarada<{ tipo: string; motivo?: string }>
+  conexiones?: CapacidadDeclarada<{ adaptador: string }>
+  motor?: CapacidadDeclarada<{ presente: boolean; version: string | null }>
+  almacen?: CapacidadDeclarada<{ version_esquema: number; workspace: string }>
+}
+
+/**
+ * Una entrada del catalogo de `GET /v1/connections/catalog`.
+ *
+ * `adaptador` es el dato que decide QUE tiene que hacer el operador, y por eso
+ * viaja: uno de ellos significa levantar contenedores y registrar una
+ * aplicacion propia con el proveedor; el otro, pegar un token en una casilla.
+ */
+export interface EntradaDeCatalogoDeConexiones {
+  slug: string
+  nombre: string
+  modo: ModoDeAutenticacion | null
+  clase: ClaseDeConexion
+  adaptador: string | null
+  soportado: boolean
+  /** Hay entrada propia: trae sus campos y se puede conectar hoy. */
+  curado: boolean
+  /** Por que no se atiende, cuando no se atiende. */
+  motivo?: string | null
+  campos?: CampoDeProveedor[] | null
+  url_docs?: string | null
+  categorias?: string[]
+}
+
+export type ModoDeAutenticacion = 'oauth2' | 'api_key' | 'basic' | 'pat' | 'app'
+
+/** Lo que hay que pedirle al operador para conectar un proveedor sin OAuth. */
+export interface CampoDeProveedor {
+  nombre: string
+  etiqueta: string
+  /** Si va al deposito de secretos en vez de a la fila de la conexion. */
+  secreto: boolean
+  requerido?: boolean
+  ayuda?: string
+  alcance?: string
+}
+
+/**
+ * Un repositorio que una conexion alcanza — `GET /v1/connections/:id/repos`.
+ *
+ * SON LOS NOMBRES DEL CONTRATO Y NO LOS DE NINGUNA FORJA. La capa de conexiones
+ * traduce; si esta pantalla leyera `full_name` o `clone_url`, estaria escrita
+ * contra una forja concreta y el segundo proveedor obligaria a tocarla.
+ */
+export interface RepositorioRemoto {
+  id: string | number | null
+  nombre: string | null
+  nombre_completo: string | null
+  descripcion: string | null
+  privado: boolean | null
+  rama_por_defecto: string | null
+  url_clon: string | null
+  url_ssh: string | null
+  url_web: string | null
+  actualizado: string | null
 }
 
 export type TipoDeCredencial = 'api_token' | 'tracker' | 'scm' | 'modelo' | 'ssh'
@@ -815,39 +938,20 @@ export interface Agente {
   contexto?: Record<string, unknown>
 }
 
-/** El orden del recorrido de un ciclo: quien planifica, quien escribe, quien revisa, quien verifica. */
-export const ROLES_DE_AGENTE: readonly RolDeAgente[] = [
-  'planificador',
-  'implementador',
-  'revisor',
-  'verificador',
-] as const
-
-export const ETIQUETA_ROL_AGENTE: Record<RolDeAgente, string> = {
-  planificador: 'Planificador',
-  implementador: 'Implementador',
-  revisor: 'Revisor',
-  verificador: 'Verificador',
-}
-
 /**
- * Que decide cada rol, escrito para el operador.
+ * LOS CUATRO ROLES, SU ORDEN Y LO QUE DECIDE CADA UNO YA NO VIVEN AQUI.
  *
- * No es adorno de la pantalla: el rol no es una etiqueta, decide que contexto
- * se le compila al agente y contra que regla se valida la flota (FR-034 solo
- * mira `implementador` y `revisor`). Elegir el rol a ciegas es elegir a ciegas
- * la unica separacion que sostiene la revision.
+ * Estaban en este archivo como tres constantes: la lista, sus etiquetas y el
+ * parrafo que explica que hace cada rol. El parrafo es la parte que hace obvio
+ * por que tenia que mudarse: el rol decide contra que regla se valida la flota
+ * (FR-034 solo mira `implementador` y `revisor`) y que contexto se le compila
+ * al agente — o sea, es una decision del dominio, y quien la sostiene es el
+ * servicio, que es ademas quien rechaza al guardar. Con el texto aqui, cambiar
+ * la regla alla dejaba esta pantalla explicando la de ayer.
+ *
+ * Ahora salen de `GET /v1/options`, con los valores derivados de `ENUMS` y el
+ * orden del ciclo declarado como producto. Ver `lib/opciones.ts`.
  */
-export const QUE_HACE_EL_ROL: Record<RolDeAgente, string> = {
-  planificador:
-    'Descompone el work item en tareas y dependencias. No escribe codigo de produccion.',
-  implementador:
-    'Escribe la prueba, la ve fallar, y escribe el codigo que la pone en verde. Es quien toca el arbol.',
-  revisor:
-    'Busca lo que el implementador no vio. Por eso NO puede compartir runtime con el: con el mismo runtime y el mismo contexto, la revision confirma en vez de romper.',
-  verificador:
-    'Corre los gates del repositorio y lee su codigo de salida. No opina sobre el codigo: lo ejecuta.',
-}
 
 /**
  * `GET /v1/grants?agent_id=:id` — la vista inversa de la inversa (FR-045).
@@ -992,3 +1096,113 @@ export interface PaginaDeAuditoria {
   total?: number
   siguiente_cursor?: string | null
 }
+
+/* --- Lo que el servicio ya sabe y esta pantalla no tiene por que pedir ---- */
+
+/**
+ * De donde sale un valor, con el vocabulario del snapshot.
+ *
+ * ES EL MISMO QUE YA LEE EL OPERADOR en la pantalla de analisis y en la flota
+ * sugerida, y por eso no se inventa uno nuevo: `detectado` trae la evidencia
+ * que lo respalda, `por_defecto` sale de una regla del dominio y no de leer
+ * nada, `vacio` es el hueco declarado con su motivo, y `declarado` es el
+ * contrato mismo. Un segundo vocabulario para la misma idea es densidad que se
+ * paga dos veces: al aprenderlo y al traducirlo.
+ */
+export type OrigenDeUnValor = 'declarado' | 'detectado' | 'por_defecto' | 'vacio'
+
+export interface Procedencia {
+  origen: OrigenDeUnValor
+  porque: string
+  evidencia?: Array<{ ruta: string; linea?: number }>
+}
+
+/** `GET /v1/folders`. Una subcarpeta de la que se esta mirando. */
+export interface Carpeta {
+  nombre: string
+  ruta: string
+  oculta: boolean
+  enlace: boolean
+  es_repositorio: boolean
+  procedencia: Procedencia
+  /** El proyecto que YA gestiona esta carpeta, si lo hay. */
+  proyecto: { id: string; nombre: string } | null
+}
+
+/** `GET /v1/folders`, el sobre entero. Todo menos `items`, que `useLectura` desenvuelve. */
+export interface ListadoDeCarpetas {
+  ruta: string
+  /** `null` en una raiz: no hay a donde subir, y el boton no se pinta. */
+  padre: string | null
+  es_raiz: boolean
+  raiz: RaizDeExploracion
+  raices: RaizDeExploracion[]
+  es_repositorio: boolean
+  procedencia: Procedencia
+  proyecto: { id: string; nombre: string } | null
+  archivos: number
+  omitidas: { ocultas: number; enlaces_fuera: number; ilegibles: number }
+  total: number
+  hay_mas: boolean
+  ocultas_incluidas: boolean
+}
+
+export interface RaizDeExploracion {
+  ruta: string
+  motivo: string
+  proyecto?: { id: string; nombre: string }
+}
+
+/**
+ * Una opcion del catalogo del servicio.
+ *
+ * `capacidades`, `modelos` y `nota` solo vienen en los runtimes. Se declaran
+ * opcionales aqui en vez de partir el tipo en dos porque el componente que las
+ * pinta es UNO: un `Seleccion` que tuviera que saber de que grupo viene su
+ * opcion seria un `Seleccion` con un `switch` por grupo dentro.
+ */
+export interface Opcion {
+  valor: string
+  etiqueta: string
+  descripcion?: string
+  nota?: string
+  capacidades?: Record<string, unknown>
+  modelos?: string[]
+  modelos_enumerados?: boolean
+}
+
+export interface GrupoDeOpciones {
+  opciones: Opcion[]
+  /** Lo calcula el servicio: un select con una sola opcion no es un select. */
+  unica: boolean
+  origen: OrigenDeUnValor
+  porque?: string
+  evidencia?: string
+  como_conseguirlo?: string
+  preseleccion: (Procedencia & { valor: string }) | null
+}
+
+/** `GET /v1/options?project_id=`. */
+export interface CatalogoDeOpciones {
+  proyecto: { id: string; nombre: string } | null
+  grupos: Record<string, GrupoDeOpciones>
+}
+
+/**
+ * Las claves de grupo que esta interfaz pide.
+ *
+ * Se escriben como constantes y no como literales sueltos por un motivo que ya
+ * se pago una vez con `recurso_inexistente` en las guidelines: un literal mal
+ * escrito en un sitio no falla, devuelve `undefined`, y el componente pinta el
+ * estado de "todavia cargando" para siempre sin que nadie vea un error.
+ */
+export const GRUPO = {
+  origenDeProyecto: 'project.origen',
+  autonomia: 'project.autonomia',
+  areaDeGuideline: 'guideline.area',
+  tipoDeCredencial: 'credential.tipo',
+  ambitoDeCredencial: 'credential.ambito',
+  rolDeAgente: 'agent.rol',
+  runtime: 'agent.runtime',
+  claseDeConexion: 'connection.clase',
+} as const

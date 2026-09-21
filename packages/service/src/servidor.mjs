@@ -21,6 +21,7 @@ import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 
 import { crearBus } from "./eventos.mjs";
+import { RAICES_POR_DEFECTO } from "./carpetas.mjs";
 import { CABECERAS_JSON, ErrorDeServicio, describir, problema } from "./errores.mjs";
 import { RECURSO, tomarHome } from "./lock.mjs";
 import { ORIGENES_POR_DEFECTO, cabecerasCors, revisar } from "./puerta.mjs";
@@ -102,7 +103,7 @@ function leerCuerpo(req) {
 }
 
 /**
- * @param {{home: string, token: string, arranque: string, origenes: readonly string[], bus: any, dep: any}} estado
+ * @param {{home: string, token: string, arranque: string, origenes: readonly string[], raicesDeExploracion: readonly string[], bus: any, dep: any}} estado
  */
 export function crearServidor(estado) {
   return createServer((req, res) => {
@@ -242,11 +243,12 @@ function escribirSesion(home, datos) {
  *
  * @param {{
  *   home: string, token?: string, port?: number,
- *   origenes?: readonly string[], parentPid?: number, watchdogMs?: number,
+ *   origenes?: readonly string[], raicesDeExploracion?: readonly string[],
+ *   parentPid?: number, watchdogMs?: number,
  *   capacidadEventos?: number, latidoMs?: number,
  *   alQuedarHuerfano?: () => void,
  *   frase?: string|null, backendDeSecretos?: any, proveedorDeConexiones?: any,
- *   adaptadores?: any,
+ *   adaptadores?: any, fabricaDeModelo?: ((conf: {clave: string, modelo?: string}) => any)|null,
  *   reloj?: () => number,
  * }} opts
  */
@@ -273,6 +275,15 @@ export async function arrancar(opts) {
   const arranqueISO = new Date().toISOString();
   const origenes = opts.origenes && opts.origenes.length ? [...opts.origenes] : [...ORIGENES_POR_DEFECTO];
 
+  // DESDE DONDE SE PUEDE EXPLORAR EL DISCO. Va aqui —junto a la allowlist de
+  // origenes— porque es lo mismo: una lista de lo que este proceso acepta, con
+  // un valor por defecto acotado y configurable. `carpetas.mjs` razona por que
+  // el defecto es el home del operador y nunca `/`.
+  const raicesDeExploracion =
+    opts.raicesDeExploracion && opts.raicesDeExploracion.length
+      ? [...opts.raicesDeExploracion]
+      : RAICES_POR_DEFECTO();
+
   // El almacen se abre DESPUES del lock y no antes: abrirlo antes significa
   // que dos procesos tocan el mismo archivo de base de datos durante el
   // instante en que el segundo descubre que no le toca arrancar.
@@ -284,6 +295,7 @@ export async function arrancar(opts) {
       backendDeSecretos: opts.backendDeSecretos,
       proveedorDeConexiones: opts.proveedorDeConexiones,
       adaptadores: opts.adaptadores,
+      fabricaDeModelo: opts.fabricaDeModelo,
       reloj: opts.reloj,
     });
   } catch (e) {
@@ -300,7 +312,7 @@ export async function arrancar(opts) {
     emitir: (tipo, datos, extra) => bus.emitir(tipo, dep.redactarSalida(datos ?? {}), extra),
   };
 
-  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, bus: canal, dep });
+  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, raicesDeExploracion, bus: canal, dep });
 
   try {
     await new Promise((resolve, reject) => {
@@ -389,6 +401,7 @@ export async function arrancar(opts) {
     home,
     arranque: arranqueISO,
     origenes,
+    raicesDeExploracion,
     sesion,
     srv,
     bus,

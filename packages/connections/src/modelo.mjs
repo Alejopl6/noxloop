@@ -86,6 +86,19 @@ export function validarEntradaDeCatalogo(entrada) {
         else if (typeof campo.secreto !== "boolean") {
           problemas.push(`campos.${campo.nombre}: tiene que declarar \`secreto\` (de eso depende si va al deposito de secretos o a la fila)`);
         }
+        // EL ALCANCE DE UN CAMPO SECRETO NO ES OPCIONAL, y esto costo una
+        // conexion que no se podia crear. El deposito exige saber QUE permite
+        // hacer la credencial que guarda —es lo unico que da sentido a la vista
+        // inversa: "estos agentes la alcanzan" sin saber que significa
+        // alcanzarla no es una respuesta— y lo rechaza si llega vacio. Sin esta
+        // guarda, un catalogo al que le falta el alcance monta bien y falla
+        // cuando el operador pega su primer token, con un error que nombra una
+        // columna de una tabla y ningun proveedor.
+        else if (campo.secreto === true && (typeof campo.alcance !== "string" || campo.alcance.trim().length === 0)) {
+          problemas.push(
+            `campos.${campo.nombre}: un campo secreto tiene que declarar \`alcance\` — que permite hacer la credencial que guarda`,
+          );
+        }
       }
       if (!entrada.campos.some((c) => c?.secreto === true)) {
         problemas.push("campos: ninguno es secreto, y entonces no hay credencial que guardar");

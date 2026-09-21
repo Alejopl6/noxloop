@@ -35,6 +35,26 @@ export interface Lectura<T> {
   avisos: readonly Aviso[]
   /** El cursor de la siguiente pagina, o `null` si no hay mas. */
   cursor: string | null
+  /**
+   * LO QUE EL SOBRE TRAE ADEMAS DE `items`, `cursor` Y `avisos`.
+   *
+   * EL FALLO QUE CIERRA, y estaba a punto de repetirse. El contrato dice que
+   * una coleccion viaja en un sobre y que los datos propios de la ruta van
+   * JUNTO a `items` y nunca dentro (`coleccion(items, opciones, extra)` en el
+   * servicio). El catalogo de conexiones pone ahi sus facetas y su
+   * procedencia; el explorador de carpetas pone la ruta resuelta, el padre y
+   * cuantas entradas se omitieron. `useLectura` desenvolvia `items` y TIRABA
+   * el resto, asi que la unica salida de quien lo necesitaba era pedir la
+   * misma ruta otra vez a mano — dos peticiones para una respuesta, y la
+   * segunda pudiendo contestar otra cosa.
+   *
+   * Es el mismo motivo por el que los avisos no se descartan: lo que el
+   * servicio decidio mandar junto a la lista es parte de la respuesta.
+   *
+   * `null` en un recurso que no es coleccion. Se distingue de `{}` a
+   * proposito: `{}` diria «vino un sobre y no traia nada mas».
+   */
+  sobre: Record<string, unknown> | null
 }
 
 export interface Aviso {
@@ -68,6 +88,7 @@ export function useLectura<T>(
   const { cliente, estado } = useServicio()
   const { suscribir } = useEventos()
   const [datos, setDatos] = useState<T | null>(null)
+  const [sobre, setSobre] = useState<Record<string, unknown> | null>(null)
   const [avisos, setAvisos] = useState<readonly Aviso[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const [error, setError] = useState<ErrorDelServicio | null>(null)
@@ -103,13 +124,16 @@ export function useLectura<T>(
         // trabajando en paralelo, y el sitio correcto de pagarlo es este: un
         // punto, no trece.
         if (esSobre(resultado)) {
-          setDatos(resultado.items as T)
-          setAvisos(resultado.avisos ?? [])
-          setCursor(resultado.cursor ?? null)
+          const { items, cursor: cursorDelSobre, avisos: avisosDelSobre, ...resto } = resultado
+          setDatos(items as T)
+          setAvisos(avisosDelSobre ?? [])
+          setCursor(cursorDelSobre ?? null)
+          setSobre(resto)
         } else {
           setDatos(resultado)
           setAvisos([])
           setCursor(null)
+          setSobre(null)
         }
         setError(null)
       })
@@ -139,5 +163,5 @@ export function useLectura<T>(
     return () => bajas.forEach((baja) => baja())
   }, [suscribir, relerEn])
 
-  return { datos, error, cargando, releer, avisos, cursor }
+  return { datos, error, cargando, releer, avisos, cursor, sobre }
 }

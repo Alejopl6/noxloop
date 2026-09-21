@@ -57,6 +57,7 @@ const TIPO_POR_CLASE = Object.freeze({
 /**
  * @param {{
  *   boveda: DepositoDeSecretos,
+ *   workspaceId: string,
  *   catalogo?: readonly any[],
  *   agenteId?: string,
  *   quienConecta?: string,
@@ -68,6 +69,7 @@ const TIPO_POR_CLASE = Object.freeze({
  */
 export function crearAdaptadorLocal({
   boveda,
+  workspaceId,
   catalogo = catalogoPorModo(CATALOGO_POR_DEFECTO, MODOS_DEL_ADAPTADOR_LOCAL),
   agenteId = "capa-de-conexiones",
   // Quien concede el grant. Tiene valor por defecto y es DELIBERADAMENTE
@@ -84,6 +86,24 @@ export function crearAdaptadorLocal({
       "deposito_ausente",
       "el adaptador local se monto sin deposito de secretos",
       "pasale el deposito al construirlo: este adaptador no implementa uno propio a proposito, porque el valor tiene que quedar donde lo protege el sistema operativo",
+    );
+  }
+  // EL ESPACIO DE TRABAJO SE EXIGE, NO SE ADIVINA, Y ADIVINARLO YA COSTO.
+  //
+  // Esto pasaba el identificador del PROYECTO donde el deposito espera el del
+  // espacio de trabajo. Las pruebas del paquete no lo veian —el repositorio en
+  // memoria de la boveda no comprueba claves foraneas— y contra el almacen real
+  // la primera conexion del operador moria con "FOREIGN KEY constraint failed",
+  // envuelto en un `adaptador_caido` que le decia que revisara su llavero.
+  //
+  // Un proyecto no es un espacio de trabajo: hay muchos proyectos por espacio,
+  // y una credencial de ambito `proyecto` declara los dos. Exigirlo al montar
+  // mueve el fallo al arranque, donde se lee, en vez de al primer token pegado.
+  if (typeof workspaceId !== "string" || workspaceId.length === 0) {
+    fallar(
+      "workspace_ausente",
+      "el adaptador local se monto sin decir a que espacio de trabajo pertenecen las credenciales que va a guardar",
+      "pasale `workspaceId` al construirlo: el deposito indexa por espacio de trabajo, y el identificador del proyecto no vale — sin el, guardar el primer token falla con un error de clave foranea que no menciona ningun espacio de trabajo",
     );
   }
 
@@ -150,7 +170,7 @@ export function crearAdaptadorLocal({
         }
         const { credencial } = await contraElDeposito(`guardar '${campo.nombre}' de ${entrada.slug}`, () =>
           boveda.registrar({
-            workspace: projectId,
+            workspace: workspaceId,
             nombre: `${entrada.slug}-${campo.nombre}`,
             proveedor: entrada.slug,
             // El tipo sale de la CLASE de la conexion, no del nombre del campo.

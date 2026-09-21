@@ -385,6 +385,37 @@ export async function auditoria(p) {
 const ESTADO_EN_EL_ALMACEN = Object.freeze({ pendiente: "pendiente", conectada: "viva", revocada: "revocada" });
 
 /**
+ * La credencial del inventario que esta conexion dejo en la boveda, si dejo
+ * alguna.
+ *
+ * EL FALLO QUE CIERRA. La columna `credential_id` de `connection` quedaba
+ * siempre en `null`, y la pantalla de conexiones pintaba "Sin credencial
+ * asociada" JUSTO DESPUES de que el operador pegara su token y la credencial
+ * entrara al inventario con su huella. El operador leia que no habia
+ * credencial y volvia a pegarla.
+ *
+ * El puente es la `ref` del deposito: `packages/connections` guarda en la fila
+ * de la conexion la REFERENCIA con la que se le pide el valor a la boveda
+ * —nunca el valor— y el inventario indexa por esa misma referencia. Una
+ * conexion de modo `oauth2` todavia no deja ninguna, y entonces esto devuelve
+ * `null`, que es la verdad.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} conexion
+ * @returns {string|null}
+ */
+function credencialDeLaConexion(p, conexion) {
+  const refs = Object.values(conexion.deposito?.refs ?? {});
+  for (const entrada of refs) {
+    const ref = /** @type {any} */ (entrada)?.ref;
+    if (typeof ref !== "string") continue;
+    const credencial = p.dep.almacen.boveda.credencialPorRef(ref);
+    if (credencial) return credencial.id;
+  }
+  return null;
+}
+
+/**
  * Escribe la conexion en la tabla que mira la guarda y, si con ella el proyecto
  * ya tiene una viva, lo lleva a `CONNECTED`.
  *
@@ -440,6 +471,7 @@ async function reflejarConexion(p, conexion) {
       proveedor: conexion.slug,
       id_externo: entrada.clase === "scm" ? null : conexion.handle,
       estado,
+      credential_id: credencialDeLaConexion(p, conexion),
     });
   }
 
@@ -481,10 +513,92 @@ function avanzarSiHayConexionViva(p, projectId) {
 export async function conexionesDelProyecto(p) {
   const proyecto = exigirProyecto(p.dep, p.parametros.id);
   const proveedor = exigirConexiones(p.dep);
-  // `listar` no lleva valores nunca: hay una prueba en `packages/connections`
-  // que lo mide, y la de aqui lo vuelve a medir sobre la respuesta HTTP.
+
+  // LAS FILAS SALEN DEL ALMACEN Y NO DE `listar`, Y ESO ERA UN FALLO MEDIDO.
+  //
+  // `listar` devuelve el vocabulario de `packages/connections`: `slug`, `modo`,
+  // `handle`, y el estado `conectada`. La pantalla —y `data-model.md`— hablan
+  // de `proveedor`, `clase` y el estado `viva`. Resultado en la interfaz: cada
+  // conexion se dibujaba con el nombre del proveedor vacio, sin icono de clase
+  // —`ICONO_DE_CLASE[undefined]`— y con la insignia de estado en blanco, porque
+  // ninguna tabla de traduccion tiene una entrada para `conectada`.
+  //
+  // La traduccion entre los dos vocabularios ya existe unas lineas mas arriba,
+  // en `reflejarConexion`, y escribe la fila del almacen con el MISMO id. Leer
+  // de ahi no agrega una segunda verdad: lee la que ya se escribio, que ademas
+  // es la que mira la guarda `conexion_viva`.
+  //
+  // Ninguna de las dos lleva valores: la fila de `connection` no tiene columna
+  // donde quepa uno, y hay una prueba de centinela que lo vuelve a medir sobre
+  // la respuesta HTTP.
+  const filas = p.dep.almacen.conexiones.porProyecto(proyecto.id);
+
   return {
-    cuerpo: coleccion(await proveedor.listar(proyecto.id), {}, { catalogo: await proveedor.catalogo() }),
+    cuerpo: coleccion(filas, {}, { catalogo: await proveedor.catalogo() }),
+  };
+}
+
+/**
+ * `GET /v1/connections/:id/repos` — los repositorios que una conexion alcanza.
+ *
+ * POR QUE ESTA RUTA EXISTE, Y QUE DEJA DE PASAR CUANDO EXISTE. El alta de
+ * proyecto con origen remoto pedia la direccion del repositorio en una casilla
+ * de texto libre, teniendo el producto la credencial del operador guardada con
+ * su grant. El operador iba al navegador, abria la forja, copiaba la direccion
+ * y la pegaba; una letra de mas y el fallo aparecia despues, al clonar, con un
+ * mensaje de git que no menciona ninguna pantalla.
+ *
+ * POR QUE LA RUTA NO SABE DE NINGUNA FORJA. Le pregunta a la fachada, que sabe
+ * por el catalogo como se le pregunta a cada proveedor. El valor de la
+ * credencial no pasa por aqui en ningun momento: viaja en la cabecera de la
+ * llamada que hace la capa de conexiones, y lo que vuelve son fichas de
+ * repositorio.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function repositoriosDeConexion(p) {
+  const proveedor = exigirConexiones(p.dep);
+
+  const crudo = p.url.searchParams.get("limite");
+  const pedido = crudo === null || crudo === "" ? undefined : Number(crudo);
+  if (pedido !== undefined && (!Number.isInteger(pedido) || pedido <= 0)) {
+    throw new ErrorDeServicio("parametro_invalido", {
+      parametro: "limite",
+      valor: crudo,
+      opciones: ["un entero mayor que cero"],
+    });
+  }
+
+  const resultado = await proveedor.repositorios(p.parametros.id, {
+    texto: p.url.searchParams.get("q") ?? "",
+    ...(pedido === undefined ? {} : { limite: pedido }),
+  });
+
+  // EL RECORTE SE DICE, Y NO POR CORTESIA. Quien no encuentra el suyo en la
+  // lista vuelve a escribir la direccion a mano, que es de lo que veniamos. El
+  // aviso viaja en el sobre de la coleccion —el mismo sitio donde el catalogo
+  // de proveedores avisa de lo suyo— asi que la pantalla ya sabe pintarlo.
+  const avisos = resultado.hay_mas
+    ? [
+        {
+          codigo: "repositorios_recortados",
+          causa:
+            `Se enseñan ${resultado.mostrados} de los ${resultado.total} repositorios que esta conexion alcanza.`,
+          accion: "Escribe parte del nombre para acotar la lista: la busqueda mira el nombre y la cuenta a la que pertenece.",
+        },
+      ]
+    : [];
+
+  return {
+    cuerpo: coleccion(resultado.items, { avisos }, {
+      // Los dos numeros viajan por el mismo motivo que en el catalogo de
+      // proveedores: con uno solo la pantalla miente en alguna direccion. Que
+      // la lista se recorte esta bien; que el recorte sea invisible, no.
+      total: resultado.total,
+      mostrados: resultado.mostrados,
+      hay_mas: resultado.hay_mas,
+      limite: resultado.limite,
+    }),
   };
 }
 
@@ -582,6 +696,23 @@ export async function callbackDeConexion(p) {
 /** @param {import("./rutas.mjs").Peticion} p */
 export async function revocarConexion(p) {
   const proveedor = exigirConexiones(p.dep);
+
+  // EL VINCULO SE SUELTA ANTES DE PEDIR QUE OLVIDEN EL VALOR, y el orden es el
+  // arreglo entero. `connection.credential_id` apunta con `ON DELETE RESTRICT`:
+  // mientras la fila de la conexion senale a la credencial, el almacen se niega
+  // a borrarla — con razon, porque una conexion viva apoyada en una credencial
+  // que ya no esta falla recien al usarse. Pero revocar es justamente borrar el
+  // valor que la sostenia.
+  //
+  // Medido con curl contra el servicio corriendo: el `DELETE` devolvia 400 con
+  // `revocacion_incompleta` —"el valor no se pudo borrar: FOREIGN KEY
+  // constraint failed"— y dejaba la fila `viva`. El operador leia un error
+  // sobre una clave foranea y su conexion seguia entregando credenciales.
+  //
+  // Soltar el vinculo no borra nada: la fila de la conexion sigue con su
+  // historia, y lo que se va es el valor.
+  p.dep.almacen.conexiones.desasociarCredencial(p.parametros.id);
+
   await proveedor.revocar(p.parametros.id);
 
   // Y LA MISMA TRADUCCION EN LA OTRA DIRECCION, que es la que mas duele si

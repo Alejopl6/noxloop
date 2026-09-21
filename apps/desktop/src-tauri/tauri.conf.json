@@ -54,7 +54,22 @@
       "../../../packages/adapters/package.json": "adapters/package.json",
       "../../../packages/adapters/src/**/*": "adapters/src/",
       "../../../packages/engine/package.json": "engine/package.json",
-      "../../../packages/engine/src/**/*": "engine/src/"
+      "../../../packages/engine/src/**/*": "engine/src/",
+      "../../../packages/asistencia/package.json": "asistencia/package.json",
+      "../../../packages/asistencia/src/**/*": "asistencia/src/",
+
+      "../../../node_modules/ai/**/*": "node_modules/ai/",
+      "../../../node_modules/@ai-sdk/anthropic/**/*": "node_modules/@ai-sdk/anthropic/",
+      "../../../node_modules/@ai-sdk/gateway/**/*": "node_modules/@ai-sdk/gateway/",
+      "../../../node_modules/@ai-sdk/provider/**/*": "node_modules/@ai-sdk/provider/",
+      "../../../node_modules/@ai-sdk/provider-utils/**/*": "node_modules/@ai-sdk/provider-utils/",
+      "../../../node_modules/@standard-schema/spec/**/*": "node_modules/@standard-schema/spec/",
+      "../../../node_modules/@vercel/oidc/**/*": "node_modules/@vercel/oidc/",
+      "../../../node_modules/@workflow/serde/**/*": "node_modules/@workflow/serde/",
+      "../../../node_modules/eventsource-parser/**/*": "node_modules/eventsource-parser/",
+      "../../../node_modules/json-schema/**/*": "node_modules/json-schema/",
+      "../../../node_modules/undici/**/*": "node_modules/undici/",
+      "../../../node_modules/zod/**/*": "node_modules/zod/"
     }
   }
 }

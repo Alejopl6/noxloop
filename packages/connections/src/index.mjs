@@ -42,6 +42,15 @@ export {
   consultar,
 } from "./catalogo-consultable.mjs";
 export { VIGENCIA_MAXIMA_MS, VIGENCIA_POR_DEFECTO_MS, acotarVigencia } from "./vigencia.mjs";
+export {
+  CAMPOS_DE_REPOSITORIO,
+  LIMITE_DE_REPOSITORIOS,
+  POR_PAGINA_POR_DEFECTO,
+  filtrar,
+  listaCruda,
+  proyectar,
+  rellenarRuta,
+} from "./repositorios.mjs";
 export { PUERTO_DE_CALLBACK, HOST_DE_CALLBACK, sondearPuertoConNet, problemaDePuertoOcupado } from "./preflight.mjs";
 export { arrancar } from "./arranque.mjs";
 export { repositorioEnMemoria } from "./repositorio.mjs";

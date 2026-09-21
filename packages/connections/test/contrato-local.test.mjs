@@ -97,6 +97,7 @@ function fixturesLocales() {
       const { reloj, avanzar } = relojDePrueba();
       const proveedor = crearAdaptadorLocal({
         boveda,
+        workspaceId: "espacio-de-prueba",
         reloj,
         dormir: async (ms) => avanzar(ms),
         // Sin red: la peticion llega grabada. Un adaptador que necesite una

@@ -6,14 +6,15 @@ import { Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Campo } from '@/components/ui/campo'
 import { ErrorText, Fieldset, FieldsetContent, FieldsetFooter } from '@/components/ui/fieldset'
-import { Note } from '@/components/ui/nota'
-import { Segmentado } from '@/components/ui/segmentado'
+import { Seleccion } from '@/components/ui/seleccion'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { EsqueletoDeLista, FalloDeLectura } from '@/components/pantalla'
+import { BorradorSugerido } from '@/components/borrador-sugerido'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import { useMutacion } from '@/lib/mutacion'
+import { etiquetaDe, useOpciones, useValorConPreseleccion } from '@/lib/opciones'
 import type { ErrorDelServicio } from '@/lib/daemon'
-import { AREAS_DE_GUIDELINE, ETIQUETA_AREA, type AreaDeGuideline, type Guideline } from '@/lib/tipos'
+import { GRUPO, type AreaDeGuideline, type GrupoDeOpciones, type Guideline } from '@/lib/tipos'
 
 /**
  * T116 (2/3) · Guidelines por area.
@@ -24,13 +25,28 @@ import { AREAS_DE_GUIDELINE, ETIQUETA_AREA, type AreaDeGuideline, type Guideline
  * unidades de guardado a la vista, que es exactamente lo que el componente
  * promete que no ocurre.
  *
- * EL AREA DE DISENO ES OMITIBLE SIN PENALIZACION (FR-023) y hay que decirlo,
- * porque un area vacia dentro de una lista de siete se lee como un hueco que
- * falta rellenar. Un proyecto sin superficie visual no tiene guideline de
- * diseno y eso no bloquea nada.
+ * LA LISTA DE AREAS YA NO SE ESCRIBE AQUI, y el cambio no es cosmetico. Estaba
+ * en `lib/tipos.ts` como una constante de siete elementos copiada del `CHECK`
+ * de la tabla `guideline`. Mientras las dos copias coincidieran no se notaba
+ * nada; el dia que el enum creciera, esta pantalla habria seguido ofreciendo
+ * siete areas y la octava no habria existido para el operador — sin un error,
+ * sin un hueco, sin nada que mirar. Ahora sale de `GET /v1/options`, que las
+ * deriva de `ENUMS`, trae lo que significa cada una, y con el proyecto delante
+ * dice cual respalda el snapshot y con que evidencia.
+ *
+ * QUE EL AREA DE DISENO ES OMITIBLE SIN PENALIZACION (FR-023) HAY QUE DECIRLO
+ * —un area vacia dentro de una lista de siete se lee como un hueco que falta
+ * rellenar— y ya NO se dice aqui: lo dice el propio catalogo, en la descripcion
+ * de esa opcion, y `Seleccion` la pinta bajo el control cuando esta elegida.
+ * Estaba escrito en esta pantalla como una nota con un `area === 'diseno'`
+ * dentro, que es la segunda copia de una regla del dominio: el dia que la regla
+ * cambie, el servicio la cambia y esta pantalla sigue afirmando la de ayer.
  */
 
 export function PanelDeGuidelines({
+  proyectoId,
+  areas,
+  cargandoOpciones = false,
   area,
   alCambiarArea,
   lectura,
@@ -40,6 +56,16 @@ export function PanelDeGuidelines({
   trabajando,
   errorDeMutacion,
 }: {
+  /**
+   * OPCIONAL a proposito. El catalogo de pantallas monta este panel sin
+   * proyecto —es una galeria de componentes, no una sesion— y sin proyecto no
+   * hay snapshot del que sugerir ni grant que mirar. Sin el, el bloque de
+   * asistencia no se pinta en vez de pintarse roto.
+   */
+  proyectoId?: string
+  /** `guideline.area` del catalogo del servicio. Ver `lib/opciones.ts`. */
+  areas: GrupoDeOpciones
+  cargandoOpciones?: boolean
   area: AreaDeGuideline
   alCambiarArea: (area: AreaDeGuideline) => void
   lectura: Lectura<Guideline>
@@ -81,29 +107,21 @@ export function PanelDeGuidelines({
         </p>
       </div>
 
-      <Segmentado
+      <Seleccion
         etiqueta="Area de la guideline"
-        opciones={AREAS_DE_GUIDELINE.map((cual) => ({
-          valor: cual,
-          etiqueta: ETIQUETA_AREA[cual],
-        }))}
+        grupo={areas}
         valor={area}
-        alCambiar={alCambiarArea}
+        alCambiar={(valor) => alCambiarArea(valor as AreaDeGuideline)}
+        cargando={cargandoOpciones}
+        className="max-w-md"
       />
-
-      {area === 'diseno' ? (
-        <Note tipo="neutral">
-          El area de diseno es omitible sin penalizacion. Un proyecto sin superficie
-          visual la deja vacia y eso no bloquea ninguna etapa ni ningun run.
-        </Note>
-      ) : null}
 
       {cargando ? <EsqueletoDeLista filas={1} /> : null}
 
       {!cargando ? (
         <Fieldset>
           <FieldsetContent
-            titulo={`Guideline de ${ETIQUETA_AREA[area]}`}
+            titulo={`Guideline de ${etiquetaDe(areas, area)}`}
             descripcion={
               guideline?.ruta_en_repo ? (
                 <>
@@ -117,7 +135,7 @@ export function PanelDeGuidelines({
           >
             <div className="flex flex-col gap-4">
               <Campo
-                etiqueta={`Contenido de la guideline de ${ETIQUETA_AREA[area]}`}
+                etiqueta={`Contenido de la guideline de ${etiquetaDe(areas, area)}`}
                 valor={borrador}
                 alCambiar={alEditar}
                 multilinea
@@ -144,6 +162,17 @@ export function PanelDeGuidelines({
                 </div>
               ) : null}
 
+              {/* EL BORRADOR SUGERIDO VA DEBAJO DEL CAMPO Y NO DENTRO, y eso
+                  es la decision entera. Dentro del campo, el texto del modelo
+                  seria indistinguible del que escribio el operador en cuanto
+                  el cursor pasara por encima: la unica marca que quedaria es
+                  la memoria de quien lo pego. Fuera, se ve de donde sale,
+                  quien lo produjo y en que hallazgos dice apoyarse, y entra al
+                  campo solo cuando alguien pulsa. */}
+              {proyectoId ? (
+                <BorradorSugerido proyectoId={proyectoId} area={area} alCopiar={alEditar} />
+              ) : null}
+
               {errorDeMutacion ? (
                 <ErrorText causa={errorDeMutacion.causa} accion={errorDeMutacion.accion} />
               ) : null}
@@ -168,7 +197,14 @@ export function PanelDeGuidelines({
 }
 
 export function VistaDeGuidelines({ proyectoId }: { proyectoId: string }) {
-  const [area, setArea] = useState<AreaDeGuideline>('testing')
+  // El area de arranque la PRESELECCIONA EL SERVICIO a partir del snapshot: si
+  // el proyecto trae `testing.runner`, se abre en testing y lo dice con la
+  // evidencia. Antes estaba fijada a `'testing'` con un literal, que acertaba
+  // en los proyectos que tienen tests y mentia en los que no: el operador leia
+  // «Guideline de Testing» como si alguien hubiera mirado su repositorio.
+  const opciones = useOpciones(proyectoId)
+  const areas = opciones.grupoDe(GRUPO.areaDeGuideline)
+  const [area, setArea] = useValorConPreseleccion(areas, 'testing')
   const [borrador, setBorrador] = useState('')
   const lectura = useLectura<Guideline>(`/v1/projects/${proyectoId}/guidelines/${area}`)
   const mutacion = useMutacion()
@@ -190,7 +226,10 @@ export function VistaDeGuidelines({ proyectoId }: { proyectoId: string }) {
 
   return (
     <PanelDeGuidelines
-      area={area}
+      proyectoId={proyectoId}
+      areas={areas}
+      cargandoOpciones={opciones.catalogo === null && opciones.lectura.error === null}
+      area={area as AreaDeGuideline}
       alCambiarArea={setArea}
       lectura={lectura}
       borrador={borrador}

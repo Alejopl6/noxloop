@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react'
 
 import { Campo } from '@/components/ui/campo'
 import { Segmentado } from '@/components/ui/segmentado'
+import { Seleccion } from '@/components/ui/seleccion'
 import { CicloDeVida, LoQueFalta, ResumenDelCiclo } from '@/components/ui/ciclo-de-vida'
 import { PanelDeProyectos } from '@/components/vista-proyectos'
 import { PanelDeAltaDeProyecto } from '@/components/vista-alta-de-proyecto'
@@ -12,7 +13,7 @@ import { PanelDeConstitution, FormularioDeEnmienda } from '@/components/vista-co
 import { PanelDeGuidelines } from '@/components/vista-guidelines'
 import { PanelDeBootstrap } from '@/components/vista-bootstrap'
 import { PanelDeConexiones } from '@/components/vista-conexiones'
-import { PanelDeCredenciales } from '@/components/vista-credenciales'
+import { FormularioDeCredencial, PanelDeCredenciales } from '@/components/vista-credenciales'
 import {
   FormularioDeAgente,
   PanelDeFlota,
@@ -29,12 +30,15 @@ import type {
   AlcanceDeCredencial,
   ArtefactosDeProyecto,
   Capacidades,
+  EntradaDeCatalogoDeConexiones,
   Conexion,
   Constitution,
   Credencial,
   EventoDeAuditoria,
+  GrupoDeOpciones,
   Guideline,
   Hallazgo,
+  Opcion,
   Plantilla,
   Proyecto,
   Recomendacion,
@@ -73,12 +77,13 @@ import type { Navegar } from '@/lib/ruta'
 /**
  * Lo comun a las tres: sin avisos y sin cursor.
  *
- * `avisos` y `cursor` llegaron a `Lectura` al desenvolver el sobre del
- * contrato en `useLectura`. Se declaran aqui en un solo sitio para que anadir
- * el siguiente campo del sobre sea una linea y no tres — que es justo el tipo
- * de duplicacion que deja un doble de prueba desincronizado del de verdad.
+ * `avisos`, `cursor` y `sobre` llegaron a `Lectura` al desenvolver el sobre
+ * del contrato en `useLectura`. Se declaran aqui en un solo sitio para que
+ * anadir el siguiente campo del sobre sea una linea y no tres — que es justo
+ * el tipo de duplicacion que deja un doble de prueba desincronizado del de
+ * verdad. `sobre` fue el tercero, y esta linea es toda la deuda que costo.
  */
-const SIN_SOBRE = { avisos: [] as const, cursor: null, releer: () => undefined }
+const SIN_SOBRE = { avisos: [] as const, cursor: null, sobre: null, releer: () => undefined }
 
 function conDatos<T>(datos: T): Lectura<T> {
   return { ...SIN_SOBRE, datos, error: null, cargando: false }
@@ -626,13 +631,48 @@ const ALCANCE: AlcanceDeCredencial = {
   ],
 }
 
+/**
+ * El catalogo de proveedores tal como lo publica `GET /v1/connections/catalog`.
+ *
+ * Las dos filas son los dos casos que la pantalla tiene que saber distinguir:
+ * una que se conecta AQUI, con sus campos declarados, y una que iria por un
+ * adaptador que este servicio no tiene montado. La segunda es la que antes se
+ * dibujaba como un boton que no hacia nada.
+ */
+const CATALOGO_DE_CONEXIONES: EntradaDeCatalogoDeConexiones[] = [
+  {
+    slug: 'forja-por-token',
+    nombre: 'Forja (token personal)',
+    modo: 'api_key',
+    clase: 'scm',
+    adaptador: 'local',
+    soportado: true,
+    curado: true,
+    campos: [
+      {
+        nombre: 'token',
+        etiqueta: 'Token personal',
+        secreto: true,
+        requerido: true,
+        ayuda: 'Un token con permiso de lectura de repositorios.',
+      },
+    ],
+  },
+  {
+    slug: 'forja-delegada',
+    nombre: 'Forja (autorizacion delegada)',
+    modo: 'oauth2',
+    clase: 'scm',
+    adaptador: 'alojado',
+    soportado: true,
+    curado: true,
+    campos: null,
+  },
+]
+
 const CAPACIDADES_DEGRADADAS: Capacidades = {
   boveda: { backend: 'archivo_cifrado', degradado: true },
   conexiones: { proveedor: 'integraciones-local' },
-}
-
-const CAPACIDADES_SIN_PROVEEDOR: Capacidades = {
-  boveda: { backend: 'keychain_so' },
 }
 
 /**
@@ -723,8 +763,15 @@ const ALCANCE_DEL_AGENTE: AlcanceDeAgente = {
   ],
 }
 
-const CAPACIDADES_CON_RUNTIMES: Capacidades = {
-  runtimes: ['runtime-de-referencia', 'runtime-secundario'],
+/**
+ * La boveda SANA, que es lo unico que la pantalla de credenciales mira de
+ * `/v1/capabilities`.
+ *
+ * `runtimes` ya no esta aqui: la pantalla de flota lo pedia solo para escribir
+ * la lista en la AYUDA de un campo de texto, y ahora los runtimes salen de
+ * `/v1/options` con lo que cada uno puede y no puede. Ver `RUNTIMES` arriba.
+ */
+const CAPACIDADES: Capacidades = {
   boveda: { backend: 'keychain_so' },
   motor: { presente: true },
 }
@@ -878,6 +925,160 @@ function Estado({ nombre, children }: { nombre: string; children: ReactNode }) {
   )
 }
 
+/* -------------------------------------------------------------------------- */
+/* Grupos de opciones de mentira                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Los grupos que `GET /v1/options` publica, con la forma exacta que el servicio
+ * les da.
+ *
+ * ESTAN AQUI POR LO MISMO QUE ESTAN LAS PANTALLAS: `Seleccion` tiene tres
+ * degradaciones —una sola opcion, ninguna, y el catalogo todavia viajando— y
+ * las tres son las que el operador ve el primer dia y el peor dia. Con datos
+ * de verdad solo se mira la cuarta, que es la que funciona.
+ */
+function grupo(
+  opciones: Opcion[],
+  extra: Partial<GrupoDeOpciones> = {},
+): GrupoDeOpciones {
+  return {
+    opciones,
+    unica: opciones.length === 1,
+    origen: 'declarado',
+    porque: 'son los valores que el modelo de datos declara, y los unicos que la base acepta.',
+    preseleccion: null,
+    ...extra,
+  }
+}
+
+const AREAS = grupo([
+  { valor: 'frontend', etiqueta: 'Frontend', descripcion: 'Como se escribe la superficie visual y sus componentes.' },
+  { valor: 'backend', etiqueta: 'Backend', descripcion: 'Como se escriben los servicios, los datos y sus contratos.' },
+  { valor: 'testing', etiqueta: 'Testing', descripcion: 'Que se prueba, con que runner y que cuenta como verde.' },
+  { valor: 'git', etiqueta: 'Git', descripcion: 'Ramas, mensajes de commit y tamano de un pull request.' },
+  { valor: 'seguridad', etiqueta: 'Seguridad', descripcion: 'Secretos, dependencias y entrada que no es de fiar.' },
+  { valor: 'agentes', etiqueta: 'Agentes', descripcion: 'Que puede hacer un agente en este repositorio y que no.' },
+  {
+    valor: 'diseno',
+    etiqueta: 'Diseno',
+    descripcion:
+      'Tokens, tipografia y movimiento. Es la unica omitible sin penalizacion: un proyecto sin superficie visual la deja vacia y no bloquea ninguna etapa.',
+  },
+], {
+  preseleccion: {
+    valor: 'testing',
+    origen: 'detectado',
+    porque:
+      'el snapshot de este proyecto trae `testing.runner`, que es un hecho del arbol sobre el area de testing.',
+    evidencia: [{ ruta: 'package.json' }],
+  },
+})
+
+const AUTONOMIAS = grupo([
+  {
+    valor: 'L0',
+    etiqueta: 'L0 · cada paso se aprueba',
+    descripcion: 'Nada avanza sin una respuesta en la bandeja.',
+  },
+  {
+    valor: 'L1',
+    etiqueta: 'L1 · avanza y para en lo que importa',
+    descripcion: 'El ciclo corre solo y se detiene en lo que el proyecto declaro peligroso.',
+  },
+  {
+    valor: 'L2',
+    etiqueta: 'L2 · hasta el pull request',
+    descripcion: 'El maximo que existe: ninguna decision de merge es del sistema.',
+  },
+], {
+  preseleccion: {
+    valor: 'L0',
+    origen: 'por_defecto',
+    porque: 'todo proyecto empieza en el nivel mas bajo. No sale de leer nada: es la regla del dominio.',
+    evidencia: [],
+  },
+})
+
+const ROLES = grupo([
+  { valor: 'planificador', etiqueta: 'Planificador', descripcion: 'Descompone el work item en tareas y dependencias.' },
+  {
+    valor: 'implementador',
+    etiqueta: 'Implementador',
+    descripcion: 'Escribe la prueba, la ve fallar, y escribe el codigo que la pone en verde.',
+  },
+  {
+    valor: 'revisor',
+    etiqueta: 'Revisor',
+    descripcion: 'Busca lo que el implementador no vio. No puede compartir runtime con el.',
+  },
+  { valor: 'verificador', etiqueta: 'Verificador', descripcion: 'Corre los gates del repositorio y lee su salida.' },
+])
+
+const TIPOS_DE_CREDENCIAL = grupo([
+  { valor: 'api_token', etiqueta: 'Token de API', descripcion: 'Un token opaco que se manda en una cabecera.' },
+  { valor: 'tracker', etiqueta: 'Gestor de tickets', descripcion: 'Lo que autoriza a leer y comentar work items.' },
+  { valor: 'scm', etiqueta: 'Gestor de repositorios', descripcion: 'Lo que autoriza a clonar, empujar y abrir un pull request.' },
+  { valor: 'modelo', etiqueta: 'Proveedor de modelo', descripcion: 'La clave con la que el runtime habla con su modelo.' },
+  { valor: 'ssh', etiqueta: 'Clave SSH', descripcion: 'Un par de claves para acceso por SSH.' },
+])
+
+const AMBITOS = grupo([
+  { valor: 'global', etiqueta: 'Todo el workspace', descripcion: 'Disponible para cualquier proyecto de este home.' },
+  { valor: 'proyecto', etiqueta: 'Un solo proyecto', descripcion: 'Atada a un proyecto concreto.' },
+])
+
+/** Dos runtimes, y uno de ellos NO puede implementar. Ver `agent.runtime`. */
+const RUNTIMES = grupo([
+  {
+    valor: 'runtime-con-hooks',
+    etiqueta: 'runtime-con-hooks',
+    capacidades: { resume: true, cost: true, effort: true, hooks: true, models: 'desconocido' },
+    modelos: [],
+    modelos_enumerados: false,
+  },
+  {
+    valor: 'runtime-sin-hooks',
+    etiqueta: 'runtime-sin-hooks',
+    capacidades: { resume: false, cost: false, effort: true, hooks: false, models: ['modelo-de-referencia'] },
+    modelos: ['modelo-de-referencia'],
+    modelos_enumerados: true,
+    nota:
+      'No tiene mecanismo de hooks, asi que no es elegible como implementador: sin el hook del paso RED, que la prueba se vea fallar antes de escribir el codigo depende de que el prompt se acuerde.',
+  },
+], {
+  origen: 'detectado',
+  porque:
+    'son los adaptadores registrados en este servicio. Registrados, no disponibles: que su binario este instalado solo lo contesta el preflight.',
+  evidencia: 'registro de adaptadores inyectado al arrancar: runtime-con-hooks, runtime-sin-hooks',
+})
+
+/** El caso de UNA sola opcion: no es un select, es un dato. */
+const UN_SOLO_RUNTIME = grupo([{ valor: 'el-unico', etiqueta: 'el-unico' }], {
+  origen: 'detectado',
+  porque: 'es el unico adaptador registrado en este servicio.',
+})
+
+/** El caso de NINGUNA: un hueco declarado, no un desplegable vacio. */
+const SIN_RUNTIMES = grupo([], {
+  origen: 'vacio',
+  porque:
+    'no hay ningun registro de runtimes de agente montado en este servicio: los adaptadores se inyectan al arrancar, porque construirlos decide el binario, los hooks y el home de cada uno.',
+  como_conseguirlo:
+    'Arranca el servicio con el registro de adaptadores inyectado. Mientras tanto puedes dar de alta los agentes a mano por POST /v1/projects/:id/agents.',
+})
+
+/** El 503 del principio X: la pieza que falta, con su causa y su salida. */
+const SIN_BOVEDA = new ErrorDelServicio({
+  codigo: 'pieza_ausente',
+  causa:
+    'No hay backend de secretos montado en este servicio: no se recibio ninguna frase de paso, y este servicio se niega a inventar una. Sin `la boveda`, esta ruta no puede hacer lo que promete y no lo va a fingir.',
+  accion:
+    'Arranca el servicio con la frase de paso de la boveda en el entorno, o conecta el llavero del sistema operativo. Mientras tanto, el inventario se puede leer y no se puede escribir.',
+  estadoHttp: 503,
+  recurso: 'POST /v1/credentials',
+})
+
 const SIN_EFECTO = () => undefined
 
 /* -------------------------------------------------------------------------- */
@@ -890,6 +1091,8 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
   const [origen, setOrigen] = useState<'nuevo' | 'local' | 'remoto'>('local')
   const [credencial, setCredencial] = useState<string | null>('cred_0c41de')
   const [area, setArea] = useState<Guideline['area']>('testing')
+  const [runtimeElegido, setRuntimeElegido] = useState('')
+  const [rolElegido, setRolElegido] = useState('implementador')
   const [guideline, setGuideline] = useState(GUIDELINE.contenido)
   const [agente, setAgente] = useState<string | null>('agt_impl')
   // El formulario de agente vive detras de un estado local del panel, asi que
@@ -974,6 +1177,64 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
             },
           ]}
         />
+      </Pantalla>
+
+      <Pantalla
+        titulo="Seleccion"
+        nota="Elegir un valor de un conjunto que el SERVICIO conoce. Va sobre MenuDeComandos —trampa de foco, Escape y aria-activedescendant ya resueltos— y trae sus tres degradaciones, que son las tres que el operador ve el primer dia."
+      >
+        <div className="grid gap-8 lg:grid-cols-2">
+          <Estado nombre="con opciones y preseleccion detectada">
+            <Seleccion
+              etiqueta="Area de la guideline"
+              grupo={AREAS}
+              valor="testing"
+              alCambiar={SIN_EFECTO}
+            />
+          </Estado>
+          <Estado nombre="con nota por opcion: el runtime que no puede implementar">
+            <Seleccion
+              etiqueta="Runtime"
+              grupo={RUNTIMES}
+              valor={runtimeElegido}
+              alCambiar={setRuntimeElegido}
+              requerido
+            />
+          </Estado>
+          <Estado nombre="una sola opcion: es un dato, no un select">
+            <Seleccion
+              etiqueta="Runtime"
+              grupo={UN_SOLO_RUNTIME}
+              valor=""
+              alCambiar={SIN_EFECTO}
+            />
+          </Estado>
+          <Estado nombre="ninguna opcion: hueco declarado con su salida">
+            <Seleccion
+              etiqueta="Runtime"
+              grupo={SIN_RUNTIMES}
+              valor=""
+              alCambiar={SIN_EFECTO}
+            />
+          </Estado>
+          <Estado nombre="el catalogo todavia viaja">
+            <Seleccion
+              etiqueta="Rol del agente"
+              grupo={ROLES}
+              valor={rolElegido}
+              alCambiar={setRolElegido}
+              cargando
+            />
+          </Estado>
+          <Estado nombre="preseleccion por_defecto, sin evidencia que enseñar">
+            <Seleccion
+              etiqueta="Nivel de autonomia"
+              grupo={AUTONOMIAS}
+              valor="L0"
+              alCambiar={SIN_EFECTO}
+            />
+          </Estado>
+        </div>
       </Pantalla>
 
       <Pantalla
@@ -1100,6 +1361,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
         <div className="flex flex-col gap-10">
           <Estado nombre="con catalogo de plantillas">
             <PanelDeAltaDeProyecto
+              autonomias={AUTONOMIAS}
               plantillas={conDatos(PLANTILLAS)}
               alCrear={SIN_EFECTO}
               trabajando={false}
@@ -1109,6 +1371,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="sin catalogo de plantillas · el servicio no lo publica">
             <PanelDeAltaDeProyecto
+              autonomias={AUTONOMIAS}
               plantillas={conError<Plantilla[]>(SIN_PLANTILLAS)}
               alCrear={SIN_EFECTO}
               trabajando={false}
@@ -1118,6 +1381,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="error destino_no_vacio · con su salida">
             <PanelDeAltaDeProyecto
+              autonomias={AUTONOMIAS}
               plantillas={conDatos(PLANTILLAS)}
               alCrear={SIN_EFECTO}
               trabajando={false}
@@ -1127,6 +1391,7 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="error no_es_repositorio · con su salida">
             <PanelDeAltaDeProyecto
+              autonomias={AUTONOMIAS}
               plantillas={cargando<Plantilla[]>()}
               alCrear={SIN_EFECTO}
               trabajando={false}
@@ -1325,6 +1590,8 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
         <div className="flex flex-col gap-10">
           <Estado nombre="con contenido">
             <PanelDeGuidelines
+              proyectoId="prj_4f2a91"
+              areas={AREAS}
               area={area}
               alCambiarArea={setArea}
               lectura={conDatos(GUIDELINE)}
@@ -1337,6 +1604,8 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="area sin guideline todavia">
             <PanelDeGuidelines
+              proyectoId="prj_4f2a91"
+              areas={AREAS}
               area="diseno"
               alCambiarArea={SIN_EFECTO}
               lectura={conError<Guideline>(
@@ -1438,7 +1707,13 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
             <PanelDeConexiones
               proyectoId="prj_4f2a91"
               conexiones={CONEXIONES}
-              capacidades={CAPACIDADES_DEGRADADAS}
+              catalogo={CATALOGO_DE_CONEXIONES}
+              cargandoCatalogo={false}
+              errorDeCatalogo={null}
+              adaptadorMontado="local"
+              ausenciaDeConexiones={null}
+              busqueda=""
+              alBuscar={SIN_EFECTO}
               cargando={false}
               error={null}
               errorDeMutacion={null}
@@ -1457,7 +1732,18 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
             <PanelDeConexiones
               proyectoId="prj_0c41de"
               conexiones={[]}
-              capacidades={CAPACIDADES_SIN_PROVEEDOR}
+              catalogo={CATALOGO_DE_CONEXIONES}
+              cargandoCatalogo={false}
+              errorDeCatalogo={null}
+              adaptadorMontado={null}
+              ausenciaDeConexiones={{
+                porque:
+                  'no hay proveedor de conexiones montado en este servicio: el adaptador se inyecta al arrancar y aqui no se eligio ninguno.',
+                comoConseguirlo:
+                  'Arranca el servicio con un adaptador de conexiones montado. Sin el, el catalogo se sigue pudiendo mirar, pero ninguna conexion nueva se puede crear.',
+              }}
+              busqueda=""
+              alBuscar={SIN_EFECTO}
               cargando={false}
               error={null}
               errorDeMutacion={null}
@@ -1472,7 +1758,13 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
             <PanelDeConexiones
               proyectoId="prj_0c41de"
               conexiones={[]}
-              capacidades={null}
+              catalogo={[]}
+              cargandoCatalogo
+              errorDeCatalogo={null}
+              adaptadorMontado={null}
+              ausenciaDeConexiones={null}
+              busqueda=""
+              alBuscar={SIN_EFECTO}
               cargando
               error={null}
               errorDeMutacion={null}
@@ -1487,7 +1779,13 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
             <PanelDeConexiones
               proyectoId="prj_0c41de"
               conexiones={[]}
-              capacidades={null}
+              catalogo={[]}
+              cargandoCatalogo={false}
+              errorDeCatalogo={SIN_SERVICIO}
+              adaptadorMontado={null}
+              ausenciaDeConexiones={null}
+              busqueda=""
+              alBuscar={SIN_EFECTO}
               cargando={false}
               error={SIN_SERVICIO}
               errorDeMutacion={SIN_SERVICIO}
@@ -1508,6 +1806,9 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
         <div className="flex flex-col gap-10">
           <Estado nombre="con datos · con el detalle y la vista inversa abiertos">
             <PanelDeCredenciales
+              proyectos={PROYECTOS}
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
               credenciales={CREDENCIALES}
               seleccionada={credencial}
               alSeleccionar={setCredencial}
@@ -1528,6 +1829,10 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="credencial que nadie alcanza">
             <PanelDeCredenciales
+              proyectos={PROYECTOS}
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
+              capacidades={CAPACIDADES}
               credenciales={CREDENCIALES}
               seleccionada="cred_b83007"
               alSeleccionar={SIN_EFECTO}
@@ -1536,7 +1841,6 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
                 agentes: [],
                 proyectos: [],
               })}
-              capacidades={null}
               ahora={Date.parse('2026-09-20T12:00:00.000Z')}
               cargando={false}
               error={null}
@@ -1552,11 +1856,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="cargando">
             <PanelDeCredenciales
+              proyectos={PROYECTOS}
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
+              capacidades={CAPACIDADES}
               credenciales={[]}
               seleccionada={null}
               alSeleccionar={SIN_EFECTO}
               alcance={cargando<AlcanceDeCredencial>()}
-              capacidades={null}
               ahora={Date.parse('2026-09-20T12:00:00.000Z')}
               cargando
               error={null}
@@ -1572,11 +1879,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="vacio">
             <PanelDeCredenciales
+              proyectos={PROYECTOS}
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
+              capacidades={CAPACIDADES}
               credenciales={[]}
               seleccionada={null}
               alSeleccionar={SIN_EFECTO}
               alcance={cargando<AlcanceDeCredencial>()}
-              capacidades={null}
               ahora={Date.parse('2026-09-20T12:00:00.000Z')}
               cargando={false}
               error={null}
@@ -1592,11 +1902,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="error">
             <PanelDeCredenciales
+              proyectos={PROYECTOS}
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
+              capacidades={CAPACIDADES}
               credenciales={[]}
               seleccionada={null}
               alSeleccionar={SIN_EFECTO}
               alcance={cargando<AlcanceDeCredencial>()}
-              capacidades={null}
               ahora={Date.parse('2026-09-20T12:00:00.000Z')}
               cargando={false}
               error={SIN_SERVICIO}
@@ -1614,19 +1927,59 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
       </Pantalla>
 
       <Pantalla
+        titulo="T163 · Registrar una credencial"
+        nota="Se monta aparte, igual que el formulario de agente: vivia detras de un useState del panel que empieza en false, asi que nada lo renderizaba nunca — ni el catalogo, ni el build. Ahi dentro estaba el fallo de que no mandaba `tipo`, que el servicio exige."
+      >
+        <div className="flex flex-col gap-10">
+          <Estado nombre="normal">
+            <FormularioDeCredencial
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
+              trabajando={false}
+              errorDeMutacion={null}
+              alRegistrar={SIN_EFECTO}
+              alCerrar={SIN_EFECTO}
+            />
+          </Estado>
+          <Estado nombre="el catalogo de opciones todavia viaja">
+            <FormularioDeCredencial
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
+              cargandoOpciones
+              trabajando={false}
+              errorDeMutacion={null}
+              alRegistrar={SIN_EFECTO}
+              alCerrar={SIN_EFECTO}
+            />
+          </Estado>
+          <Estado nombre="el servicio rechazo el alta">
+            <FormularioDeCredencial
+              tipos={TIPOS_DE_CREDENCIAL}
+              ambitos={AMBITOS}
+              trabajando={false}
+              errorDeMutacion={SIN_BOVEDA}
+              alRegistrar={SIN_EFECTO}
+              alCerrar={SIN_EFECTO}
+            />
+          </Estado>
+        </div>
+      </Pantalla>
+
+      <Pantalla
         titulo="T188 · Flota (etapa 07) y activacion"
         nota="FR-034 pintado con su accion: el revisor que comparte runtime con el implementador no se avisa con un parrafo rojo, se avisa con el boton que abre al revisor. Y la vista inversa girada: que credenciales alcanza este agente."
       >
         <div className="flex flex-col gap-10">
           <Estado nombre="con datos · el revisor comparte runtime con el implementador">
             <PanelDeFlota
+              roles={ROLES}
+              runtimes={RUNTIMES}
               proyectoId="prj_4f2a91"
               proyecto={{ ...PROYECTOS[0], estado: 'CONNECTED' }}
               agentes={AGENTES}
               seleccionado={agente}
               alSeleccionar={setAgente}
               alcance={conDatos(ALCANCE_DEL_AGENTE)}
-              capacidades={CAPACIDADES_CON_RUNTIMES}
               cargando={false}
               error={null}
               errorDeMutacion={null}
@@ -1639,13 +1992,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="rechazo del servicio · revisor_comparte_runtime con su salida">
             <PanelDeFlota
+              roles={ROLES}
+              runtimes={RUNTIMES}
               proyectoId="prj_4f2a91"
               proyecto={{ ...PROYECTOS[0], estado: 'CONNECTED' }}
               agentes={AGENTES}
               seleccionado={null}
               alSeleccionar={SIN_EFECTO}
               alcance={cargando<AlcanceDeAgente>()}
-              capacidades={CAPACIDADES_CON_RUNTIMES}
               cargando={false}
               error={null}
               errorDeMutacion={REVISOR_COMPARTE_RUNTIME}
@@ -1658,13 +2012,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="flota correcta y proyecto ya activo · agente sin ningun grant">
             <PanelDeFlota
+              roles={ROLES}
+              runtimes={RUNTIMES}
               proyectoId="prj_4f2a91"
               proyecto={PROYECTOS[0]}
               agentes={FLOTA_CORRECTA}
               seleccionado="agt_rev"
               alSeleccionar={SIN_EFECTO}
               alcance={conDatos<AlcanceDeAgente>({ agent_id: 'agt_rev', credenciales: [] })}
-              capacidades={CAPACIDADES_CON_RUNTIMES}
               cargando={false}
               error={null}
               errorDeMutacion={null}
@@ -1677,13 +2032,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="cargando">
             <PanelDeFlota
+              roles={ROLES}
+              runtimes={RUNTIMES}
               proyectoId="prj_b83007"
               proyecto={null}
               agentes={[]}
               seleccionado={null}
               alSeleccionar={SIN_EFECTO}
               alcance={cargando<AlcanceDeAgente>()}
-              capacidades={null}
               cargando
               error={null}
               errorDeMutacion={null}
@@ -1696,13 +2052,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="vacio · proyecto conectado sin flota">
             <PanelDeFlota
+              roles={ROLES}
+              runtimes={RUNTIMES}
               proyectoId="prj_b83007"
               proyecto={{ ...PROYECTOS[2], estado: 'CONNECTED' }}
               agentes={[]}
               seleccionado={null}
               alSeleccionar={SIN_EFECTO}
               alcance={cargando<AlcanceDeAgente>()}
-              capacidades={CAPACIDADES_CON_RUNTIMES}
               cargando={false}
               error={null}
               errorDeMutacion={null}
@@ -1715,13 +2072,14 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="error">
             <PanelDeFlota
+              roles={ROLES}
+              runtimes={RUNTIMES}
               proyectoId="prj_b83007"
               proyecto={null}
               agentes={[]}
               seleccionado={null}
               alSeleccionar={SIN_EFECTO}
               alcance={cargando<AlcanceDeAgente>()}
-              capacidades={null}
               cargando={false}
               error={SIN_SERVICIO}
               errorDeMutacion={null}
@@ -1734,11 +2092,12 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="el formulario · nueve campos y el aviso de FR-034 antes de guardar">
             <FormularioDeAgente
+              roles={ROLES}
+              runtimes={RUNTIMES}
               borrador={borrador}
               alEditar={setBorrador}
               agentes={AGENTES}
               editando="agt_rev"
-              runtimesDeclarados={CAPACIDADES_CON_RUNTIMES.runtimes ?? []}
               trabajando={false}
               error={null}
               alGuardar={SIN_EFECTO}
@@ -1747,11 +2106,12 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
           </Estado>
           <Estado nombre="el formulario · sin runtimes declarados y con el rechazo del servicio">
             <FormularioDeAgente
+              roles={ROLES}
+              runtimes={RUNTIMES}
               borrador={{ ...borrador, rol: 'verificador', permisos: '{ esto no es JSON' }}
               alEditar={SIN_EFECTO}
               agentes={AGENTES}
               editando={null}
-              runtimesDeclarados={[]}
               trabajando={false}
               error={REVISOR_COMPARTE_RUNTIME}
               alGuardar={SIN_EFECTO}

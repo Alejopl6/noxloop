@@ -6,16 +6,29 @@ import { FolderGit2, FolderOpen, GitBranch, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Campo } from '@/components/ui/campo'
 import { Entity, ListaDeEntidades } from '@/components/ui/entidad'
+import { ExploradorDeCarpetas } from '@/components/ui/explorador-de-carpetas'
 import { ErrorText, Fieldset, FieldsetContent, FieldsetFooter } from '@/components/ui/fieldset'
 import { Note } from '@/components/ui/nota'
 import { Segmentado } from '@/components/ui/segmentado'
+import { Seleccion } from '@/components/ui/seleccion'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { Encabezado, EsqueletoDeLista } from '@/components/pantalla'
+import { SelectorDeRepositorio, useConexionesDeCodigo } from '@/components/selector-de-repositorio'
 import { elegirCarpeta, superficieDeSeleccion, type SuperficieDeSeleccion } from '@/lib/carpeta'
 import { comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import { useMutacion } from '@/lib/mutacion'
-import type { AltaDeProyecto, OrigenProyecto, Plantilla, Proyecto } from '@/lib/tipos'
+import { useOpciones, useValorConPreseleccion } from '@/lib/opciones'
+import {
+  GRUPO,
+  type AltaDeProyecto,
+  type Conexion,
+  type GrupoDeOpciones,
+  type OrigenProyecto,
+  type Plantilla,
+  type Proyecto,
+  type RepositorioRemoto,
+} from '@/lib/tipos'
 import type { Navegar } from '@/lib/ruta'
 
 /**
@@ -171,12 +184,24 @@ function SelectorDePlantilla({
 
 export function PanelDeAltaDeProyecto({
   plantillas,
+  autonomias,
+  cargandoOpciones = false,
+  conexionesDeCodigo = [],
+  cargandoConexiones = false,
+  errorDeConexiones = null,
   alCrear,
   trabajando,
   error,
   navegar,
 }: {
   plantillas: Lectura<Plantilla[]>
+  /** `project.autonomia` del catalogo del servicio. Ver `lib/opciones.ts`. */
+  autonomias: GrupoDeOpciones
+  cargandoOpciones?: boolean
+  /** Las conexiones `scm` vivas del espacio de trabajo, para elegir el repositorio. */
+  conexionesDeCodigo?: Array<Conexion & { proyecto?: string }>
+  cargandoConexiones?: boolean
+  errorDeConexiones?: ErrorDelServicio | null
   alCrear: (alta: AltaDeProyecto) => void
   trabajando: boolean
   error: ErrorDelServicio | null
@@ -186,9 +211,24 @@ export function PanelDeAltaDeProyecto({
   const [nombre, setNombre] = useState('')
   const [ruta, setRuta] = useState('')
   const [remoto, setRemoto] = useState('')
+  // El repositorio elegido de la lista, aparte de la direccion. Se guardan los
+  // dos porque la direccion sigue siendo lo que viaja al servicio —el contrato
+  // de `POST /v1/projects` no cambia— y la ficha es lo que la pantalla enseña
+  // para que el operador vea QUE eligio y no una cadena que tiene que releer.
+  const [repoElegido, setRepoElegido] = useState<RepositorioRemoto | null>(null)
   const [plantilla, setPlantilla] = useState('')
   const [superficie, setSuperficie] = useState<SuperficieDeSeleccion>('desconocida')
   const [errorDeCarpeta, setErrorDeCarpeta] = useState<ErrorDelServicio | null>(null)
+  // EL NIVEL DE AUTONOMIA SE ELIGE AL DAR DE ALTA, y antes no se elegia en
+  // ninguna pantalla: `POST /v1/projects` lo acepta desde siempre y todo
+  // proyecto quedaba en L0 sin que nadie supiera que existian L1 y L2. Un
+  // ajuste que no aparece en ninguna superficie no es un valor por defecto: es
+  // una funcion que no existe para quien usa el producto.
+  //
+  // Arranca con lo que el servicio preselecciona —L0, por regla del dominio—
+  // en vez de con un literal escrito aqui, y lo adopta cuando el catalogo
+  // llega: en el primer render todavia no hay catalogo.
+  const [autonomia, setAutonomia] = useValorConPreseleccion(autonomias)
 
   // `isTauri()` lee `window` sin protegerse: fuera de un efecto revienta el
   // prerender de `next build`. Misma regla que en `lib/daemon.ts`.
@@ -226,6 +266,7 @@ export function PanelDeAltaDeProyecto({
       ...(origen !== 'remoto' ? { ruta_local: ruta.trim() } : {}),
       ...(origen === 'remoto' ? { remoto: remoto.trim() } : {}),
       ...(origen === 'nuevo' && plantilla.trim() ? { plantilla: plantilla.trim() } : {}),
+      ...(autonomia ? { autonomia } : {}),
       ...sobrescribir,
     }
     alCrear(alta)
@@ -263,43 +304,104 @@ export function PanelDeAltaDeProyecto({
             />
 
             {origen === 'remoto' ? (
-              <Campo
-                etiqueta="Repositorio remoto"
-                valor={remoto}
-                alCambiar={setRemoto}
-                requerido
-                operativo
-                marcador="git@servidor:organizacion/repositorio.git"
-                ayuda="Se clona a un area de trabajo propia de noxloop. Necesita una credencial del gestor de repositorios con grant vigente; si no la hay, la tarea se bloquea y entra en la bandeja en vez de fallar."
-              />
+              <div className="flex flex-col gap-4">
+                {/* EL SELECTOR VA PRIMERO Y EL CAMPO DEBAJO, por el mismo motivo
+                    que el explorador de carpetas de la otra rama: antes solo
+                    estaba el campo, y pedir la direccion a mano teniendo la
+                    credencial del operador guardada en la boveda es hacerle
+                    copiar de un navegador algo que el producto puede preguntar.
+                    Escribir sigue siendo posible, y cubre el caso que la lista
+                    no alcanza: un repositorio de otra cuenta, o uno servido por
+                    una forja que todavia no esta en el catalogo. */}
+                <SelectorDeRepositorio
+                  conexiones={conexionesDeCodigo}
+                  cargandoConexiones={cargandoConexiones}
+                  errorDeConexiones={errorDeConexiones}
+                  elegido={repoElegido}
+                  alElegir={(repositorio) => {
+                    setRepoElegido(repositorio)
+                    setRemoto(repositorio?.url_clon ?? '')
+                    // El nombre se propone SOLO si esta vacio. Sobrescribir lo
+                    // que el operador ya escribio para llamar al proyecto como
+                    // el repositorio es decidir por el algo que ya decidio.
+                    if (repositorio && nombre.trim().length === 0) {
+                      setNombre(repositorio.nombre ?? '')
+                    }
+                  }}
+                  navegar={navegar}
+                />
+
+                <Campo
+                  etiqueta="Repositorio remoto"
+                  valor={remoto}
+                  alCambiar={(valor) => {
+                    setRemoto(valor)
+                    // Editar la direccion a mano suelta la ficha: dejarla
+                    // marcada mientras la direccion dice otra cosa enseña como
+                    // elegido un repositorio que no es el que se va a clonar.
+                    if (repoElegido && valor !== repoElegido.url_clon) setRepoElegido(null)
+                  }}
+                  requerido
+                  operativo
+                  marcador="git@servidor:organizacion/repositorio.git"
+                  ayuda="El repositorio que elijas arriba se escribe aqui. Tambien puedes escribir la direccion: se clona a un area de trabajo propia de noxloop, y necesita una credencial del gestor de repositorios con grant vigente; si no la hay, la tarea se bloquea y entra en la bandeja en vez de fallar."
+                />
+              </div>
             ) : (
-              <Campo
-                etiqueta={origen === 'nuevo' ? 'Destino del repositorio' : 'Carpeta del proyecto'}
-                valor={ruta}
-                alCambiar={setRuta}
-                requerido
-                operativo
-                marcador="/ruta/absoluta/al/proyecto"
-                ayuda={
-                  superficie === 'escritorio'
-                    ? 'Ruta absoluta. Tambien puedes elegirla con el dialogo del sistema.'
-                    : 'Ruta absoluta, tal como la ve el servicio de control. En el navegador no hay dialogo de carpetas: el navegador no entrega la ruta de una carpeta del disco a una pagina web, asi que se escribe.'
-                }
-                accion={
-                  superficie === 'escritorio' ? (
-                    <Button variant="secondary" size="sm" onClick={() => void abrirSelector()}>
-                      <FolderOpen />
-                      Elegir carpeta
-                    </Button>
-                  ) : null
-                }
-              />
+              <div className="flex flex-col gap-4">
+                {/* EL EXPLORADOR VA PRIMERO Y EL CAMPO DEBAJO, y ese orden es la
+                    decision. Antes solo estaba el campo, con una ayuda que
+                    explicaba —con razon— que en el navegador no hay dialogo de
+                    carpetas. La explicacion era cierta y la conclusion no: el
+                    SERVICIO corre en esta maquina y si lee el disco. Ahora se
+                    navega; escribir sigue siendo posible, que es lo que cubre
+                    las carpetas fuera de las raices que el servicio explora. */}
+                <ExploradorDeCarpetas ruta={ruta} alElegir={setRuta} />
+
+                <Campo
+                  etiqueta={origen === 'nuevo' ? 'Destino del repositorio' : 'Carpeta del proyecto'}
+                  valor={ruta}
+                  alCambiar={setRuta}
+                  requerido
+                  operativo
+                  marcador="/ruta/absoluta/al/proyecto"
+                  ayuda={
+                    origen === 'nuevo'
+                      ? 'La carpeta que elijas arriba se escribe aqui. Para un proyecto nuevo el destino tiene que estar vacio, asi que lo normal es navegar hasta donde va a vivir y anadirle el nombre al final.'
+                      : superficie === 'escritorio'
+                        ? 'La carpeta que elijas arriba se escribe aqui. Tambien puedes escribirla, o abrir el dialogo del sistema.'
+                        : 'La carpeta que elijas arriba se escribe aqui. Tambien puedes escribirla: el explorador solo llega a las raices que el servicio declara, y esta ruta acepta cualquiera.'
+                  }
+                  accion={
+                    superficie === 'escritorio' ? (
+                      <Button variant="secondary" size="sm" onClick={() => void abrirSelector()}>
+                        <FolderOpen />
+                        Dialogo del sistema
+                      </Button>
+                    ) : null
+                  }
+                />
+              </div>
             )}
 
             {errorDeCarpeta ? (
               <ErrorText causa={errorDeCarpeta.causa} accion={errorDeCarpeta.accion} />
             ) : null}
           </div>
+        </FieldsetContent>
+
+        <FieldsetContent
+          titulo="Nivel de autonomia"
+          descripcion="Hasta donde llega la flota sin preguntar. Se puede cambiar despues; se pregunta ahora porque el valor por defecto decide como se comporta el primer ciclo."
+        >
+          <Seleccion
+            etiqueta="Nivel de autonomia"
+            grupo={autonomias}
+            valor={autonomia}
+            alCambiar={setAutonomia}
+            cargando={cargandoOpciones}
+            className="max-w-md"
+          />
         </FieldsetContent>
 
         {origen === 'nuevo' ? (
@@ -427,6 +529,15 @@ function SalidasDelError({
 
 export function VistaDeAltaDeProyecto({ navegar }: { navegar: Navegar }) {
   const plantillas = useLectura<Plantilla[]>('/v1/templates')
+  // Sin `project_id`: todavia no hay proyecto. El servicio lo sabe y contesta
+  // el catalogo generico con las preselecciones marcadas `por_defecto` en vez
+  // de `detectado`, que es exactamente la diferencia que el operador tiene que
+  // poder leer.
+  const opciones = useOpciones()
+  // Las conexiones de codigo se leen SIEMPRE y no solo con el origen remoto
+  // elegido: cambiar de origen ya tiene la lista lista, en vez de enseñar un
+  // esqueleto justo despues de que el operador pulse "Repositorio remoto".
+  const conexiones = useConexionesDeCodigo()
   const mutacion = useMutacion()
 
   const crear = async (alta: AltaDeProyecto) => {
@@ -446,6 +557,11 @@ export function VistaDeAltaDeProyecto({ navegar }: { navegar: Navegar }) {
   return (
     <PanelDeAltaDeProyecto
       plantillas={plantillas}
+      autonomias={opciones.grupoDe(GRUPO.autonomia)}
+      cargandoOpciones={opciones.catalogo === null && opciones.lectura.error === null}
+      conexionesDeCodigo={conexiones.conexiones}
+      cargandoConexiones={conexiones.cargando}
+      errorDeConexiones={conexiones.error}
       alCrear={(alta) => void crear(alta)}
       trabajando={mutacion.trabajando}
       error={mutacion.error}

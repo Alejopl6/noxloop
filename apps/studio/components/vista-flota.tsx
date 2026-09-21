@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/fieldset'
 import { ModalDeAccionDestructiva } from '@/components/ui/modal-de-accion-destructiva'
 import { Note } from '@/components/ui/nota'
-import { Segmentado } from '@/components/ui/segmentado'
+import { Seleccion } from '@/components/ui/seleccion'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { VistaJSON } from '@/components/ui/vista-json'
 import {
@@ -29,16 +29,20 @@ import {
 } from '@/components/pantalla'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import { useMutacion } from '@/lib/mutacion'
+import {
+  conElValorActual,
+  descripcionDe,
+  etiquetaDe,
+  useOpciones,
+} from '@/lib/opciones'
 import { contiene } from '@/lib/texto'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import {
   ETIQUETA_ESTADO_CREDENCIAL,
-  ETIQUETA_ROL_AGENTE,
-  QUE_HACE_EL_ROL,
-  ROLES_DE_AGENTE,
+  GRUPO,
   type Agente,
   type AlcanceDeAgente,
-  type Capacidades,
+  type GrupoDeOpciones,
   type Proyecto,
   type RolDeAgente,
 } from '@/lib/tipos'
@@ -255,7 +259,9 @@ export function FormularioDeAgente({
   alEditar,
   agentes,
   editando,
-  runtimesDeclarados,
+  roles,
+  runtimes,
+  cargandoOpciones = false,
   trabajando,
   error,
   alGuardar,
@@ -267,14 +273,32 @@ export function FormularioDeAgente({
   agentes: Agente[]
   /** Id del agente que se esta editando, o `null` si es uno nuevo. */
   editando: string | null
-  /** Lo que `/v1/capabilities` declara. Vacio si el servicio no lo declara. */
-  runtimesDeclarados: string[]
+  /** `agent.rol` y `agent.runtime` del catalogo del servicio. */
+  roles: GrupoDeOpciones
+  runtimes: GrupoDeOpciones
+  cargandoOpciones?: boolean
   trabajando: boolean
   error: ErrorDelServicio | null
   alGuardar: (cuerpo: Partial<Agente>) => void
   alCancelar: () => void
 }) {
   const [falloLocal, setFalloLocal] = useState<Record<string, string>>({})
+
+  // LOS MODELOS SALEN DEL RUNTIME ELEGIDO, cuando ese runtime los enumera.
+  // `models: "desconocido"` es una respuesta LEGITIMA del contrato de
+  // adaptadores —los modelos que acepta cambian sin que este repositorio se
+  // entere— y entonces el campo sigue siendo texto libre y se dice por que.
+  // Una lista corta inventada aqui haria que la pantalla ofreciera solo esos,
+  // que es peor que decir que no se sabe.
+  const runtimeElegido = runtimes.opciones.find((o) => o.valor === borrador.runtime) ?? null
+  const modelos: GrupoDeOpciones = {
+    opciones: (runtimeElegido?.modelos ?? []).map((modelo) => ({ valor: modelo, etiqueta: modelo })),
+    unica: (runtimeElegido?.modelos ?? []).length === 1,
+    origen: 'detectado',
+    porque: `son los modelos que el runtime \`${borrador.runtime}\` enumera en sus capacidades.`,
+    preseleccion: null,
+  }
+  const modeloEsLibre = !runtimeElegido || runtimeElegido.modelos_enumerados !== true
 
   const cambiar = <C extends keyof BorradorDeAgente>(campo: C, valor: BorradorDeAgente[C]) => {
     alEditar({ ...borrador, [campo]: valor })
@@ -320,15 +344,20 @@ export function FormularioDeAgente({
         descripcion="Rol, runtime, modelo, skills, tools, servidores MCP, permisos, presupuesto y contexto. Lo que no se declara aqui el agente no lo tiene: no hay valores por defecto que se hereden en silencio."
       >
         <div className="flex flex-col gap-5">
-          <Segmentado
+          {/* LOS CUATRO ROLES Y LO QUE DECIDE CADA UNO YA NO ESTAN ESCRITOS EN
+              ESTA INTERFAZ. Estaban en `lib/tipos.ts`, y el parrafo de cada rol
+              con ellos — o sea, esta pantalla explicaba una regla del dominio
+              (FR-034: el revisor no comparte runtime con el implementador) que
+              sostiene el servicio. El dia que la regla cambiara alla, aqui
+              seguiria escrita la de ayer. */}
+          <Seleccion
             etiqueta="Rol del agente"
+            grupo={roles}
             valor={borrador.rol}
-            alCambiar={(valor) => cambiar('rol', valor)}
-            opciones={ROLES_DE_AGENTE.map((rol) => ({
-              valor: rol,
-              etiqueta: ETIQUETA_ROL_AGENTE[rol],
-              descripcion: QUE_HACE_EL_ROL[rol],
-            }))}
+            alCambiar={(valor) => cambiar('rol', valor as RolDeAgente)}
+            cargando={cargandoOpciones}
+            requerido
+            className="max-w-md"
           />
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -340,31 +369,65 @@ export function FormularioDeAgente({
               marcador="implementador de backend"
               ayuda="Como lo vas a reconocer en la bandeja y en la auditoria. Es el nombre que aparece cuando este agente pide permiso para algo."
             />
-            <Campo
+            {/* ERA UN CAMPO DE TEXTO cuya ayuda decia, literalmente, «este
+                servicio declara en /v1/capabilities: claude-agent-sdk, codex».
+                La lista estaba en la misma frase que pedia teclearla. Un
+                `claude-agent` sin el sufijo se guarda sin error y el agente
+                queda con un runtime que ningun adaptador atiende — y eso no se
+                descubre hasta el primer ciclo. */}
+            <Seleccion
               etiqueta="Runtime"
+              grupo={runtimes}
+              opciones={conElValorActual(runtimes, borrador.runtime)}
               valor={borrador.runtime}
-              alCambiar={(valor) => cambiar('runtime', valor)}
-              operativo
+              alCambiar={(valor) => {
+                cambiar('runtime', valor)
+              }}
+              cargando={cargandoOpciones}
               requerido
-              marcador="runtime-de-referencia"
-              ayuda={
-                runtimesDeclarados.length > 0
-                  ? `Este servicio declara en /v1/capabilities: ${runtimesDeclarados.join(', ')}.`
-                  : 'Este servicio no declara ningun runtime en /v1/capabilities, asi que la lista no se puede ofrecer y el identificador se escribe a mano.'
-              }
             />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Campo
-              etiqueta="Modelo"
-              valor={borrador.modelo}
-              alCambiar={(valor) => cambiar('modelo', valor)}
-              operativo
-              requerido
-              marcador="modelo-de-referencia"
-              ayuda="El modelo concreto sobre el que corre este agente. Dos agentes con el mismo runtime y distinto modelo siguen compartiendo runtime a efectos de la regla de revision."
-            />
+            {/* SELECT SOLO CUANDO EL RUNTIME ENUMERA SUS MODELOS. El contrato
+                de adaptadores admite `models: "desconocido"` como respuesta
+                honesta —los modelos cambian sin que este repositorio se
+                entere— y ahi el campo sigue siendo libre. Convertirlo igualmente
+                en desplegable obligaria a inventar la lista, y el operador
+                elegiria de entre unos modelos que nadie verifico. */}
+            {modeloEsLibre ? (
+              <Campo
+                etiqueta="Modelo"
+                valor={borrador.modelo}
+                alCambiar={(valor) => cambiar('modelo', valor)}
+                operativo
+                requerido
+                marcador="modelo-de-referencia"
+                // TRES MOTIVOS DISTINTOS PARA EL MISMO CAMPO LIBRE, y decir
+                // el que no es seria afirmar algo falso sobre el runtime del
+                // operador. La primera version decia siempre «declara models:
+                // "desconocido"», tambien cuando el servicio no conocia ese
+                // runtime en absoluto — se vio en el HTML generado, con un
+                // agente guardado sobre un runtime que ya no esta registrado.
+                ayuda={
+                  !borrador.runtime
+                    ? 'Elige primero el runtime: son sus capacidades las que dicen si enumera modelos o no.'
+                    : !runtimeElegido
+                      ? `Este servicio no tiene registrado el runtime ${borrador.runtime}, asi que no puede decir que modelos acepta. Escribe el que uses; cuando el adaptador este montado, la lista sale sola.`
+                      : `El runtime ${borrador.runtime} no enumera los modelos que acepta —declara models: "desconocido"— asi que esta interfaz no ofrece una lista: la inventaria. Dos agentes con el mismo runtime y distinto modelo siguen compartiendo runtime a efectos de la regla de revision.`
+                }
+              />
+            ) : (
+              <Seleccion
+                etiqueta="Modelo"
+                grupo={modelos}
+                opciones={conElValorActual(modelos, borrador.modelo)}
+                valor={borrador.modelo}
+                alCambiar={(valor) => cambiar('modelo', valor)}
+                requerido
+                ayuda="Dos agentes con el mismo runtime y distinto modelo siguen compartiendo runtime a efectos de la regla de revision."
+              />
+            )}
             <Campo
               etiqueta="Skills"
               valor={borrador.skills}
@@ -587,6 +650,7 @@ export function QueAlcanzaElAgente({
 function DetalleDeAgente({
   agente,
   alcance,
+  roles,
   navegar,
   alEditar,
   alQuitar,
@@ -594,6 +658,8 @@ function DetalleDeAgente({
 }: {
   agente: Agente
   alcance: Lectura<AlcanceDeAgente>
+  /** Para traducir el `rol` guardado a su etiqueta y a lo que decide. */
+  roles: GrupoDeOpciones
   navegar: Navegar
   alEditar: () => void
   alQuitar: () => void
@@ -604,10 +670,14 @@ function DetalleDeAgente({
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="text-heading-20 text-ds-gray-1000">{agente.nombre}</h2>
         <span className="fuente-operativa text-label-12 text-ds-gray-700">{agente.id}</span>
-        <Badge tono={TONO_DEL_ROL[agente.rol]}>{ETIQUETA_ROL_AGENTE[agente.rol]}</Badge>
+        <Badge tono={TONO_DEL_ROL[agente.rol]}>{etiquetaDe(roles, agente.rol)}</Badge>
       </div>
 
-      <p className="max-w-2xl text-copy-14 text-ds-gray-900">{QUE_HACE_EL_ROL[agente.rol]}</p>
+      {descripcionDe(roles, agente.rol) ? (
+        <p className="max-w-2xl text-copy-14 text-ds-gray-900">
+          {descripcionDe(roles, agente.rol)}
+        </p>
+      ) : null}
 
       <ListaDeDescripciones>
         <Description titulo="Runtime" contenido={agente.runtime} operativo />
@@ -672,7 +742,10 @@ export interface PropsDePanelDeFlota {
   alSeleccionar: (id: string | null) => void
   /** Los grants vigentes del agente abierto. */
   alcance: Lectura<AlcanceDeAgente>
-  capacidades: Capacidades | null
+  /** `agent.rol` y `agent.runtime` del catalogo del servicio. */
+  roles: GrupoDeOpciones
+  runtimes: GrupoDeOpciones
+  cargandoOpciones?: boolean
   cargando: boolean
   error: ErrorDelServicio | null
   errorDeMutacion: ErrorDelServicio | null
@@ -690,7 +763,9 @@ export function PanelDeFlota({
   seleccionado,
   alSeleccionar,
   alcance,
-  capacidades,
+  roles,
+  runtimes,
+  cargandoOpciones = false,
   cargando,
   error,
   errorDeMutacion,
@@ -796,7 +871,9 @@ export function PanelDeFlota({
           alEditar={setBorrador}
           agentes={agentes}
           editando={editando}
-          runtimesDeclarados={capacidades?.runtimes ?? []}
+          roles={roles}
+          runtimes={runtimes}
+          cargandoOpciones={cargandoOpciones}
           trabajando={trabajando}
           error={errorDeMutacion}
           alGuardar={(cuerpo) => {
@@ -836,11 +913,11 @@ export function PanelDeFlota({
                 miniatura={<Bot />}
                 titulo={agente.nombre}
                 identificador={agente.runtime}
-                descripcion={QUE_HACE_EL_ROL[agente.rol]}
+                descripcion={descripcionDe(roles, agente.rol)}
                 metadatos={
                   <>
                     <Badge tono={TONO_DEL_ROL[agente.rol]}>
-                      {ETIQUETA_ROL_AGENTE[agente.rol]}
+                      {etiquetaDe(roles, agente.rol)}
                     </Badge>
                     {agente.modelo ? (
                       <span className="fuente-operativa text-label-12 text-ds-gray-700">
@@ -881,6 +958,7 @@ export function PanelDeFlota({
         <DetalleDeAgente
           agente={detalle}
           alcance={alcance}
+          roles={roles}
           navegar={navegar}
           alEditar={() => abrirEdicion(detalle)}
           alQuitar={() => setPorQuitar(detalle)}
@@ -1011,7 +1089,13 @@ export function VistaDeFlota({
   const proyecto = useLectura<Proyecto>(`/v1/projects/${proyectoId}`, {
     relerEn: EVENTOS_DE_FLOTA,
   })
-  const capacidades = useLectura<Capacidades>('/v1/capabilities')
+  // EL CATALOGO DE OPCIONES SUSTITUYE A `/v1/capabilities` AQUI. Esta pantalla
+  // lo pedia solo para sacar la lista de runtimes de `capacidades.runtimes` y
+  // escribirla en la AYUDA de un campo de texto. `/v1/options` la trae con lo
+  // que cada runtime puede y no puede —si tiene hooks, si reporta gasto, si
+  // retoma sesion— que es lo que hace que elegir uno sea una decision y no una
+  // apuesta.
+  const opciones = useOpciones(proyectoId)
   const mutacion = useMutacion()
 
   const [seleccionado, setSeleccionado] = useState<string | null>(null)
@@ -1049,7 +1133,9 @@ export function VistaDeFlota({
       seleccionado={seleccionado}
       alSeleccionar={setSeleccionado}
       alcance={alcance}
-      capacidades={capacidades.datos}
+      roles={opciones.grupoDe(GRUPO.rolDeAgente)}
+      runtimes={opciones.grupoDe(GRUPO.runtime)}
+      cargandoOpciones={opciones.catalogo === null && opciones.lectura.error === null}
       cargando={estaCargandoPorPrimeraVez(lectura)}
       error={lectura.error}
       errorDeMutacion={mutacion.error}

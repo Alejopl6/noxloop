@@ -22,6 +22,9 @@ import * as credenciales from "./credenciales.mjs";
 import * as catalogo from "./catalogo-de-conexiones.mjs";
 import * as flota from "./flota.mjs";
 import * as runs from "./runs.mjs";
+import * as carpetas from "./carpetas.mjs";
+import * as opciones from "./opciones.mjs";
+import * as asistencia from "./asistencia.mjs";
 
 export const TABLA = crearTabla([
   // ---- Salud y sesion -----------------------------------------------------
@@ -30,6 +33,14 @@ export const TABLA = crearTabla([
   { patron: "/v1/health", metodos: ["GET", "HEAD"], publica: true, manejar: salud.salud },
   { patron: "/v1/capabilities", metodos: ["GET", "HEAD"], manejar: salud.capacidades },
   { patron: "/v1/events", metodos: ["GET"], crudo: true, manejar: salud.eventos },
+
+  // ---- Lo que la interfaz necesita para no pedir nada a ciegas ------------
+  // Las dos contestan «¿que puedo elegir?» y las dos son `GET` y nada mas.
+  // `/v1/folders` ademas LEE EL DISCO del operador: la cabecera de
+  // `carpetas.mjs` razona por que se acota a un conjunto de raices en vez de
+  // enumerar todo lo que haya.
+  { patron: "/v1/folders", metodos: ["GET"], manejar: carpetas.explorar },
+  { patron: "/v1/options", metodos: ["GET", "HEAD"], manejar: opciones.catalogoDeOpciones },
 
   // ---- Proyectos · etapa 00 -----------------------------------------------
   { patron: "/v1/projects", metodos: ["GET", "POST"], manejar: proyectos.lista },
@@ -75,6 +86,11 @@ export const TABLA = crearTabla([
   { patron: "/v1/projects/:id/connections", metodos: ["GET"], manejar: credenciales.conexionesDelProyecto },
   { patron: "/v1/projects/:id/connections/authorize", metodos: ["POST"], manejar: credenciales.autorizarConexion },
   { patron: "/v1/connections/:id/callback", metodos: ["POST"], manejar: credenciales.callbackDeConexion },
+  // Los repositorios que una conexion alcanza, para ELEGIR uno en vez de
+  // escribir su direccion a mano. `GET` y nada mas: preguntar que repositorios
+  // hay no cambia nada, y un `POST` aqui seria la puerta por la que el servicio
+  // empieza a crear repositorios en la forja del operador.
+  { patron: "/v1/connections/:id/repos", metodos: ["GET"], manejar: credenciales.repositoriosDeConexion },
   { patron: "/v1/connections/:id", metodos: ["DELETE"], manejar: credenciales.revocarConexion },
   { patron: "/v1/credentials", metodos: ["GET", "POST"], manejar: credenciales.inventario },
   { patron: "/v1/credentials/:id/rotate", metodos: ["POST"], manejar: credenciales.rotar },
@@ -109,4 +125,15 @@ export const TABLA = crearTabla([
   // motor: hay una prueba que mide el disco antes y despues de un `GET`.
   { patron: "/v1/projects/:id/runs", metodos: ["GET", "POST"], manejar: runs.runsDelProyecto },
   { patron: "/v1/runs/:id", metodos: ["GET"], manejar: runs.unRun },
+
+  // ---- Asistencia con IA --------------------------------------------------
+  // El catalogo contesta SIEMPRE, tambien sin clave: es con lo que la pantalla
+  // decide si ofrecer el boton, y una ruta que fallara sin credencial dejaria a
+  // la pantalla sin distinguir «no hay asistencia» de «el servicio no contesta».
+  { patron: "/v1/assistance", metodos: ["GET", "HEAD"], manejar: asistencia.catalogoDeAsistencia },
+  // `POST` y no `GET`, aunque sugerir no guarde nada: sugerir GASTA —saca una
+  // credencial de la boveda, deja un evento de acceso en la auditoria y llama a
+  // un servicio de fuera que cobra—. Un `GET` con eso detras se lo come
+  // cualquier reintento, cualquier precarga y cualquier pestaña que se refresque.
+  { patron: "/v1/projects/:id/assistance/suggest", metodos: ["POST"], manejar: asistencia.sugerir },
 ]);

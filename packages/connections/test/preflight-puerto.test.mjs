@@ -114,7 +114,11 @@ test("un adaptador SIN oauth2 en su catalogo no reclama el puerto: no tiene call
   // `local` no hace OAuth. Exigirle el puerto seria impedirle arrancar por un
   // contrato externo que no firmo — y es justo el adaptador que existe para el
   // operador que no puede levantar la infraestructura del otro.
-  const proveedor = crearAdaptadorLocal({ boveda: bovedaInerte(), peticion: async () => new Response("{}") });
+  const proveedor = crearAdaptadorLocal({
+    boveda: bovedaInerte(),
+    workspaceId: "espacio-de-prueba",
+    peticion: async () => new Response("{}"),
+  });
   const estado = await proveedor.preflight();
   assert.deepEqual(estado.requisitos.filter((r) => r.tipo === "puerto"), []);
   assert.equal(estado.ok, true, JSON.stringify(estado.problemas));

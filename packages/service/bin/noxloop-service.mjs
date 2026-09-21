@@ -17,6 +17,8 @@ import {
 } from "../../adapters/src/index.mjs";
 import { buildHookSettings, validateHookSettings } from "../../engine/src/session-settings.mjs";
 
+import { crearAdaptadorLocal } from "../../connections/src/adaptadores/local.mjs";
+
 import { resolverHome } from "../src/home.mjs";
 import { ErrorDeServicio } from "../src/errores.mjs";
 import { arrancar } from "../src/servidor.mjs";
@@ -80,6 +82,44 @@ function registroDeRuntimes(home) {
   ]);
 }
 
+/**
+ * El proveedor de conexiones que este binario monta.
+ *
+ * EL HUECO QUE ESTO CIERRA, Y ES EL MISMO PATRON QUE YA PASO CON LOS RUNTIMES.
+ * Nadie lo inyectaba. `GET /v1/projects/:id/connections`, `authorize`, el
+ * callback y `DELETE /v1/connections/:id` devolvian 503 `pieza_ausente` con un
+ * mensaje impecable — y como el escritorio lanza ESTE binario como sidecar, la
+ * aplicacion recibia el mismo 503 en las cuatro. Medido con curl contra el
+ * servicio corriendo antes de tocar nada: la pantalla de conexiones tenia
+ * botones y ninguno podia hacer nada.
+ *
+ * POR QUE ES UNA FABRICA Y NO UN ADAPTADOR YA CONSTRUIDO. El adaptador que
+ * guarda tokens personales necesita el deposito de secretos, y ese nace dentro
+ * del cableado, a partir del home y de la frase de paso. Aqui no hay forma de
+ * tenerlo antes; se declara COMO construirlo y el cableado lo llama con la
+ * boveda ya montada.
+ *
+ * POR QUE ESTE ADAPTADOR Y NO EL ALOJADO. No es una preferencia: es el reparto
+ * que decide el catalogo. El alojado atiende los modos con flujo de
+ * autorizacion y necesita tres contenedores levantados y una aplicacion propia
+ * registrada con cada proveedor — dos cosas que no se pueden montar desde un
+ * ejecutable. Este atiende los modos que se conectan pegando un valor, que es
+ * lo que se puede hacer hoy, sin Docker y sin registrar nada.
+ *
+ * SIN BOVEDA NO SE MONTA, y no es una degradacion silenciosa: un adaptador que
+ * acepta el token y no tiene donde guardarlo lo pediria para tirarlo. El
+ * cableado declara esa ausencia con su causa y su accion.
+ *
+ * @param {{boveda: any, workspace: any}} piezas
+ */
+function proveedorDeConexiones({ boveda, workspace }) {
+  if (!boveda) return null;
+  // El espacio de trabajo viaja porque el deposito indexa por el, y porque un
+  // proyecto NO es un espacio de trabajo: pasarle el proyecto es lo que hacia
+  // que guardar el primer token muriera con un error de clave foranea.
+  return crearAdaptadorLocal({ boveda, workspaceId: workspace.id });
+}
+
 const AYUDA = `noxloop-service — el servicio de control: unico escritor del almacen.
 
 Uso: noxloop-service [opciones]
@@ -89,6 +129,10 @@ Uso: noxloop-service [opciones]
                       en <home>/servicio/sesion.json con permisos 0600
   --port <puerto>     por defecto uno efimero, para no chocar con nada
   --origen <origen>   se puede repetir. Reemplaza la allowlist por defecto
+  --raiz <ruta>       desde donde se puede explorar el disco en la pantalla de
+                      alta. Se puede repetir. Por defecto, el home del operador —
+                      nunca la raiz del sistema de archivos. Las carpetas de los
+                      proyectos ya dados de alta son raices siempre
   --parent-pid <pid>  si ese proceso desaparece, este se apaga solo
   --watchdog-ms <ms>  cada cuanto se comprueba el padre (por defecto 2000)
 
@@ -104,7 +148,7 @@ Escucha SIEMPRE en 127.0.0.1. No hay bandera para cambiarlo.
 function parseArgs(argv) {
   /** @type {Record<string, any>} */
   const flags = {};
-  const repetibles = new Set(["origen"]);
+  const repetibles = new Set(["origen", "raiz"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith("--")) continue;
@@ -165,7 +209,9 @@ async function main() {
     parentPid: numero(flags, "parent-pid"),
     watchdogMs: numero(flags, "watchdog-ms"),
     origenes: textos(flags, "origen"),
+    raicesDeExploracion: textos(flags, "raiz"),
     adaptadores: registroDeRuntimes(home),
+    proveedorDeConexiones,
   });
 
   aviso(`home: ${svc.home} (de ${de})`);

@@ -29,6 +29,7 @@
     "packages/store/src/**/*.mjs",
     "packages/core/src/**/*.mjs",
     "packages/adapters/src/**/*.mjs",
+    "packages/asistencia/src/**/*.mjs",
     "providers/**/*.mjs"
   ],
   "exclude": [

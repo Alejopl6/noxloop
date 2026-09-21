@@ -139,6 +139,72 @@ export function auditoriaSobreAlmacen(almacen) {
 }
 
 /**
+ * La boveda que usa la CAPA DE CONEXIONES, y por que no puede ser la misma.
+ *
+ * EL FALLO, MEDIDO CONTRA EL SERVICIO CORRIENDO. Conectar un proveedor pegando
+ * un token moria con:
+ *
+ *     el deposito de secretos no pudo autorizar el uso de 'token':
+ *     FOREIGN KEY constraint failed
+ *
+ * La clave foranea es `grant.agent_id REFERENCES agent(id)`. La capa de
+ * conexiones pide el permiso a nombre de si misma —no hay ningun agente de la
+ * flota todavia, y normalmente no lo habra: el operador conecta su cuenta antes
+ * de tener ningun agente— asi que la fila no tiene a quien apuntar.
+ *
+ * POR QUE NO SE FABRICA UN AGENTE PARA QUE LA CLAVE CIERRE. Porque `agent` es
+ * la FLOTA: sus filas salen en la pantalla de agentes, entran en la sugerencia
+ * de flota y tienen un `rol` de un enum cerrado —implementador, revisor,
+ * planificador, verificador— del que ninguno describe a un plano de control.
+ * Un agente inventado para satisfacer una clave foranea es una fila que alguien
+ * va a leer como flota real.
+ *
+ * QUE SE HACE EN SU LUGAR, Y QUE CUESTA. El permiso de la capa de conexiones
+ * vive en memoria; todo lo demas es el mismo camino de siempre: el mismo
+ * backend cifrado, el MISMO inventario de credenciales del almacen —la
+ * credencial aparece con su huella en `GET /v1/credentials`— y la MISMA
+ * auditoria encadenada, que sigue registrando cada acceso al valor.
+ *
+ * Lo que cuesta es que ese permiso no sobrevive a un reinicio. Y eso no es una
+ * degradacion nueva: el repositorio de `packages/connections` tambien vive en
+ * memoria —lo declara su propio `TODO(persistencia)`— asi que la conexion a la
+ * que ese permiso sirve muere en el mismo reinicio. El dia que las conexiones
+ * se persistan, este permiso tiene que persistirse con ellas, y entonces hara
+ * falta decidir a nombre de QUE se concede. Va en el informe.
+ *
+ * LOS GRANTS DE LA FLOTA NO SE TOCAN: `POST /v1/grants` sigue escribiendo en la
+ * tabla, con su agente y su autor, que es donde tienen que estar.
+ *
+ * @param {{backend: any, repositorio: any, auditoria: any, sal: string, reloj: () => number}} piezas
+ */
+export function bovedaDeLaCapaDeConexiones({ backend, repositorio, auditoria, sal, reloj }) {
+  /** @type {Map<string, any>} */
+  const permisos = new Map();
+  return crearBoveda({
+    backend,
+    auditoria,
+    sal,
+    reloj,
+    repositorio: {
+      ...repositorio,
+      // Las credenciales siguen yendo al almacen: son inventario del operador y
+      // tienen que verse, rotarse y revocarse desde la pantalla como cualquier
+      // otra. Lo unico que se desvia es el permiso.
+      guardarGrant(grant) {
+        permisos.set(grant.id, grant);
+        return grant;
+      },
+      grantPorId(id) {
+        return permisos.get(id) ?? null;
+      },
+      grants() {
+        return [...permisos.values()];
+      },
+    },
+  });
+}
+
+/**
  * El backend de secretos, o la constancia de por que no hay ninguno.
  *
  * @param {{home: string, frase?: string|null}} opts
@@ -216,6 +282,45 @@ export function bovedaDelAlmacenParaLaBoveda(almacen) {
       }
       return almacen.boveda.guardarGrant(grant);
     },
+
+    /**
+     * La fila del grant, TRADUCIDA al vocabulario en el que la boveda mira la
+     * vigencia.
+     *
+     * EL FALLO QUE CIERRA, Y ES UNA PUERTA ABIERTA, NO UN DETALLE DE NOMBRES.
+     * `estadoDelGrant` de `packages/vault` lee `revocadoEn` y `vigenciaHasta`;
+     * la fila que devuelve el almacen trae `revocado_en` y `vigencia_hasta`,
+     * porque las columnas llevan los nombres del modelo de datos. Sobre una
+     * fila del almacen, esos dos campos son `undefined`, asi que la
+     * comprobacion de vigencia de `recuperar` devuelve «vigente» SIEMPRE:
+     *
+     *   estadoDelGrant({..., revocado_en: "2020-01-01", vigencia_hasta: "2020-01-02"}, Date.now())
+     *   -> { vigente: true, causa: null }
+     *
+     * Es decir: un grant revocado hace meses seguia autorizando a sacar el
+     * valor de una credencial, y el evento de auditoria se escribia como
+     * `concedido`. No se nota desde fuera —el acceso funciona, que es lo que se
+     * esperaba— y por eso lleva ahi desde que este archivo cableo los dos
+     * paquetes.
+     *
+     * La traduccion vive AQUI porque este objeto existe exactamente para eso:
+     * es la costura entre el vocabulario del almacen y el de la boveda, y ya
+     * traducia en la otra direccion al guardar. Los dos nombres se aceptan: si
+     * algun dia el almacen empieza a devolver el vocabulario de la boveda, esto
+     * sigue siendo correcto.
+     *
+     * @param {string} id
+     */
+    grantPorId(id) {
+      const fila = almacen.boveda.grantPorId(id);
+      if (!fila) return fila;
+      return {
+        ...fila,
+        revocadoEn: fila.revocadoEn ?? fila.revocado_en ?? null,
+        vigenciaHasta: fila.vigenciaHasta ?? fila.vigencia_hasta ?? null,
+        otorgadoEn: fila.otorgadoEn ?? fila.concedido_en ?? null,
+      };
+    },
   };
 }
 
@@ -226,8 +331,9 @@ export function bovedaDelAlmacenParaLaBoveda(almacen) {
  *   home: string,
  *   frase?: string|null,
  *   backendDeSecretos?: any,
- *   proveedorDeConexiones?: any,
+ *   proveedorDeConexiones?: any|((piezas: {boveda: any, home: string, workspace: any}) => any),
  *   adaptadores?: any,
+ *   fabricaDeModelo?: ((conf: {clave: string, modelo?: string}) => any)|null,
  *   reloj?: () => number,
  * }} opts
  */
@@ -317,6 +423,38 @@ export async function abrirDependencias(opts) {
 
   const nucleo = repositorioDeNucleoSobreAlmacen(almacen, { actor: "servicio-de-control" });
 
+  // EL PROVEEDOR DE CONEXIONES SE ACEPTA COMO FABRICA, Y ESE ERA EL NUDO.
+  //
+  // Construir el adaptador decide donde queda el valor de la credencial, y eso
+  // no lo sabe este archivo: lo decide quien monta el servicio. Pero el
+  // adaptador que guarda tokens necesita LA BOVEDA, y la boveda nace aqui, doce
+  // lineas mas arriba, a partir del home y de la frase. Quien arranca el
+  // servicio no la tiene: le pasa una fabrica y la recibe ya montada.
+  //
+  // EL FALLO CONCRETO QUE ESTO CIERRA, medido contra el servicio corriendo: el
+  // ejecutable nunca inyectaba ningun proveedor porque no tenia con que
+  // construirlo, asi que TODAS las rutas de conexiones —listar, autorizar,
+  // revocar, el callback— contestaban 503 `pieza_ausente`. El mensaje era
+  // impecable y la pantalla de conexiones era decorado: ninguna accion hacia
+  // nada.
+  const proveedorDeConexiones =
+    typeof opts.proveedorDeConexiones === "function"
+      ? opts.proveedorDeConexiones({
+          boveda: boveda
+            ? bovedaDeLaCapaDeConexiones({
+                backend: eleccion.backend,
+                repositorio: repositorioDeLaBoveda,
+                auditoria,
+                sal: salDelHome(home),
+                reloj,
+              })
+            : null,
+          home,
+          workspace,
+        })
+      : (opts.proveedorDeConexiones ?? null);
+
+
   return {
     home,
     almacen,
@@ -352,6 +490,25 @@ export async function abrirDependencias(opts) {
      * ningun rol», que se lee como «este proyecto no puede tener agentes» — una
      * conclusion que nadie saco.
      */
+    /**
+     * La fabrica del proveedor de modelo, INYECTABLE y con un defecto real.
+     *
+     * POR QUE TIENE DEFECTO Y LOS ADAPTADORES NO. Porque aqui no hay nada que
+     * decidir sobre la maquina del operador: el proveedor se construye con la
+     * clave que sale de la boveda y nada mas, asi que un defecto no promete
+     * nada que no se pueda cumplir. La ausencia que si se declara es la otra
+     * —la de la credencial— y la calcula `asistencia.mjs`.
+     *
+     * POR QUE SE PUEDE INYECTAR. Para que ninguna prueba de este repositorio
+     * llame a un modelo de verdad. Una suite que necesita red tarda, cuesta,
+     * falla cuando no hay red —y lo que falla cuando no hay red se acaba
+     * desactivando— y ademas no seria determinista: el fallo aparece el dia que
+     * el modelo devuelve algo distinto, sin que nadie haya tocado nada.
+     *
+     * `null` significa «usa la de verdad», que es la del AI SDK.
+     */
+    fabricaDeModelo: opts.fabricaDeModelo ?? null,
+
     adaptadores: opts.adaptadores ?? null,
     ausenciaDeAdaptadores: opts.adaptadores
       ? null
@@ -365,17 +522,35 @@ export async function abrirDependencias(opts) {
             "Mientras tanto puedes dar de alta los agentes a mano por `POST /v1/projects/:id/agents`.",
         },
 
-    conexiones: opts.proveedorDeConexiones ?? null,
-    ausenciaDeConexiones: opts.proveedorDeConexiones
+    conexiones: proveedorDeConexiones,
+    // LA AUSENCIA DISTINGUE SUS DOS MOTIVOS, y mandan a sitios distintos.
+    //
+    // Antes habia uno solo —"aqui no se eligio ninguno"— y desde que el
+    // ejecutable SI elige uno, ese texto seria falso en el caso que de verdad
+    // ocurre: el adaptador que guarda tokens necesita la boveda, la boveda
+    // necesita una frase de paso, y sin frase no hay adaptador. El operador que
+    // lee "no se eligio ninguno" va a buscar una bandera de arranque que no
+    // existe, cuando lo que le falta es la frase.
+    ausenciaDeConexiones: proveedorDeConexiones
       ? null
-      : {
-          porque:
-            "no hay proveedor de conexiones montado en este servicio: el adaptador se inyecta al arrancar y " +
-            "aqui no se eligio ninguno.",
-          comoConseguirlo:
-            "Arranca el servicio pasandole un `ConnectionProvider` construido con el adaptador que corresponda " +
-            "a esta instalacion. Declarar uno de mas manda al operador a un flujo de autorizacion que no existe.",
-        },
+      : !boveda && typeof opts.proveedorDeConexiones === "function"
+        ? {
+            porque:
+              "este servicio elige el proveedor de conexiones al arrancar, y el adaptador que guarda tokens " +
+              "personales necesita la boveda: " +
+              (ausenciaDeLaBoveda?.porque ?? "y la boveda no esta montada."),
+            comoConseguirlo:
+              ausenciaDeLaBoveda?.comoConseguirlo ??
+              "Monta la boveda: sin donde guardar el valor, conectar un proveedor seria pedir un token y tirarlo.",
+          }
+        : {
+            porque:
+              "no hay proveedor de conexiones montado en este servicio: el adaptador se inyecta al arrancar y " +
+              "aqui no se eligio ninguno.",
+            comoConseguirlo:
+              "Arranca el servicio pasandole un `ConnectionProvider` construido con el adaptador que corresponda " +
+              "a esta instalacion. Declarar uno de mas manda al operador a un flujo de autorizacion que no existe.",
+          },
 
     /** Vuelve a indexar lo que hay que redactar. Obligatorio tras un alta o una rotacion. */
     async recargarRedaccion() {

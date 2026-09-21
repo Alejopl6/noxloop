@@ -14,6 +14,8 @@ import {
 
 import { esSeccionDeProyecto, useRuta, type Navegar, type Ruta } from '@/lib/ruta'
 import { useServicio } from '@/components/proveedor-servicio'
+import { PedirToken } from '@/components/pedir-token'
+import { tokenDeSesion } from '@/lib/daemon'
 import {
   BannerSinConexion,
   PantallaIniciando,
@@ -287,7 +289,7 @@ function comandosDeNavegacion(navegar: Navegar, proyectoId: string | null): Coma
 
 export function Aplicacion() {
   const { ruta, navegar } = useRuta()
-  const { estado } = useServicio()
+  const { estado, reintentar } = useServicio()
   const menu = useMenuDeComandos()
 
   const proyectoAbierto = esSeccionDeProyecto(ruta.seccion) ? ruta.id : null
@@ -321,7 +323,19 @@ export function Aplicacion() {
   //
   // Tampoco se pinta el marco alrededor: una navegacion de once entradas que
   // no lleva a ningun sitio porque no hay servicio es once promesas falsas.
-  if (estado === 'sin_servicio') return <PantallaServicioCaido />
+  if (estado === 'sin_servicio') {
+    // SIN TOKEN NO ES "EL SERVICIO NO ESTA", y confundirlos daba un diagnostico
+    // falso. En modo web el token vive solo en memoria y se toma de `?token=`,
+    // que se borra de la direccion en cuanto se lee: a la primera recarga no
+    // hay token, cada peticion vuelve 401, y la aplicacion entera caia a "el
+    // servicio no esta corriendo" — mandando al operador a arrancar algo que ya
+    // estaba arrancado, con todas las acciones muertas.
+    //
+    // Dos decisiones correctas por separado que juntas rompian el producto. La
+    // pantalla de token era el hueco declarado en la fase A, y esto lo cierra.
+    if (tokenDeSesion() === null) return <PedirToken alEntrar={reintentar} />
+    return <PantallaServicioCaido />
+  }
 
   return (
     <>

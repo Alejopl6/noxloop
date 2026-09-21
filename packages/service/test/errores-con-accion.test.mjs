@@ -15,7 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { CATALOGO, deExcepcion } from "../src/errores.mjs";
@@ -79,6 +79,38 @@ const PROVOCADORES = {
     writeFileSync(join(ruta, "algo.txt"), "trabajo de alguien\n");
     const r = await pedirJson(svc, "/v1/projects", "POST", { origen: "nuevo", nombre: "Encima", ruta_local: ruta });
     return (await r.json()).error;
+  },
+
+  // Los tres del explorador de carpetas, por el camino real. El primero es el
+  // que importa: `/` no es una raiz de este servicio, y el rechazo tiene que
+  // decir por donde SI se puede navegar o el operador prueba rutas a ciegas.
+  ruta_fuera_del_alcance: async (svc) =>
+    (await (await pedirJson(svc, "/v1/folders?ruta=%2F", "GET")).json()).error,
+
+  carpeta_inexistente: async (svc) => {
+    const dentroDelHome = join(svc.home, "esta-carpeta-no-existe");
+    return (await (await pedirJson(svc, `/v1/folders?ruta=${encodeURIComponent(dentroDelHome)}`, "GET")).json())
+      .error;
+  },
+
+  carpeta_ilegible: async (svc) => {
+    // Una carpeta sin permiso de lectura, dentro de una raiz. `chmod 0` es la
+    // unica forma de ejercer el camino de verdad: fabricar el error a mano
+    // probaria el catalogo y no el manejador.
+    const raiz = carpetaDePrueba();
+    const cerrada = join(raiz, "sin-permiso");
+    mkdirSync(cerrada);
+    chmodSync(cerrada, 0o000);
+    const otro = await arrancar({ home: homeTemporal(), token: TOKEN, raicesDeExploracion: [raiz] });
+    try {
+      const r = await fetch(`${otro.url}/v1/folders?ruta=${encodeURIComponent(realpathSync(cerrada))}`, {
+        headers: { "x-noxloop-token": TOKEN },
+      });
+      return (await r.json()).error;
+    } finally {
+      chmodSync(cerrada, 0o700);
+      await otro.detener();
+    }
   },
 
   proyecto_desconocido: async (svc) =>

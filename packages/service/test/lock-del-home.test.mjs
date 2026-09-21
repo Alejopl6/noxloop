@@ -87,7 +87,15 @@ test("dos homes distintos conviven: dos proyectos abiertos a la vez no son un er
 //
 // No es gratuito ademas por lo que viene: `POST /runs` lanza el motor, y hoy
 // devuelve `pieza_ausente` justamente porque no lo tiene a mano.
-const PAQUETES_QUE_VIAJAN = ["store", "vault", "scanner", "core", "connections", "adapters", "engine"];
+//
+// `asistencia` entro despues, y es el primero que NO viaja solo: es el unico
+// paquete del monorepo con dependencias de terceros, asi que declararlo aqui
+// obliga a declarar tambien el subarbol de `node_modules` que necesita. La
+// guarda que ata esa otra mitad —los especificadores DESNUDOS, que esta lista
+// no ve porque solo mira los relativos— esta en
+// `recursos-del-escritorio.test.mjs`, y ademas monta el subarbol declarado
+// fuera del repositorio y lo importa para comprobar que basta.
+const PAQUETES_QUE_VIAJAN = ["store", "vault", "scanner", "core", "connections", "adapters", "engine", "asistencia"];
 
 test("el servicio solo importa los paquetes que viajan con el al escritorio", () => {
   // EL FALLO QUE EVITA, Y YA OCURRIO UNA VEZ CON EL LOCK. El escritorio
