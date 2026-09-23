@@ -74,6 +74,11 @@ const PROVOCADORES = {
     return (await r.json()).error;
   },
 
+  ruta_relativa: async (svc) => {
+    const r = await pedirJson(svc, "/v1/projects", "POST", { origen: "local", nombre: "Relativo", ruta_local: "relativa" });
+    return (await r.json()).error;
+  },
+
   destino_no_vacio: async (svc) => {
     const ruta = carpetaDePrueba();
     writeFileSync(join(ruta, "algo.txt"), "trabajo de alguien\n");

@@ -16,7 +16,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { conServicio, pedir, repoDePrueba, carpetaDePrueba, huellaDelArbol, diferencias } from "./ayuda.mjs";
@@ -64,6 +64,28 @@ test("origen `local` sobre una carpeta que no es repositorio: `no_es_repositorio
     assert.ok(error.accion.includes(ruta), "la accion tiene que poder copiarse y pegarse tal cual");
   });
 });
+
+// UNA RUTA RELATIVA NO SE RESUELVE CONTRA NADA QUE EL OPERADOR VEA. Se resolvia
+// contra el directorio de trabajo del servicio, que con `npm run service` es la
+// raiz de este repositorio: un alta con `ruta_local: "mi-tienda"` y origen
+// `nuevo` creaba `noxloop/mi-tienda/` y las guidelines del proyecto terminaron
+// commiteadas aqui. Se rechaza sin tocar el disco, en los tres origenes.
+for (const origen of ["local", "nuevo", "remoto"]) {
+  test(`origen \`${origen}\` con una ruta relativa: \`ruta_relativa\`, y no se crea nada`, async () => {
+    await conServicio({}, async (svc) => {
+      const relativa = `proyecto-relativo-${origen}-${process.pid}`;
+      const cuerpo = { origen, nombre: "Relativo", ruta_local: relativa };
+      if (origen === "remoto") cuerpo.remoto = "https://example.com/o/r.git";
+      const r = await crear(svc, cuerpo);
+      assert.equal(r.status, 400, await r.clone().text());
+      const { error } = await r.json();
+      assert.equal(error.codigo, "ruta_relativa");
+      assert.ok(error.causa.includes(relativa), "la causa tiene que nombrar lo que el operador escribio");
+      assert.match(error.accion, /absoluta/);
+      assert.equal(existsSync(join(process.cwd(), relativa)), false, "se creo una carpeta en el directorio del servicio");
+    });
+  });
+}
 
 test("origen `nuevo` sobre un destino con contenido: `destino_no_vacio` y ofrece adoptarlo", async () => {
   await conServicio({}, async (svc) => {
