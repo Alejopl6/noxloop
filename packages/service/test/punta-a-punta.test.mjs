@@ -28,7 +28,7 @@
 // como hecho medido en vez de como prosa en un informe, en el `puentes` que se
 // imprime al final.
 //
-// Hubo otras dos y ya no estan:
+// Hubo tres y ya no estan:
 //
 //   - Conectar por HTTP no dejaba la conexion donde mira la guarda
 //     `conexion_viva`, y ninguna ruta llevaba un proyecto a `CONNECTED`. La
@@ -39,10 +39,9 @@
 //     camino. Ahora los dos call sites construyen la peticion entera y el
 //     cableado monta el runtime por el contrato: abajo se le entrega al
 //     adaptador lo que el motor construyo, tal cual.
-//
-//   - `GET /v1/projects/:id/runs` no reconoce como suyo un run que escribio el
-//     motor de verdad, porque el estado del run no lleva `project_id` ni
-//     `repoPath`.
+//   - `GET /v1/projects/:id/runs` no reconocia como suyo un run que escribio el
+//     motor de verdad, porque el estado del run no llevaba `projectId` ni
+//     `repoPath`. El planner ahora copia la ruta del repositorio en cada tarea.
 //
 // Donde el recorrido necesita cruzar una de esas costuras lo hace por el
 // almacen —que es del producto, no del test— y lo APUNTA en `puentes`, que se
@@ -711,16 +710,17 @@ test("T196 y T205 — de un repositorio de verdad a un PR abierto, sin editar un
     assert.equal(proyectado.cuerpo.run.item.pr, "https://forge.test/pr/1");
     assert.deepEqual(proyectado.cuerpo.avisos, [], "el servicio no pudo leer algun archivo de run");
 
-    // LA OTRA COSTURA: el mismo run, pedido por proyecto, no aparece.
+    // Y pedido por proyecto TAMBIEN aparece. Era una costura: el motor por CLI
+    // no sabe de que proyecto es el run, y las tareas no llevaban la ruta de su
+    // repositorio, asi que esta lista salia vacia. Ahora el planner copia la
+    // ruta de la config en cada tarea y el servicio la reconoce.
     const delProyecto = await pedir(`/v1/projects/${proyecto.id}/runs`);
     assert.equal(delProyecto.status, 200);
-    if (delProyecto.cuerpo.items.length === 0) {
-      puentes.push(
-        "GET /v1/projects/:id/runs: el motor escribio `run-2.json` en el mismo home y el servicio no lo atribuye " +
-          "a ningun proyecto. `esDelProyecto` mira `run.project_id` o `run.tasks[].repoPath`, y `createRun` no " +
-          "escribe ninguno de los dos.",
-      );
-    }
+    assert.deepEqual(
+      delProyecto.cuerpo.items.map((/** @type {any} */ r) => r.item.id),
+      [run.item.id],
+      "el run que escribio el motor no aparece en los runs del proyecto",
+    );
 
     // ---- la auditoria ------------------------------------------------------
     const auditoria = await pedir("/v1/audit");

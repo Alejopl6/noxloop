@@ -17,7 +17,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { recorteQueAvisa } from "./prompt.mjs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { validatePlan } from "./plan.mjs";
 import { createRun, loadRun, setTaskFields } from "./state.mjs";
 import { entornoDeFase } from "./wiring.mjs";
@@ -158,6 +158,15 @@ export async function planItem(itemId, deps) {
   // se queda escrito en el run. Sin el, `GET /v1/projects/:id/runs` no puede
   // encontrarlo: el motor por CLI no tiene proyecto, asi que llega `undefined`
   // y el run se declara sin proyecto en vez de atribuirse al azar.
+  //
+  // Y como por CLI casi nunca llega, cada tarea lleva ademas la ruta de su
+  // repositorio, que es un hecho de la config y no una inferencia: el servicio
+  // atribuye el run al proyecto cuya `ruta_local` la contiene. Sin repositorio
+  // con `path` queda en `null` en vez de inventarse.
+  for (const t of plan.tasks) {
+    const ruta = config.repos?.[t.repo]?.path;
+    t.repoPath = typeof ruta === "string" && ruta ? resolve(ruta) : null;
+  }
   const run = createRun(plan, { home, milestoneId: deps.milestoneId, projectId: deps.projectId });
   log.info(`plan aceptado: ${run.tasks.length} tarea(s) sobre ${plan.repoScope.join(", ")}`);
 
