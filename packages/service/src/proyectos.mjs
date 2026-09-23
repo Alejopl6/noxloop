@@ -21,7 +21,8 @@
 // quien lo puso ahi.
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
 
 import { ENUMS } from "../../store/src/index.mjs";
 
@@ -57,6 +58,15 @@ function contenidoDe(ruta) {
  * @param {{origen: string, ruta_local: string, remoto?: string|null}} datos
  */
 function prepararDestino(datos) {
+  // RELATIVA NO: `resolve` la resolveria contra el directorio del proceso, que
+  // con `npm run service` es la raiz de noxloop. Asi termino un proyecto nuevo
+  // con sus guidelines commiteadas dentro de este repositorio.
+  if (!isAbsolute(datos.ruta_local)) {
+    throw new ErrorDeServicio("ruta_relativa", {
+      ruta: datos.ruta_local,
+      ejemplo: join(homedir(), datos.ruta_local),
+    });
+  }
   const ruta = resolve(datos.ruta_local);
 
   if (datos.origen === "local") {

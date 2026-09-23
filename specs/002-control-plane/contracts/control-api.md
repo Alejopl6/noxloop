@@ -127,6 +127,8 @@ Anidados y no planos porque separan **identidad** de **agregado**: `nombre` desc
 
 `POST` con `origen: "nuevo"` sobre un destino no vacío devuelve `destino_no_vacio` y ofrece adoptarlo como existente (escenario 3 de US2).
 
+`POST` con una `ruta_local` relativa, en cualquier origen, devuelve `400 ruta_relativa` sin tocar el disco. Resolverla contra el directorio del proceso creaba el proyecto donde se hubiera arrancado el servicio.
+
 | Método | Ruta | Notas |
 |---|---|---|
 | `GET` | `/v1/templates` | Las plantillas disponibles para `origen: "nuevo"` |

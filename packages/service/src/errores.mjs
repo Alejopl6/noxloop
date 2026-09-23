@@ -148,6 +148,16 @@ export const CATALOGO = {
 
   // Escenario 3 de US2. Ofrecer adoptarlo es la mitad que importa: sin eso, el
   // operador borra la carpeta para poder seguir, y ahi se pierde trabajo suyo.
+  ruta_relativa: {
+    estado: 400,
+    causa: (d) =>
+      `\`${d.ruta}\` es una ruta relativa, y este servicio no tiene un directorio que el operador vea contra el ` +
+      "cual resolverla: se resolveria contra donde se arranco el proceso, que puede ser cualquier sitio.",
+    accion: (d) =>
+      `Escribe la ruta absoluta, por ejemplo \`${d.ejemplo}\`, o elige la carpeta con el explorador de la ` +
+      "pantalla de alta.",
+  },
+
   destino_no_vacio: {
     estado: 409,
     causa: (d) =>
