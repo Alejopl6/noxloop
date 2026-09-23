@@ -26,12 +26,43 @@ con todo construido alrededor.
 |---|---|---|
 | `fake` | Pruebas sin red y sin credenciales. Trae los dos caminos, `oauth2` y los que no lo son | ✅ completo |
 | `local` | Token personal y clave de API contra la bóveda del sistema operativo: Azure DevOps, Vercel. Y el operador sin Docker | ✅ completo |
-| `nango` | OAuth de verdad: refresco automático y catálogo que nadie quiere reimplementar | 🕳️ hueco declarado — ver [`src/adaptadores/nango.mjs`](src/adaptadores/nango.mjs) |
+| `nango` | OAuth de verdad: el operador pulsa conectar, autoriza en su navegador y listo. Refresco automático de tokens y cifrado en reposo | ✅ completo — ejercido contra una instancia propia (0.71.10) |
+
+**Los dos se montan a la vez.** El reparto lo decide el modo del catálogo, no el
+operador: `oauth2` va por `nango`, todo lo demás por `local`. Montar solo uno
+deja fuera la mitad del catálogo, y cambiar `local` por `nango` le quitaría al
+operador justo los proveedores que hasta ahora eran los únicos que funcionaban.
+Lo junta [`src/reunido.mjs`](src/reunido.mjs).
 
 `local` no es un plan B. Para un token personal, el adaptador alojado no aporta
 nada que `local` no haga —no hay flujo que delegar ni token que refrescar— y
 levantar tres contenedores para guardar un valor que cabe en el llavero es
 coste sin contrapartida.
+
+### El único paso que el producto no puede dar solo
+
+Con el servidor autoalojado **no hay aplicaciones OAuth compartidas**, y está
+medido contra una instancia propia de la versión 0.71.10:
+
+| Comprobación | Resultado |
+|---|---|
+| `GET /api/v1/providers` | 1013 proveedores, `preConfigured: false` en los 1013 |
+| `select count(*) from providers_shared_credentials` | 0 filas: la migración crea la tabla vacía |
+| `POST /api/v1/integrations {"useSharedCredentials":true}` | `400 failed_to_create_preprovisioned_provider` |
+| `routes.internal.ts` de Nango | esa tabla solo la escribe su API interna, la que opera la nube |
+| Su propia documentación | «Nango developer apps use Nango's callback» — el de `api.nango.dev`, inalcanzable desde localhost |
+
+Así que registrar la aplicación es un paso del operador. Lo que sí se puede es
+que sea corto: [`src/aplicacion-oauth.mjs`](src/aplicacion-oauth.mjs) declara,
+por proveedor, dónde se registra y qué dirección de retorno hay que pegar —ya
+calculada con el servidor que de verdad está escuchando— y el adaptador expone
+`aplicaciones()` y `registrarAplicacion()` para que el recorrido viva dentro del
+producto en vez de en un párrafo.
+
+La trampa que eso evita: la guía oficial del proveedor dice, literal, que pegues
+`https://api.nango.dev/oauth/callback`. Con una instancia propia esa es justo la
+que no funciona, y el fallo no aparece al registrar sino al autorizar, con un
+error sobre un `redirect_uri` que no coincide y que no menciona ningún puerto.
 
 **La licencia de la dependencia que trae `nango` está declarada en
 [`docs/licencia-de-integraciones.md`](docs/licencia-de-integraciones.md).** Es

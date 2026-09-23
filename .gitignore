@@ -36,3 +36,8 @@ Thumbs.db
 # ...pero no su metadata de plantilla, que es de spec-kit y no de este proyecto.
 /.specify/memory/.constitution-template.json
 /.claude/skills/speckit-*
+
+# El volumen de Postgres del servidor de integraciones. Lo crea `docker compose
+# up` en el directorio del compose, y son cientos de megas de base de datos con
+# las credenciales cifradas del operador dentro: no se versiona ni por error.
+packages/connections/nango/datos/

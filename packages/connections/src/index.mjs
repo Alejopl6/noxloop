@@ -55,7 +55,21 @@ export { PUERTO_DE_CALLBACK, HOST_DE_CALLBACK, sondearPuertoConNet, problemaDePu
 export { arrancar } from "./arranque.mjs";
 export { repositorioEnMemoria } from "./repositorio.mjs";
 export { crearProveedorDeConexiones } from "./proveedor.mjs";
+export { crearProveedorReunido } from "./reunido.mjs";
 export { chequeosDeContrato, validarProveedorDeConexiones, METODOS_DEL_CONTRATO } from "./contrato.mjs";
 export { crearAdaptadorFalso, CATALOGO_FALSO, fixturesDeContrato } from "./adaptadores/fake.mjs";
 export { crearAdaptadorLocal, MODOS_DEL_ADAPTADOR_LOCAL } from "./adaptadores/local.mjs";
-export { crearAdaptadorNango, REQUISITOS_DE_NANGO } from "./adaptadores/nango.mjs";
+export {
+  crearAdaptadorNango,
+  REQUISITOS_DE_NANGO,
+  MODOS_DEL_ADAPTADOR_NANGO,
+  CATALOGO_POR_DEFECTO_DE_NANGO,
+} from "./adaptadores/nango.mjs";
+export {
+  SERVIDOR_POR_DEFECTO,
+  REDIRECT_URI_POR_DEFECTO,
+  SIN_APLICACIONES_COMPARTIDAS,
+  recorridoDeRegistro,
+  recorridosDeRegistro,
+  redirectUriDe,
+} from "./aplicacion-oauth.mjs";

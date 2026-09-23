@@ -139,6 +139,13 @@ export async function catalogoDeConexiones(p) {
       // el operador lee `adaptador: "local"` y cree que ya puede conectar.
       adaptadores: {
         montado: p.dep.conexiones ? p.dep.conexiones.id : null,
+        // LA LISTA ENTERA, Y NO SOLO EL PRINCIPAL. Desde que se montan dos
+        // —el alojado para OAuth y el local para los tokens personales— un
+        // solo nombre esconde la mitad de lo que se puede conectar: la
+        // pantalla compara `entrada.adaptador` contra esto, y con un nombre
+        // solo apagaria las filas del otro diciendo que las atiende un
+        // adaptador que no esta montado, sobre uno que si lo esta.
+        montados: p.dep.conexiones ? (p.dep.conexiones.ids ?? [p.dep.conexiones.id]) : [],
         ausencia: p.dep.conexiones ? null : p.dep.ausenciaDeConexiones,
       },
     }),

@@ -35,7 +35,7 @@ proveedor de modo `pat`, devuelve los campos que hay que rellenar.
 
 | Adaptador | Cuándo gana |
 |---|---|
-| `nango` | OAuth de verdad: Linear, Jira, GitHub, Slack, Notion. Refresco automático de tokens, cifrado en reposo, y un catálogo de mil proveedores que nadie quiere reimplementar |
+| `nango` | OAuth de verdad: Linear, Jira, GitHub, Slack, Notion. El operador pulsa conectar, autoriza en su navegador del sistema, y la pantalla sonda hasta que la conexión aparece. Refresco automático de tokens y cifrado en reposo |
 | `local` | Token personal y clave de API: Azure DevOps, Vercel. Y el operador que no puede o no quiere levantar contenedores |
 | `fake` | Pruebas sin red y sin credenciales |
 
@@ -44,8 +44,15 @@ alojado no aporta nada que `local` no haga: no hay flujo que delegar ni token qu
 refrescar. Levantar tres contenedores para guardar un token personal que cabe en
 el llavero es coste sin contrapartida.
 
-La elección la hace el catálogo según el modo del proveedor. El operador no
-tiene por qué saber que existen dos caminos.
+**Los dos se montan a la vez**, y la elección la hace el catálogo según el modo
+del proveedor. El operador no tiene por qué saber que existen dos caminos.
+
+Que se monten los dos no es un detalle de cableado: el servicio publica UN
+proveedor de conexiones, y la pantalla solo ofrece lo que ese proveedor atiende.
+Con `nango` a solas, levantar los contenedores para poder usar OAuth le quitaría
+al operador los proveedores de token personal —los únicos que funcionaban hasta
+que el adaptador alojado existió—. El token personal deja de ser el camino por
+defecto; no deja de existir.
 
 ---
 
@@ -142,14 +149,53 @@ Tres avisos que cuestan una tarde si se descubren solos:
 3. **El panel está abierto por defecto** a cualquiera que alcance la instancia.
    En localhost es menos grave; cualquier bind a `0.0.0.0` lo vuelve crítico.
 
-### Registra tus propias aplicaciones OAuth desde el día uno
+### Registrar tu aplicación OAuth no es opcional aquí
 
-Las aplicaciones compartidas del proveedor tienen scopes fijos, el usuario
-autoriza al proveedor y no a noxloop, y el proveedor puede revocarlas.
+No es una recomendación: **en una instancia autoalojada las aplicaciones OAuth
+compartidas no existen.** Medido contra la versión 0.71.10 levantada con el
+compose de este repositorio:
 
-Y lo decisivo: **solo con aplicación propia se pueden exportar los tokens y
-salir de la capa alojada sin que los usuarios vuelvan a autorizar**. Es el
-seguro de portabilidad, y solo funciona si está puesto desde el principio.
+| Comprobación | Resultado |
+|---|---|
+| `GET /api/v1/providers` | 1013 proveedores, `preConfigured: false` en los 1013 |
+| `select count(*) from providers_shared_credentials` | 0 filas: la migración crea la tabla vacía y nada del repositorio público la siembra |
+| `POST /api/v1/integrations {"provider":"github","useSharedCredentials":true}` | `400 failed_to_create_preprovisioned_provider` |
+| Quién escribe esa tabla (`routes.internal.ts`) | solo la API interna de Nango, detrás de su middleware `internal`: la opera Nango, no quien se autoaloja |
+| Su propia documentación | «Nango developer apps use Nango's callback» — el de `api.nango.dev`, que una instancia en localhost no puede recibir |
+
+Es, además, lo que conviene: con una aplicación compartida los scopes son fijos,
+el usuario autoriza a un tercero y no a noxloop, y **solo con aplicación propia
+se pueden exportar los tokens y salir de la capa alojada sin que los usuarios
+vuelvan a autorizar**.
+
+El paso está guiado dentro del producto. La pantalla de conexiones enseña, por
+proveedor: dónde se registra, qué dirección de retorno hay que pegar —con un
+botón de copiar— y dos casillas para el Client ID y el Client Secret. Son cuatro
+pasos y se hacen una vez por proveedor.
+
+**La trampa que ese recorrido evita.** La guía oficial de Nango para registrar
+una aplicación de GitHub dice, literal: «Enter `https://api.nango.dev/oauth/
+callback`». Ese es el callback de *su* nube. Con una instancia propia hay que
+pegar `http://localhost:3003/oauth/callback`, y el fallo de pegar el otro no
+aparece al registrar: aparece al autorizar, con un error del proveedor sobre un
+`redirect_uri` que no coincide y que no menciona ninguna instancia ni ningún
+puerto.
+
+### Arrancar el servicio con el adaptador alojado
+
+La configuración va por entorno y no por bandera: la clave secreta es un
+secreto, y los argumentos quedan a la vista en la tabla de procesos de la
+máquina entera.
+
+```bash
+export NOXLOOP_NANGO_URL=http://localhost:3003
+export NOXLOOP_NANGO_SECRET_KEY=...   # del panel del servidor
+npm run service
+```
+
+Sin `NOXLOOP_NANGO_SECRET_KEY` se monta solo el adaptador de tokens personales.
+No es un error ni un aviso rojo: es un camino menos, y el catálogo ya declara
+por cada proveedor cuál lo atendería.
 
 ---
 
@@ -174,6 +220,7 @@ seguir en los dos archivos.
 ```bash
 node --test packages/connections/test/contrato-fake.test.mjs     # la suite contra `fake`
 node --test packages/connections/test/contrato-local.test.mjs    # la misma contra `local`
+node --test packages/connections/test/contrato-nango.test.mjs    # la misma contra `nango`, sin red
 ```
 
 La lista completa de pruebas del paquete:

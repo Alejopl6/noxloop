@@ -94,6 +94,15 @@ export const TABLA = crearTabla([
   // `authorize` es literal y le gana a `/v1/connections/:id` al montar, asi que
   // no hay forma de que una conexion llamada «authorize» se coma esta ruta.
   { patron: "/v1/connections", metodos: ["GET"], manejar: credenciales.conexionesDelEspacioDeTrabajo },
+  // El registro de aplicaciones OAuth va ANTES que `/v1/connections/:id`, igual
+  // que el catalogo y que `authorize`: es un patron literal y tiene que ganarle
+  // al parametrico, o `oauth-apps` entraria como si fuera el id de una conexion.
+  {
+    patron: "/v1/connections/oauth-apps",
+    metodos: ["GET", "HEAD", "POST"],
+    manejar: (p) =>
+      p.metodo === "POST" ? credenciales.registrarAplicacionOauth(p) : credenciales.aplicacionesOauth(p),
+  },
   {
     patron: "/v1/connections/authorize",
     metodos: ["POST"],

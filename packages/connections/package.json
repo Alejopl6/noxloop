@@ -5,6 +5,13 @@
   "license": "MIT",
   "type": "module",
   "main": "src/index.mjs",
-  "engines": { "node": ">=22" },
-  "files": ["src"]
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@nangohq/node": "^0.71.10"
+  }
 }

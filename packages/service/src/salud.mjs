@@ -46,8 +46,21 @@ export function capacidades(p) {
     ? descripcionParaCapacidades({ tipo: dep.backend.tipo, motivo: dep.backend.motivo, evidencia: dep.backend.evidencia })
     : { valor: null, origen: "vacio", motivo: dep.ausenciaDeLaBoveda.porque };
 
+  // LOS DOS CAMPOS, Y EL SEGUNDO ES EL QUE HACE FALTA DESDE QUE HAY DOS
+  // ADAPTADORES. `adaptador` es el principal —el que la pantalla ya comparaba—
+  // y se conserva para no romper a quien lo lee. `adaptadores` es la lista
+  // entera: con los dos montados, un solo nombre esconde la mitad de lo que se
+  // puede conectar, y la pantalla apagaria las filas de la otra mitad diciendo
+  // «lo atiende un adaptador que no esta montado» sobre uno que si lo esta.
   const conexiones = dep.conexiones
-    ? { valor: { adaptador: dep.conexiones.id }, origen: "detectado", evidencia: `adaptador \`${dep.conexiones.id}\`` }
+    ? {
+        valor: {
+          adaptador: dep.conexiones.id,
+          adaptadores: dep.conexiones.ids ?? [dep.conexiones.id],
+        },
+        origen: "detectado",
+        evidencia: `adaptadores \`${(dep.conexiones.ids ?? [dep.conexiones.id]).join("`, `")}\``,
+      }
     : { valor: null, origen: "vacio", motivo: dep.ausenciaDeConexiones.porque };
 
   // LOS RUNTIMES, POR EL MISMO MOTIVO Y CON LA MISMA TRAMPA EVITADA. Lo que se

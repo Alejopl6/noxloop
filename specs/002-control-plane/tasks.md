@@ -187,8 +187,9 @@ funcione.
 - [X] T154 [D] Adaptador `nango`: `docker-compose` con **`SERVER_PORT=3003` explícito** (el bug #5305, cerrado como *not planned*)
 - [X] T155 [D] `preflight` comprueba el puerto 3003 al arrancar y falla ruidosamente. No hay reasignación posible: está registrado en cada aplicación OAuth
 - [ ] T156 [D] **Registrar aplicaciones OAuth propias** para Linear, Jira, GitHub. Es el seguro de portabilidad y solo funciona si está desde el principio
-- [ ] T157 [D] Flujo: `connect_link` abierto en el **navegador del sistema** (`tauri-plugin-opener`), no en el webview
-- [ ] T158 [D] Sondeo hasta que la conexión aparece. **Los webhooks no son el camino primario** (`research.md` §3, no verificado)
+  - Lo construible está: el recorrido de registro con los valores dentro (`packages/connections/src/aplicacion-oauth.mjs`, pantalla `registro-de-aplicacion-oauth.tsx`). Queda abierta porque el registro en sí lo hace el operador en cada proveedor: en un Nango autoalojado **no hay** aplicaciones compartidas (medido contra 0.71.10, ver el encabezado de `aplicacion-oauth.mjs`)
+- [X] T157 [D] Flujo: `connect_link` abierto en el **navegador del sistema** (`tauri-plugin-opener`), no en el webview
+- [X] T158 [D] Sondeo hasta que la conexión aparece. **Los webhooks no son el camino primario** (`research.md` §3, no verificado)
 - [X] T159 [D] `credenciales()` con `vigencia_ms` ≤ 5 minutos. Test: no se cachea más allá de la vigencia
 - [X] T160 [D] Test primero: con el adaptador caído, las conexiones existentes siguen y las nuevas fallan con causa; la aplicación no se cae
 - [X] T161 [D] Declarar la licencia ELv2 en `LICENSE` y `README`, con lo que implica para quien redistribuya

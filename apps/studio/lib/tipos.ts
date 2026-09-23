@@ -813,7 +813,19 @@ export interface CapacidadesDelServicio {
   esquema?: number
   runtimes?: CapacidadDeclarada<string[]>
   boveda?: CapacidadDeclarada<{ tipo: string; motivo?: string }>
-  conexiones?: CapacidadDeclarada<{ adaptador: string }>
+  conexiones?: CapacidadDeclarada<{
+    /** El adaptador principal. Se conserva porque es lo que ya se leia. */
+    adaptador: string
+    /**
+     * TODOS los montados, y hace falta desde que son dos.
+     *
+     * Con el alojado y el local a la vez, un solo nombre esconde la mitad de lo
+     * que se puede conectar: esta pantalla compara `entrada.adaptador` contra
+     * esto, y con un nombre solo apagaria las filas del otro diciendo que las
+     * atiende un adaptador que no esta montado, sobre uno que si lo esta.
+     */
+    adaptadores?: string[]
+  }>
   motor?: CapacidadDeclarada<{ presente: boolean; version: string | null }>
   almacen?: CapacidadDeclarada<{ version_esquema: number; workspace: string }>
 }
@@ -1235,3 +1247,62 @@ export const GRUPO = {
   runtime: 'agent.runtime',
   claseDeConexion: 'connection.clase',
 } as const
+
+/* -------------------------------------------------------------------------- */
+/* Las aplicaciones OAuth: el unico paso que el producto no puede dar solo     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Un paso del recorrido para registrar la aplicacion OAuth de un proveedor.
+ *
+ * `pegar` VIAJA APARTE Y NO DENTRO DE `detalle` a proposito: es el valor exacto
+ * que hay que copiar —la redirect URI de ESTA instancia— y una instruccion que
+ * lo mencione dentro de una frase obliga a transcribirlo a mano. Detras de un
+ * boton de copiar, no hay nada que transcribir.
+ */
+export interface PasoDeRegistro {
+  titulo: string
+  detalle: string
+  /** El valor exacto que hay que copiar, cuando el paso pide copiar algo. */
+  pegar?: string
+  /** La direccion que hay que abrir, cuando el paso pide abrir algo. */
+  abrir?: string
+}
+
+export interface RecorridoDeRegistro {
+  slug: string
+  nombre?: string
+  url_de_registro: string
+  redirect_uri: string
+  campos_que_devuelve: string[]
+  pasos: PasoDeRegistro[]
+}
+
+export interface AplicacionOauth {
+  slug: string
+  nombre: string
+  clase?: ClaseDeConexion
+  registrada: boolean
+  recorrido: RecorridoDeRegistro | null
+}
+
+/**
+ * Lo que devuelve `GET /v1/connections/oauth-apps`.
+ *
+ * `aplicaciones_compartidas` CONTESTA LA PREGUNTA QUE LLEGO PRIMERO —«¿por que
+ * debo poner token? ¿no sirven las integraciones con OAuth?»— y viaja con su
+ * evidencia. Sin la evidencia es una afirmacion, y una afirmacion sin pruebas
+ * se vuelve a discutir dentro de seis meses.
+ */
+export interface EstadoDeAplicacionesOauth {
+  servidor: string
+  redirect_uri: string
+  items: AplicacionOauth[]
+  aplicaciones_compartidas: {
+    hay: boolean
+    version?: string
+    medido_el?: string
+    porque: string
+    evidencia: { comprobacion: string; resultado: string }[]
+  }
+}

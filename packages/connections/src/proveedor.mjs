@@ -552,6 +552,27 @@ export function crearProveedorDeConexiones({
       });
     },
 
+    /**
+     * ¿Es de este adaptador esta conexion?
+     *
+     * NO ES PARTE DEL CONTRATO, y por eso no esta en `METODOS_DEL_CONTRATO`: es
+     * lo que necesita el proveedor reunido para saber a cual de los dos
+     * adaptadores montados le toca una operacion por identificador. Vive aqui y
+     * no en el reunido porque la unica forma de contestarlo sin preguntar es
+     * mirar el repositorio, que es privado de cada adaptador.
+     *
+     * POR QUE NO VALE `listar`. `listar(null)` solo trae las del espacio de
+     * trabajo y `listar(proyecto)` exige saber el proyecto, que es justo lo que
+     * quien tiene un id no tiene. Buscar por `listar` daba `conexion_desconocida`
+     * sobre conexiones de proyecto que existian perfectamente.
+     *
+     * @param {string} conexionId
+     * @returns {boolean}
+     */
+    tiene(conexionId) {
+      return Boolean(repositorio.porId(conexionId));
+    },
+
     /** @param {string} conexionId */
     async revocar(conexionId) {
       const conexion = repositorio.porId(conexionId);

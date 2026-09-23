@@ -17,7 +17,7 @@ import {
 } from "../../adapters/src/index.mjs";
 import { buildHookSettings, validateHookSettings } from "../../engine/src/session-settings.mjs";
 
-import { crearAdaptadorLocal } from "../../connections/src/adaptadores/local.mjs";
+import { elegirProveedorDeConexiones, LEE_DEL_ENTORNO } from "../src/proveedor-de-conexiones.mjs";
 
 import { resolverHome } from "../src/home.mjs";
 import { ErrorDeServicio } from "../src/errores.mjs";
@@ -99,25 +99,23 @@ function registroDeRuntimes(home) {
  * tenerlo antes; se declara COMO construirlo y el cableado lo llama con la
  * boveda ya montada.
  *
- * POR QUE ESTE ADAPTADOR Y NO EL ALOJADO. No es una preferencia: es el reparto
- * que decide el catalogo. El alojado atiende los modos con flujo de
- * autorizacion y necesita tres contenedores levantados y una aplicacion propia
- * registrada con cada proveedor — dos cosas que no se pueden montar desde un
- * ejecutable. Este atiende los modos que se conectan pegando un valor, que es
- * lo que se puede hacer hoy, sin Docker y sin registrar nada.
+ * POR QUE LOS DOS ADAPTADORES Y NO UNO. El reparto lo decide el catalogo: el
+ * alojado atiende los modos con flujo de autorizacion, el local los que se
+ * conectan pegando un valor. Montar solo uno deja fuera la mitad del catalogo,
+ * y en la direccion que duele: cambiar `local` por el alojado le quitaria al
+ * operador todos los proveedores de modo `api_key` y `basic`, que son los
+ * unicos que funcionaban hasta que el hueco del alojado se lleno.
  *
- * SIN BOVEDA NO SE MONTA, y no es una degradacion silenciosa: un adaptador que
- * acepta el token y no tiene donde guardarlo lo pediria para tirarlo. El
- * cableado declara esa ausencia con su causa y su accion.
+ * QUE DECIDE CUAL SE MONTA. El entorno, no una bandera: la clave secreta del
+ * servidor de integraciones es un secreto, y una bandera queda en la tabla de
+ * procesos de la maquina entera. Sin `NOXLOOP_NANGO_SECRET_KEY` se monta solo
+ * el local, y el producto sigue entero — un camino menos, declarado, no un
+ * error.
  *
  * @param {{boveda: any, workspace: any}} piezas
  */
 function proveedorDeConexiones({ boveda, workspace }) {
-  if (!boveda) return null;
-  // El espacio de trabajo viaja porque el deposito indexa por el, y porque un
-  // proyecto NO es un espacio de trabajo: pasarle el proyecto es lo que hacia
-  // que guardar el primer token muriera con un error de clave foranea.
-  return crearAdaptadorLocal({ boveda, workspaceId: workspace.id });
+  return elegirProveedorDeConexiones({ boveda, workspace, entorno: process.env });
 }
 
 const AYUDA = `noxloop-service — el servicio de control: unico escritor del almacen.
@@ -137,6 +135,14 @@ Uso: noxloop-service [opciones]
   --watchdog-ms <ms>  cada cuanto se comprueba el padre (por defecto 2000)
 
 Escucha SIEMPRE en 127.0.0.1. No hay bandera para cambiarlo.
+
+Del entorno (las credenciales no van por bandera: argv queda en la tabla de
+procesos de la maquina entera):
+
+${LEE_DEL_ENTORNO.map((v) => `  ${v.nombre.padEnd(26)}${v.para}\n${" ".repeat(28)}${v.donde}`).join("\n")}
+
+Sin NOXLOOP_NANGO_SECRET_KEY se monta solo el adaptador de tokens personales,
+que no necesita contenedores. No es un error: es el camino alternativo.
 `;
 
 /**

@@ -43,6 +43,34 @@ export const CATALOGO_POR_DEFECTO = Object.freeze([
     clase: "scm",
     entorno: { access_token: "GITHUB_TOKEN" },
     api: { base: "https://api.github.com", auth: { tipo: "bearer", campo: "access_token" } },
+    // EL `repos` QUE FALTABA, Y ERA UN FINAL SIN SALIDA. Esta entrada no lo
+    // declaraba porque hasta ahora nadie podia conectarse por ella: oauth2 lo
+    // atiende el adaptador alojado, que era un hueco. Con el adaptador lleno,
+    // el operador autorizaba en su navegador, la conexion quedaba viva, y al
+    // llegar al selector de repositorios la fachada fallaba con
+    // `sin_listado_de_repositorios` — despues de haber autorizado, que es el
+    // momento en que menos se entiende.
+    //
+    // Es el MISMO bloque que `github-pat`, y eso no es duplicacion accidental:
+    // la pregunta «¿que repositorios alcanza esta conexion?» se le hace igual a
+    // la misma forja tenga detras un token personal o una autorizacion
+    // delegada. Lo que cambia es quien guarda la credencial.
+    repos: {
+      ruta: "/user/repos?per_page={por_pagina}&page={pagina}&sort=updated&affiliation=owner,collaborator,organization_member",
+      lista: null,
+      campos: {
+        id: "id",
+        nombre: "name",
+        nombre_completo: "full_name",
+        descripcion: "description",
+        privado: "private",
+        rama_por_defecto: "default_branch",
+        url_clon: "clone_url",
+        url_ssh: "ssh_url",
+        url_web: "html_url",
+        actualizado: "updated_at",
+      },
+    },
   },
   {
     // VERIFICADO: la misma forja publica DOS formas de conectarse, y la

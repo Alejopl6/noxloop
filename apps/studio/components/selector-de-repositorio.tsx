@@ -112,13 +112,21 @@ export function useConexionesDeCodigo(): {
           (respuesta.items ?? []).filter((c) => c.clase === 'scm' && c.estado === 'viva'),
         )
         // El catalogo que llega por aqui es el del adaptador MONTADO, asi que
-        // todo lo que trae se puede conectar en este servicio. Lo unico que se
-        // descarta es lo que no tiene campos que pedir: sin campos no hay
+        // todo lo que trae se puede conectar en este servicio.
+        //
+        // SE DESCARTA LO QUE NO SE PUEDE PEDIR NI AUTORIZAR, y son dos cosas
+        // distintas. Un proveedor de token personal sin campos no tiene
         // formulario que dibujar, y un boton sin formulario es el mismo fallo
-        // de antes con otro nombre.
+        // de antes con otro nombre. Pero uno de OAuth NO TIENE campos por
+        // definicion —el valor lo devuelve el proveedor al terminar la
+        // autorizacion— y el filtro anterior lo dejaba fuera siempre: con el
+        // adaptador alojado montado, la cuenta de codigo por OAuth no aparecia
+        // en el alta de proyecto aunque estuviera lista para conectarse.
         setCatalogo(
           (respuesta.catalogo ?? []).filter(
-            (e) => e.clase === 'scm' && Array.isArray(e.campos) && e.campos.length > 0,
+            (e) =>
+              e.clase === 'scm' &&
+              (e.modo === 'oauth2' || (Array.isArray(e.campos) && e.campos.length > 0)),
           ),
         )
         setError(null)
@@ -278,6 +286,12 @@ function ConectarCuentaDeCodigo({
     .filter((campo) => campo.requerido !== false)
     .filter((campo) => (valores[campo.nombre] ?? '').trim().length === 0)
 
+  // EN OAUTH NO FALTA NADA QUE RELLENAR, y por eso no se cuenta igual. El
+  // valor lo devuelve el proveedor al terminar la autorizacion; pedir campos
+  // aqui dejaria el boton apagado para siempre sobre un proveedor que se
+  // conecta pulsandolo.
+  const porOauth = elegido?.modo === 'oauth2'
+
   if (catalogo.length === 0) {
     // No se finge un formulario que no se puede mandar. Este servicio no tiene
     // ningun proveedor de codigo que sepa conectar, y eso NO lo arregla el
@@ -285,9 +299,9 @@ function ConectarCuentaDeCodigo({
     return (
       <Note tipo="advertencia" titulo="Este servicio no sabe conectar ninguna cuenta de codigo">
         El catalogo del adaptador montado no declara ningun proveedor de clase `Gestor de
-        repositorios` con campos que pedir. Mientras tanto se puede escribir la direccion del
-        repositorio a mano en el campo de abajo; el clon necesitara despues una credencial con
-        grant vigente.
+        repositorios` que se pueda conectar aqui: ni uno con campos que pedir, ni uno que se
+        autorice en el navegador. Mientras tanto se puede escribir la direccion del repositorio a
+        mano en el campo de abajo; el clon necesitara despues una credencial con grant vigente.
       </Note>
     )
   }
@@ -322,7 +336,19 @@ function ConectarCuentaDeCodigo({
 
       {elegido ? (
         <div className="flex flex-col gap-4">
-          <p className="text-label-13 text-ds-gray-1000">Lo que {elegido.nombre} necesita</p>
+          <p className="text-label-13 text-ds-gray-1000">
+            {porOauth
+              ? `${elegido.nombre} se autoriza en el navegador: no hay nada que pegar aqui`
+              : `Lo que ${elegido.nombre} necesita`}
+          </p>
+          {porOauth ? (
+            <p className="max-w-md text-copy-13 text-ds-gray-900">
+              Al pulsar, se abre tu navegador del sistema —no esta ventana: varios proveedores
+              bloquean los navegadores embebidos, y ahi no podrias comprobar en que dominio estas
+              escribiendo—. Cuando autorices, esta pantalla se entera sola y los repositorios
+              aparecen debajo.
+            </p>
+          ) : null}
           {campos.map((campo) => (
             <Campo
               key={campo.nombre}
@@ -349,13 +375,13 @@ function ConectarCuentaDeCodigo({
           <div className="flex flex-wrap items-center gap-3">
             <Button
               onClick={() => alConectar(elegido.slug, valores)}
-              disabled={conectando || faltantes.length > 0}
+              disabled={conectando || (!porOauth && faltantes.length > 0)}
             >
               {conectando ? <Spinner tamano="sm" etiqueta="Conectando la cuenta" /> : <Plug />}
               Conectar cuenta
             </Button>
             <span className="text-label-12 text-ds-gray-700">
-              {faltantes.length > 0
+              {!porOauth && faltantes.length > 0
                 ? `Falta ${faltantes.map((c) => c.etiqueta || c.nombre).join(', ')}. Nada se envia hasta que este.`
                 : 'La cuenta queda conectada para todo el espacio de trabajo, y los repositorios aparecen aqui mismo.'}
             </span>

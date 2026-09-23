@@ -804,10 +804,44 @@ export async function callbackDeConexion(p) {
   // No se espera mas porque no hace falta: cuando el navegador llega a esta
   // ruta, el proveedor YA registro la conexion. Este margen cubre el viaje
   // entre los dos, no el flujo entero.
-  const conexion = await proveedor.esperarConexion(p.parametros.id, {
-    timeoutMs: p.dep.esperaDelCallbackMs ?? 2000,
-    intervaloMs: 25,
-  });
+  // «TODAVIA NO» NO ES UN ERROR, y confundirlos pintaba la pantalla de rojo
+  // cada segundo mientras todo iba bien.
+  //
+  // EL FALLO MEDIDO contra el servicio corriendo: la pantalla abre el navegador
+  // del sistema y sonda esta misma ruta una vez por segundo mientras el
+  // operador autoriza. Cada llamada devolvia `504 espera_agotada` —«pasaron 2s
+  // y el handle sigue sin autorizar»— y la interfaz pinta todo error con causa
+  // y accion. El operador veia en rojo, parpadeando, un mensaje que ademas le
+  // decia que volviera a abrir el enlace: justo lo que no tiene que hacer.
+  //
+  // POR QUE SE ARREGLA AQUI Y NO EN LA PANTALLA. Se penso en que la pantalla
+  // ignorara ese codigo, y es peor: obliga a cada cliente a conocer un codigo
+  // de error para NO enseñarlo, y el segundo cliente que se escriba no lo va a
+  // saber. «¿Ya autorizo?» tiene tres respuestas legitimas —si, todavia no, y
+  // algo se rompio— y solo la tercera es un error.
+  //
+  // LO QUE SIGUE SIENDO ERROR: un handle que no existe y una conexion revocada
+  // mientras se esperaba. Los dos se propagan, y tienen que hacerlo — ninguno
+  // va a aparecer nunca, asi que tratarlos como «todavia no» dejaria a quien
+  // sonda girando hasta su propio limite sobre algo que ya no puede llegar.
+  let conexion;
+  try {
+    conexion = await proveedor.esperarConexion(p.parametros.id, {
+      timeoutMs: p.dep.esperaDelCallbackMs ?? 2000,
+      intervaloMs: 25,
+    });
+  } catch (e) {
+    if (e?.codigo !== "espera_agotada") throw e;
+    return {
+      cuerpo: {
+        conexion: null,
+        esperando: true,
+        // La causa viaja igual: quien sonda la necesita para decir cuanto lleva
+        // esperando, y quien depura un sondeo que no termina la necesita entera.
+        causa: e.causa,
+      },
+    };
+  }
 
   // AQUI ES DONDE LA ETAPA 06 SE CIERRA en el camino de oauth2: la fila que
   // `authorize` dejo `pendiente` pasa a `viva` —misma fila, mismo id— y con ella
@@ -855,4 +889,97 @@ export async function revocarConexion(p) {
 
   p.estado.bus.emitir("conexion.estado", { conexion_id: p.parametros.id, estado: "revocada" });
   return { cuerpo: { revocada: p.parametros.id } };
+}
+
+// ---------------------------------------------------------------------------
+// Aplicaciones OAuth — el unico paso que este producto no puede dar solo
+// ---------------------------------------------------------------------------
+//
+// POR QUE ESTAS DOS RUTAS EXISTEN. La pregunta del operador fue «¿por que debo
+// poner token? ¿no sirven las integraciones con OAuth?». La respuesta, medida
+// contra una instancia propia del servidor de integraciones: sus aplicaciones
+// OAuth compartidas viven en su nube, la tabla que las guarda se crea vacia en
+// una instancia autoalojada, y el callback de esas aplicaciones apunta a un
+// dominio que localhost no puede recibir. Registrar la aplicacion es un paso
+// del operador y no hay forma de saltarselo.
+//
+// Lo que si se puede es que sea CORTO y este guiado dentro del producto. `GET`
+// dice cuales faltan y trae, por cada una, la URL que hay que abrir y la
+// redirect URI que hay que pegar, ya calculada con el servidor que de verdad
+// esta escuchando. `POST` recibe los dos valores que el operador trae de vuelta
+// y los manda al servidor de integraciones.
+//
+// EL CLIENT SECRET ENTRA Y NO SALE. No se guarda en este servicio, no entra al
+// inventario de credenciales, y no vuelve en la respuesta del `POST`, ni en la
+// del `GET`, ni dentro de un error — el cuerpo de un error de validacion repite
+// lo que se le mando, asi que lo que viaja es el MENSAJE del servidor y no su
+// cuerpo. Hay una prueba de centinela sobre las dos rutas.
+
+/** Lo que se le pide al proveedor, y la alternativa cuando no sabe hacerlo. */
+function exigirRegistroDeAplicaciones(dep) {
+  const proveedor = exigirConexiones(dep);
+  if (typeof proveedor.aplicaciones !== "function") {
+    // NO ES UN ERROR DEL SERVICIO Y POR ESO NO ES UN 500. El adaptador `local`
+    // no tiene ninguna aplicacion OAuth que registrar: guarda tokens personales
+    // en el deposito del sistema y no abre ningun flujo de autorizacion. Un 500
+    // por un metodo que no existe mandaria a revisar el servicio; lo que pasa
+    // es que este camino no es suyo, y el que si funciona esta a un paso.
+    throw new ErrorDeServicio("pieza_ausente", {
+      pieza: "el registro de aplicaciones OAuth",
+      porque:
+        `el adaptador de conexiones montado ('${proveedor.id}') no abre flujos de autorizacion, asi que no hay ` +
+        "ninguna aplicacion OAuth que registrar.",
+      comoConseguirlo:
+        "Levanta el servidor de integraciones —`docker compose up -d` en `packages/connections/nango/`— y arranca " +
+        "el servicio con su direccion y su clave secreta. Mientras tanto, los proveedores que se conectan con un " +
+        "token personal siguen funcionando: es el camino alternativo, no un error.",
+    });
+  }
+  return proveedor;
+}
+
+/**
+ * `GET /v1/connections/oauth-apps` — que aplicaciones faltan por registrar.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function aplicacionesOauth(p) {
+  const proveedor = exigirRegistroDeAplicaciones(p.dep);
+  const { items, ...resto } = await proveedor.aplicaciones();
+  // EN EL SOBRE DE SIEMPRE, y no en un objeto suelto: el contrato dice que
+  // toda coleccion viaja como `{items, ...}` con los datos propios de la ruta
+  // JUNTO a `items`. La interfaz desenvuelve el sobre en un solo sitio; una
+  // respuesta con otra forma obliga a que esa pantalla lo haga a mano, que es
+  // el camino por el que una lista acaba llegando como `undefined`.
+  return { cuerpo: coleccion(items, {}, resto) };
+}
+
+/**
+ * `POST /v1/connections/oauth-apps` — registrar la aplicacion de un proveedor.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function registrarAplicacionOauth(p) {
+  const proveedor = exigirRegistroDeAplicaciones(p.dep);
+  const cuerpo = await p.cuerpo();
+  exigir(
+    cuerpo,
+    ["proveedor", "client_id", "client_secret"],
+    "Los dos valores salen de la pagina de la aplicacion recien creada en el proveedor: el Client ID se ve " +
+      "siempre, el Client Secret solo cuando se genera. No se guardan en este servicio.",
+  );
+
+  const aplicacion = await proveedor.registrarAplicacion({
+    slug: cuerpo.proveedor,
+    client_id: cuerpo.client_id,
+    client_secret: cuerpo.client_secret,
+    ...(cuerpo.scopes ? { scopes: cuerpo.scopes } : {}),
+  });
+
+  // El evento NO lleva los valores. Va al canal de eventos, que la pantalla
+  // escucha y que ademas se persiste: es uno de los sitios que el principio IX
+  // nombra entre los que una credencial no puede tocar.
+  p.estado.bus.emitir("conexion.estado", { proveedor: cuerpo.proveedor, estado: "aplicacion_registrada" });
+
+  return { codigo: 201, cuerpo: { aplicacion } };
 }

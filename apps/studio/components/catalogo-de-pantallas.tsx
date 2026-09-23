@@ -1715,6 +1715,10 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               cargandoCatalogo={false}
               errorDeCatalogo={null}
               adaptadorMontado="local"
+              adaptadoresMontados={['local']}
+              aplicaciones={null}
+              alRegistrarAplicacion={SIN_EFECTO}
+              esperandoAutorizacion
               ausenciaDeConexiones={null}
               busqueda=""
               alBuscar={SIN_EFECTO}
@@ -1740,6 +1744,10 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               cargandoCatalogo={false}
               errorDeCatalogo={null}
               adaptadorMontado={null}
+              adaptadoresMontados={[]}
+              aplicaciones={null}
+              alRegistrarAplicacion={SIN_EFECTO}
+              esperandoAutorizacion={false}
               ausenciaDeConexiones={{
                 porque:
                   'no hay proveedor de conexiones montado en este servicio: el adaptador se inyecta al arrancar y aqui no se eligio ninguno.',
@@ -1766,6 +1774,10 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               cargandoCatalogo
               errorDeCatalogo={null}
               adaptadorMontado={null}
+              adaptadoresMontados={[]}
+              aplicaciones={null}
+              alRegistrarAplicacion={SIN_EFECTO}
+              esperandoAutorizacion={false}
               ausenciaDeConexiones={null}
               busqueda=""
               alBuscar={SIN_EFECTO}
@@ -1787,6 +1799,10 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
               cargandoCatalogo={false}
               errorDeCatalogo={SIN_SERVICIO}
               adaptadorMontado={null}
+              adaptadoresMontados={[]}
+              aplicaciones={null}
+              alRegistrarAplicacion={SIN_EFECTO}
+              esperandoAutorizacion={false}
               ausenciaDeConexiones={null}
               busqueda=""
               alBuscar={SIN_EFECTO}

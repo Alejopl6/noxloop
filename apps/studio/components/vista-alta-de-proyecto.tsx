@@ -17,6 +17,7 @@ import { SelectorDeRepositorio, useConexionesDeCodigo } from '@/components/selec
 import { elegirCarpeta, superficieDeSeleccion, type SuperficieDeSeleccion } from '@/lib/carpeta'
 import { comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
 import { useLectura, type Lectura } from '@/lib/lectura'
+import { useAutorizacion } from '@/lib/autorizacion'
 import { useMutacion } from '@/lib/mutacion'
 import { useOpciones, useValorConPreseleccion } from '@/lib/opciones'
 import {
@@ -622,6 +623,8 @@ export function VistaDeAltaDeProyecto({ navegar }: { navegar: Navegar }) {
   // junto al boton «Crear proyecto», a cuarenta lineas de la casilla donde se
   // pego el token — y el operador leeria que fallo crear el proyecto.
   const conexion = useMutacion()
+  // El mismo recorrido que la pantalla de conexiones, y la misma implementacion.
+  const flujo = useAutorizacion(conexion)
 
   /**
    * Conectar la cuenta de codigo DEL ESPACIO DE TRABAJO, sin proyecto.
@@ -641,7 +644,18 @@ export function VistaDeAltaDeProyecto({ navegar }: { navegar: Navegar }) {
       '/v1/connections/authorize',
       { proveedor, ...(Object.keys(valores).length > 0 ? { valores } : {}) },
     )
-    if (respuesta) conexiones.releer()
+    if (!respuesta) return
+    conexiones.releer()
+
+    // EN OAUTH LA RESPUESTA NO ES LA CONEXION: es una URL, y el flujo sigue
+    // fuera de esta ventana. Sin esto, pulsar «Conectar cuenta» con un
+    // proveedor de OAuth dejaba la pantalla exactamente igual que antes —la
+    // lista se releia y seguia vacia, porque la conexion estaba `pendiente`— y
+    // no se abria ningun navegador. Un boton que no hace nada.
+    if (respuesta.url_autorizacion) {
+      await flujo.completar(respuesta)
+      conexiones.releer()
+    }
   }
 
   const crear = async (alta: AltaDeProyecto) => {
@@ -668,7 +682,7 @@ export function VistaDeAltaDeProyecto({ navegar }: { navegar: Navegar }) {
       errorDeConexiones={conexiones.error}
       catalogoDeCodigo={conexiones.catalogo}
       alConectarCuenta={(proveedor, valores) => void conectarCuenta(proveedor, valores)}
-      conectandoCuenta={conexion.trabajando}
+      conectandoCuenta={conexion.trabajando || flujo.esperando}
       errorDeConectar={conexion.error}
       alCrear={(alta) => void crear(alta)}
       trabajando={mutacion.trabajando}

@@ -14,9 +14,11 @@ import { Note } from '@/components/ui/nota'
 import { Segmentado } from '@/components/ui/segmentado'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { Encabezado, EsqueletoDeLista, FalloDeLectura } from '@/components/pantalla'
+import { RegistroDeAplicacionOauth } from '@/components/registro-de-aplicacion-oauth'
 import { abrirExterno } from '@/lib/enlace'
 import { comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
 import { useLectura } from '@/lib/lectura'
+import { useAutorizacion } from '@/lib/autorizacion'
 import { useMutacion } from '@/lib/mutacion'
 import {
   alcanceDe,
@@ -28,7 +30,9 @@ import {
   type CapacidadesDelServicio,
   type ClaseDeConexion,
   type Conexion,
+  type AplicacionOauth,
   type EntradaDeCatalogoDeConexiones,
+  type EstadoDeAplicacionesOauth,
   type EstadoDeLaConexion,
 } from '@/lib/tipos'
 import type { Navegar } from '@/lib/ruta'
@@ -143,11 +147,31 @@ const ALCANCES: Array<{
   },
 ]
 
-/** Lo que hay que hacer para que el adaptador de los flujos delegados exista. */
+/**
+ * Lo que falta cuando el adaptador de los flujos delegados NO esta montado.
+ *
+ * LO QUE HABIA AQUI Y POR QUE CAMBIO. Habia tres frases que terminaban en
+ * «Ninguna de las tres se puede hacer desde esta pantalla, y por eso no hay
+ * aqui un boton que las prometa». Era honesto y era un callejon sin salida: el
+ * operador leia lo que le faltaba y seguia igual de lejos.
+ *
+ * Ahora son DOS, no tres, y las dos son comandos que se copian. La tercera
+ * —registrar la aplicacion OAuth— dejo de estar en esta lista porque, con el
+ * adaptador montado, tiene su propio recorrido dentro del producto.
+ */
 const LO_QUE_FALTA_PARA_OAUTH = [
-  'Levantar el servidor de integraciones en esta maquina, con su base de datos y su cache.',
-  'Registrar una aplicacion OAuth PROPIA con el proveedor y declarar su direccion de retorno. Con una aplicacion compartida los permisos son fijos, autorizas a un tercero y no a noxloop, y no hay forma de llevarse los tokens despues.',
-  'Arrancar el servicio con ese adaptador montado en lugar del que guarda tokens personales.',
+  {
+    titulo: 'Levanta el servidor de integraciones',
+    detalle:
+      'Son tres contenedores —servidor, base de datos y cache— y un archivo de entorno. El puerto 3003 tiene que estar libre: es la direccion de retorno que queda registrada en cada proveedor y no se puede reasignar sobre la marcha.',
+    copiar: 'cd packages/connections/nango && cp .env.ejemplo .env && docker compose up -d',
+  },
+  {
+    titulo: 'Arranca el servicio con su direccion y su clave',
+    detalle:
+      'La clave secreta sale del panel del servidor. Va por entorno y no por bandera: los argumentos quedan a la vista en la tabla de procesos de la maquina entera.',
+    copiar: 'NOXLOOP_NANGO_SECRET_KEY=... npm run service',
+  },
 ]
 
 /* -------------------------------------------------------------------------- */
@@ -217,6 +241,22 @@ export interface PropsDePanelDeConexiones {
   errorDeCatalogo: ErrorDelServicio | null
   /** Que adaptador esta montado AQUI Y AHORA, o `null` si ninguno. */
   adaptadorMontado: string | null
+  /**
+   * TODOS los adaptadores montados.
+   *
+   * HACE FALTA DESDE QUE SON DOS. Comparar contra el principal apagaba las
+   * filas del otro —las de token personal— diciendo «lo atiende un adaptador
+   * que no esta montado» sobre uno que si lo estaba. El operador que levantaba
+   * los contenedores para usar OAuth perdia de la pantalla los tres
+   * proveedores que hasta entonces eran los unicos que funcionaban.
+   */
+  adaptadoresMontados: string[]
+  /** Que aplicaciones OAuth estan registradas, y el recorrido de las que no. */
+  aplicaciones: EstadoDeAplicacionesOauth | null
+  /** Registrar la aplicacion OAuth de un proveedor. */
+  alRegistrarAplicacion: (proveedor: string, datos: { client_id: string; client_secret: string }) => void
+  /** Lo que esta pasando mientras se espera la autorizacion en el navegador. */
+  esperandoAutorizacion: boolean
   /** Por que no hay adaptador y como conseguirlo, cuando no lo hay. */
   ausenciaDeConexiones: { porque: string; comoConseguirlo: string } | null
   cargando: boolean
@@ -244,6 +284,10 @@ export function PanelDeConexiones({
   cargandoCatalogo,
   errorDeCatalogo,
   adaptadorMontado,
+  adaptadoresMontados,
+  aplicaciones,
+  alRegistrarAplicacion,
+  esperandoAutorizacion,
   ausenciaDeConexiones,
   cargando,
   error,
@@ -316,13 +360,45 @@ export function PanelDeConexiones({
    * que va por un adaptador que no esta montado falla al pulsar, con un 404
    * que dice "el adaptador no conoce ese proveedor" y que no explica nada.
    */
-  const conectableAhora = (entrada: EntradaDeCatalogoDeConexiones) =>
+  /** ¿Ya esta registrada la aplicacion OAuth de este proveedor? */
+  const aplicacionDe = (slug: string) => aplicaciones?.items.find((a) => a.slug === slug) ?? null
+
+  /**
+   * Su adaptador esta montado AQUI Y AHORA.
+   *
+   * SE COMPARA CONTRA LA LISTA Y NO CONTRA EL PRINCIPAL, y esa es la
+   * diferencia que costaba tres proveedores: con el alojado y el local
+   * montados a la vez, comparar contra el nombre del principal apagaba todas
+   * las filas del otro.
+   */
+  const conAdaptador = (entrada: EntradaDeCatalogoDeConexiones) =>
+    entrada.adaptador !== null && adaptadoresMontados.includes(entrada.adaptador)
+
+  /**
+   * Se puede conectar pulsando, aqui y ahora.
+   *
+   * LAS DOS RAMAS SON DISTINTAS Y ANTES NO LO ERAN. Un proveedor de token
+   * personal necesita campos que rellenar; uno de OAuth no tiene NINGUNO —el
+   * valor lo devuelve el proveedor al terminar la autorizacion— y exigirle
+   * `campos.length > 0` lo dejaba fuera para siempre. Esa condicion era
+   * correcta mientras oauth2 no tuviera adaptador; con adaptador, es lo que
+   * impide conectar justo por el camino que el operador pidio.
+   *
+   * Lo que OAuth si necesita es su aplicacion registrada, y eso no apaga la
+   * fila: abre el recorrido que la registra.
+   */
+  const conectableAhora = (entrada: EntradaDeCatalogoDeConexiones) => {
+    if (!entrada.curado || !entrada.soportado || !conAdaptador(entrada)) return false
+    if (entrada.modo === 'oauth2') return aplicacionDe(entrada.slug)?.registrada === true
+    return Array.isArray(entrada.campos) && entrada.campos.length > 0
+  }
+
+  /** Falta registrar su aplicacion, y eso SI se puede hacer desde aqui. */
+  const registrableAhora = (entrada: EntradaDeCatalogoDeConexiones) =>
+    entrada.modo === 'oauth2' &&
     entrada.curado &&
-    entrada.soportado &&
-    entrada.adaptador !== null &&
-    entrada.adaptador === adaptadorMontado &&
-    Array.isArray(entrada.campos) &&
-    entrada.campos.length > 0
+    conAdaptador(entrada) &&
+    aplicacionDe(entrada.slug)?.registrada === false
 
   /** Lo que SI se puede conectar en la clase elegida, para ofrecerlo como salida. */
   const alternativas = deLaClase.filter(conectableAhora)
@@ -546,7 +622,30 @@ export function PanelDeConexiones({
               </ListaDeEntidades>
             ) : null}
 
-            {elegido && !conectableAhora(elegido) ? (
+            {/* EL RECORRIDO QUE REGISTRA LA APLICACION. Va ANTES del aviso
+                de «todavia no se puede conectar» porque, cuando aparece, ya
+                no es verdad que no se pueda hacer nada: es lo que hay que
+                hacer, y se hace aqui. */}
+            {elegido && registrableAhora(elegido) ? (
+              <RegistroDeAplicacionOauth
+                recorrido={
+                  aplicacionDe(elegido.slug)!.recorrido ?? {
+                    slug: elegido.slug,
+                    nombre: elegido.nombre,
+                    url_de_registro: elegido.url_docs ?? '',
+                    redirect_uri: aplicaciones?.redirect_uri ?? '',
+                    campos_que_devuelve: ['client_id', 'client_secret'],
+                    pasos: [],
+                  }
+                }
+                compartidas={aplicaciones?.aplicaciones_compartidas ?? null}
+                trabajando={trabajando}
+                error={errorDeMutacion}
+                alRegistrar={(datos) => alRegistrarAplicacion(elegido.slug, datos)}
+              />
+            ) : null}
+
+            {elegido && !conectableAhora(elegido) && !registrableAhora(elegido) ? (
               <Note
                 tipo="informativo"
                 titulo={`Todavia no se puede conectar ${elegido.nombre} desde aqui`}
@@ -557,22 +656,39 @@ export function PanelDeConexiones({
                       `Este proveedor se conecta por ${elegido.modo ?? 'un modo'}, que lo atiende el adaptador ${
                         elegido.adaptador ?? 'que corresponda'
                       }. ${
-                        adaptadorMontado
-                          ? `Este servicio tiene montado el adaptador ${adaptadorMontado}.`
+                        adaptadoresMontados.length > 0
+                          ? `Este servicio tiene montado ${adaptadoresMontados.join(' y ')}.`
                           : 'Este servicio no tiene ningun adaptador montado.'
                       }`}
                   </p>
                   {elegido.modo === 'oauth2' ? (
                     <>
                       <p className="text-label-13 text-ds-gray-1000">Que falta, en orden:</p>
-                      <ol className="ml-4 flex list-decimal flex-col gap-1 text-copy-13 text-ds-gray-900">
+                      <ol className="ml-4 flex list-decimal flex-col gap-3 text-copy-13 text-ds-gray-900">
                         {LO_QUE_FALTA_PARA_OAUTH.map((paso) => (
-                          <li key={paso}>{paso}</li>
+                          <li key={paso.titulo} className="flex flex-col gap-1">
+                            <span className="text-label-13 text-ds-gray-1000">{paso.titulo}</span>
+                            <span>{paso.detalle}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <code className="fuente-operativa rounded-md border border-ds-gray-400 bg-ds-gray-100 px-2 py-1 text-label-12 text-ds-gray-1000">
+                                {paso.copiar}
+                              </code>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => void navigator.clipboard?.writeText(paso.copiar)}
+                              >
+                                <Copy />
+                                Copiar
+                              </Button>
+                            </div>
+                          </li>
                         ))}
                       </ol>
                       <p className="text-label-12 text-ds-gray-700">
-                        Ninguna de las tres se puede hacer desde esta pantalla, y por eso no hay
-                        aqui un boton que las prometa.
+                        Las dos se hacen en una terminal, una sola vez. El tercer paso —registrar
+                        tu aplicacion OAuth con el proveedor— aparece aqui mismo en cuanto el
+                        servidor este levantado, con la direccion de retorno ya calculada.
                       </p>
                     </>
                   ) : null}
@@ -650,10 +766,17 @@ export function PanelDeConexiones({
             {autorizacion?.url_autorizacion ? (
               <Note tipo="informativo" titulo="El flujo de autorizacion esta abierto">
                 <div className="flex flex-col gap-2">
-                  <p>
-                    Termina la autorizacion en el navegador. Esta pantalla se entera sola
-                    cuando el proveedor conteste: no hace falta recargar.
+                  <p className="flex items-center gap-2">
+                    {esperandoAutorizacion ? <Spinner tamano="sm" etiqueta="Esperando" /> : null}
+                    {esperandoAutorizacion
+                      ? 'Se abrio tu navegador del sistema. Termina la autorizacion ahi: esta pantalla esta preguntando al servicio cada segundo y se entera sola cuando el proveedor conteste.'
+                      : 'Termina la autorizacion en el navegador. Si la pestana no se abrio, abrela con el boton de abajo.'}
                   </p>
+                  {/* POR QUE EL NAVEGADOR DEL SISTEMA Y NO ESTA VENTANA. Varios
+                      proveedores bloquean los webviews embebidos por politica, y
+                      ademas dentro del webview no hay barra de direcciones: al
+                      operador se le pide que escriba sus credenciales en una
+                      pagina cuyo dominio no puede comprobar. */}
                   <p className="fuente-operativa break-all text-label-12 text-ds-gray-900">
                     {autorizacion.url_autorizacion}
                   </p>
@@ -795,9 +918,61 @@ export function VistaDeConexiones({
   const capacidades = useLectura<CapacidadesDelServicio>('/v1/capabilities')
   const mutacion = useMutacion()
   const [autorizacion, setAutorizacion] = useState<AutorizacionDeConexion | null>(null)
+  // Abrir el navegador y sondear vive en `lib/autorizacion.ts`: el alta de
+  // proyecto hace exactamente lo mismo, y con una copia en cada pantalla la
+  // segunda se queda sin sondeo el dia que alguien toque la primera.
+  const flujo = useAutorizacion(mutacion)
 
   const conexiones = capacidades.datos?.conexiones
   const adaptadorMontado = conexiones?.valor?.adaptador ?? null
+  // LA LISTA, CON EL PRINCIPAL COMO RESPALDO. Un servicio anterior a este
+  // cambio devuelve solo `adaptador`; tratar su ausencia como «ninguno»
+  // apagaria la pantalla entera contra un servicio que funciona.
+  const adaptadoresMontados =
+    conexiones?.valor?.adaptadores ?? (adaptadorMontado ? [adaptadorMontado] : [])
+
+  /**
+   * Las aplicaciones OAuth registradas.
+   *
+   * SE PIDE SOLO SI HAY UN ADAPTADOR QUE LAS TENGA. Contra un servicio con
+   * solo el adaptador de tokens personales, esta ruta contesta 503 con su
+   * causa —correctamente: ese camino no es suyo— y pedirla igual pintaria un
+   * error en una pantalla donde no hay nada roto.
+   */
+  const aplicaciones = useLectura<AplicacionOauth[]>(
+    adaptadoresMontados.includes('nango') ? '/v1/connections/oauth-apps' : null,
+    { relerEn: EVENTOS_DE_CONEXIONES },
+  )
+
+  /**
+   * El sobre, rearmado.
+   *
+   * `useLectura` desenvuelve `items` y deja el resto en `sobre` — la direccion
+   * de retorno y la constancia de que no hay aplicaciones compartidas viven
+   * ahi. Se junta AQUI y no en el panel para que el panel reciba una sola
+   * cosa con una sola forma.
+   */
+  const estadoDeAplicaciones: EstadoDeAplicacionesOauth | null = aplicaciones.datos
+    ? ({
+        items: aplicaciones.datos,
+        ...(aplicaciones.sobre ?? {}),
+      } as EstadoDeAplicacionesOauth)
+    : null
+
+  const registrarAplicacion = async (
+    proveedor: string,
+    datos: { client_id: string; client_secret: string },
+  ) => {
+    const hecho = await mutacion.enviar('POST', '/v1/connections/oauth-apps', {
+      proveedor,
+      ...datos,
+    })
+    // EL CUERPO DE LA RESPUESTA NO SE GUARDA EN NINGUN ESTADO. Lo unico que
+    // hace falta saber es que quedo registrada, y eso se relee: el estado de
+    // React se serializa en las herramientas del navegador, y ahi no tiene
+    // nada que hacer nada que haya venido de un formulario con un secreto.
+    if (hecho) aplicaciones.releer()
+  }
 
   const autorizar = async (
     proveedor: string,
@@ -821,10 +996,14 @@ export function VistaDeConexiones({
         : `/v1/projects/${proyectoId}/connections/authorize`,
       { proveedor, ...(Object.keys(valores).length > 0 ? { valores } : {}) },
     )
-    if (respuesta) {
-      setAutorizacion(respuesta)
-      lectura.releer()
-    }
+    if (!respuesta) return
+    setAutorizacion(respuesta)
+    lectura.releer()
+    if (!respuesta.url_autorizacion) return
+
+    const conectada = await flujo.completar(respuesta)
+    if (conectada) setAutorizacion(null)
+    lectura.releer()
   }
 
   const revocar = async (conexion: Conexion) => {
@@ -840,6 +1019,10 @@ export function VistaDeConexiones({
       cargandoCatalogo={catalogo.datos === null && catalogo.error === null}
       errorDeCatalogo={catalogo.error}
       adaptadorMontado={adaptadorMontado}
+      adaptadoresMontados={adaptadoresMontados}
+      aplicaciones={estadoDeAplicaciones}
+      alRegistrarAplicacion={(proveedor, datos) => void registrarAplicacion(proveedor, datos)}
+      esperandoAutorizacion={flujo.esperando}
       ausenciaDeConexiones={
         // La ausencia se pinta SOLO cuando el servicio la declara. Antes se
         // deducia de un campo que el servicio no manda nunca —`conexiones.proveedor`
