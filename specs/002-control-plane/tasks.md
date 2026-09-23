@@ -240,8 +240,8 @@ funcione.
 
 ## Phase F: Cierre
 
-- [ ] T200 [F] `quickstart.md`: cómo se levanta y cómo se verifica, con los comandos que el CI va a correr
-- [ ] T201 [F] Actualizar `README.md` y `CHANGELOG.md`
+- [X] T200 [F] `quickstart.md`: cómo se levanta y cómo se verifica, con los comandos que el CI va a correr
+- [X] T201 [F] Actualizar `README.md` y `CHANGELOG.md`
 - [X] T202 [F] `docs/`: bóveda, conexiones y el sistema de diseño
 - [X] T203 [F] CI: los comandos que la documentación nueva manda correr, corridos — el listón que ya existe
 - [X] T204 [F] `tauri build` en las tres plataformas, en etiquetas

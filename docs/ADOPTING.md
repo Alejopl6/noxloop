@@ -505,15 +505,9 @@ mergea.
 
 El motor **no hace `git push`** de la rama del ticket, y `gh pr create` necesita
 que la rama exista en el remoto. Si no está, el paso del PR falla y el recorrido
-termina en `sin PR: no se llego a abrir`, con las tareas integradas igual en la
-rama local.
-
-Ojo con ese mensaje, porque es todo lo que vas a recibir: **el motor descarta lo
-que dijo `gh`**. El error real —el que nombra la rama que no existe en el
-remoto— se pierde entre el forge y el reporte, así que `sin PR: no se llego a
-abrir` no distingue esta causa de cualquier otra. Si el PR no se abrió, corré
-`gh pr create` a mano en el worktree de integración: ahí sí vas a leer el
-motivo.
+termina en `sin PR: <lo que dijo gh>`, con las tareas integradas igual en la
+rama local. La causa es la textual del forge, así que la rama que no existe en
+el remoto aparece nombrada en el reporte.
 
 Hasta que eso se resuelva, empujá la rama del ticket desde su worktree de
 integración antes de que el recorrido llegue al PR —o después, y volvé a correr
@@ -668,16 +662,11 @@ y el destrabado por comando (`unstick`) están los cuatro, junto con `diagnose` 
 `prune`. Lo que sigue valiendo es la regla que produjo esa lista: un comando que
 existe a medias y falla raro es peor que uno que todavía no está.
 
-Lo que queda abierto no son comandos, son los tres bordes del recorrido —nada
-publica la rama del ítem, el error del forge se pierde, y `run` no pone la rama
-del ítem al día con su base—. Están en §6, en
-[`docs/PARALLELISM.md`](PARALLELISM.md) y en el `CHANGELOG.md`, que los lista
-juntos.
-
-> **Un desfase que vas a encontrar.** `noxloop dispatch <id>` sobre una épica o
-> una feature todavía cierra con `todavia no implementado: noxloop milestone
-> (T051)`. Es un mensaje viejo que quedó en el despachador: `noxloop milestone
-> <id>` funciona. Hacele caso a `noxloop help`, no a esa línea.
+Lo que queda abierto no es un comando, es un borde del recorrido: **nada
+publica la rama del ítem**. Está en §6 y en el `CHANGELOG.md`. Los otros dos que
+se declaraban acá —el error del forge que se perdía, y `run` que no ponía la
+rama del ítem al día con su base— están cerrados, igual que el mensaje viejo de
+`dispatch` sobre una épica: ahora manda a `noxloop milestone <id>`.
 
 El plan de trabajo completo está en
 [`specs/001-parallel-ticket-orchestrator/tasks.md`](../specs/001-parallel-ticket-orchestrator/tasks.md):

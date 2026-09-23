@@ -18,30 +18,55 @@ ningún subcomando: el recorrido de un hito (`milestone`), la bandeja y el
 disparo automático (`inbox`, `daemon`), el destrabado con su nota (`unstick`),
 `diagnose` y `prune` entraron todos.
 
-Lo que **no** entra son tres bordes del recorrido, que **no** están cerrados. Se
-listan acá y no en la documentación de cada tema porque quien evalúa si corre
-esto necesita verlos juntos, antes de apuntarlo a un remoto de verdad:
+Lo que **no** entra es un borde del recorrido, que **no** está cerrado. Se
+lista acá y no en la documentación de cada tema porque quien evalúa si corre
+esto necesita verlo antes de apuntarlo a un remoto de verdad:
 
 - **Nada publica la rama del ítem.** El motor no hace `git push`, y `gh pr
   create` necesita que la rama exista en el remoto. Hay que empujarla a mano;
   `docs/ADOPTING.md` §6 tiene el comando. El límite del principio IV queda del
-  lado seguro —el motor no empuja nada—, pero el PR no se abre solo.
-- **El error del forge se pierde.** Cuando la apertura del PR falla, el
-  recorrido reporta `sin PR: no se llego a abrir` y descarta lo que dijo `gh`.
-  La causa real hay que buscarla corriendo `gh pr create` a mano.
-- **`noxloop run` no pone la rama del ítem al día con su base.** La función que
-  lo hace (`syncItemBranch`) existe y está probada, pero la llama solo
-  `milestone.mjs`: un recorrido que entra por `noxloop milestone` la aprovecha y
-  uno que entra por `noxloop run <historia>` no. Sobre un ítem cuyo worktree
-  quedó de un recorrido anterior, las tareas rebasan sobre una base vieja — que
-  es justo el fallo que la cola de integración existe para evitar. El remedio
-  manual está en `docs/PARALLELISM.md`.
-- **`noxloop dispatch` sobre una épica manda a un comando que ya existe.**
-  Cierra con `todavia no implementado: noxloop milestone (T051)`, un mensaje que
-  quedó en el despachador cuando `milestone` entró. `noxloop milestone <id>`
-  funciona; la línea miente.
+  lado seguro —el motor no empuja nada—, pero el PR no se abre solo. Lo que sí
+  cambió: la causa textual del forge ahora llega al reporte (ver *Corregido*).
+
+Y dos cierres del plano de control que necesitan una persona y no código:
+registrar las aplicaciones OAuth propias en cada proveedor (T156), y el
+recorrido a mano de SC-001 sobre un repositorio real (la mitad manual de T205).
 
 ### Añadido
+
+- **El plano de control: una aplicación que lleva un repositorio hasta
+  `ACTIVE`.** Escritorio con Tauri y la misma interfaz en el navegador, sobre un
+  servicio local que escucha solo en `127.0.0.1`, pide token de sesión y es el
+  único escritor de su almacén. El alta recorre siete etapas —escaneo,
+  constitución, guidelines, diseño, bootstrap, conexiones, flota— y cada una
+  tiene su guarda en el almacén: un proyecto no avanza porque la pantalla lo
+  diga. Lanzar un ciclo sobre un proyecto que no está `ACTIVE` devuelve 409
+  **nombrando la etapa que falta**. Cómo se levanta y se verifica cada pieza, en
+  `specs/002-control-plane/quickstart.md`.
+- **Un scanner que no escribe.** Lee el repositorio y devuelve hallazgos con su
+  evidencia; lo que no puede probar no lo declara detectado. Un paso propio del
+  CI comprueba que `git status --porcelain` queda vacío después de escanear.
+- **La bóveda.** Credenciales con grants por proyecto y vigencia, un redactor
+  que busca por valor y reemplaza por `[redactado:<nombre>]`, auditoría
+  append-only con hash encadenado, y un subproceso que recibe **exactamente** el
+  entorno declarado. Ningún valor viaja por `argv`, y un centinela plantado como
+  credencial no aparece en ninguna respuesta de ningún endpoint, errores
+  incluidos: se prueba en cada commit.
+- **Conexiones con OAuth, sin perder el token personal.** Dos adaptadores
+  montados a la vez y repartidos por el modo que declara el catálogo: Nango
+  autoalojado para los flujos de autorización y el adaptador local para tokens
+  personales y claves de API, que no necesita contenedores. La autorización se
+  abre en el navegador del sistema y la pantalla sondea hasta que la conexión
+  aparece. El registro de la aplicación OAuth propia viene guiado en cuatro
+  pasos, porque en una instancia autoalojada no hay aplicaciones compartidas
+  —medido contra Nango 0.71.10—.
+- **La flota y los adaptadores de agente.** Un contrato `AgentAdapter` con su
+  suite, y tres adaptadores: Claude Agent SDK, Codex y `fake`. El de Codex
+  entró sin tocar `driver.mjs`, que era la prueba de que el contrato estaba
+  bien. El revisor nunca retoma la sesión del implementador, y activar una flota
+  cuyo revisor comparte runtime con el implementador se rechaza.
+- **La bandeja como único elemento accionable** de la pantalla de inicio, con la
+  causa textual completa y el estado "bandeja vacía" dicho como tal.
 
 - **El recorrido completo de un ticket a un pull request.** `noxloop plan <id>`
   planifica y para —es el único punto de aprobación humana del flujo— y
@@ -189,7 +214,24 @@ esto necesita verlos juntos, antes de apuntarlo a un remoto de verdad:
 
 ### Corregido
 
-Todo esto se corrigió antes de publicar. Se lista porque cada punto es una
+- **Un run lanzado por el CLI no aparecía en los runs de su proyecto.** El
+  motor no sabe de qué proyecto es un run, y las tareas no llevaban la ruta de
+  su repositorio, así que `GET /v1/projects/:id/runs` devolvía vacío para un run
+  de verdad. Era la última costura que el recorrido de punta a punta cruzaba a
+  mano. El planner copia ahora la ruta de la configuración en cada tarea.
+- **El error del forge se perdía.** Cuando la apertura del PR fallaba, el
+  recorrido reportaba `sin PR: no se llego a abrir` y descartaba lo que dijo
+  `gh`. Ahora la causa textual viaja en el resultado.
+- **`noxloop run` no ponía la rama del ítem al día con su base.** Solo lo hacía
+  `milestone`; un recorrido que entraba por `run` rebasaba las tareas sobre una
+  base vieja. Ahora los dos llaman a `syncItemBranch`.
+- **`noxloop dispatch` sobre una épica decía que `milestone` no existía**, con
+  un mensaje que había quedado de antes de que existiera.
+- **La plantilla del compose de Nango no viajaba en el repositorio.**
+  `docs/CONEXIONES.md` manda copiar `.env.ejemplo`, y `.gitignore` lo ignoraba:
+  en un clon limpio el primer paso fallaba.
+
+Todo lo que sigue se corrigió antes de publicar. Se lista porque cada punto es una
 garantía que el proyecto afirma y que en algún momento no cumplía — y porque
 saber qué se rompió una vez es lo que evita "arreglar" la restricción que lo
 impide.

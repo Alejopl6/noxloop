@@ -193,8 +193,10 @@ jobs:
           # Con seis paquetes mas, la doc de la boveda o la del scanner podia
           # citar un test renombrado y este paso seguia verde: cubria una
           # septima parte del repositorio creyendo que lo cubria entero.
+          # Los quickstart de cada spec tambien: son la receta de "como se
+          # verifica" de cada feature, y el de 002 manda correr tests por nombre.
           grep -horE 'node --test packages/[a-z-]+/test/[A-Za-z0-9_.-]+\.test\.mjs' \
-            docs/*.md README.md CONTRIBUTING.md | sort -u > comandos-doc.txt
+            docs/*.md README.md CONTRIBUTING.md specs/*/quickstart.md | sort -u > comandos-doc.txt
           if [ ! -s comandos-doc.txt ]; then
             echo '::error::ninguna doc dice como verificar nada: los bloques "Como se verifica" desaparecieron'
             exit 1

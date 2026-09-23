@@ -92,7 +92,7 @@ Dos asimetrías declaradas, para que nadie las descubra leyendo el código:
   mecanismo. Dos integraciones simultáneas sobre la misma rama son el problema
   que la cola resuelve.
 
-### Poner la rama del ítem al día: la pieza existe y `run` no la usa
+### Poner la rama del ítem al día antes de empezar
 
 `merge-queue.mjs` exporta `syncItemBranch`, que rebasa la rama del ítem sobre su
 base antes de que empiece cualquier tarea. El motivo es de costo: arrancar sobre
@@ -100,17 +100,14 @@ una base vieja significa que cada tarea va a rebasar contra algo que ya cambió,
 el conflicto aparece al integrar —cuando ya hay catorce ramas— en vez de al
 empezar, cuando no hay ninguna.
 
-**Hoy `noxloop run` no la llama.** El único importador es `milestone.mjs`, así
-que la rama se pone al día cuando el recorrido entra por `noxloop milestone` y
-**no** cuando entra por `noxloop run <historia>`. Lo que hace `run` es crear el
-worktree del ítem desde la base **la primera vez** (`makeResolve`, en
-`wiring.mjs`) y nada más: si ese worktree ya existe de un recorrido anterior, la
-rama del ítem se queda donde quedó, y las tareas de hoy rebasan sobre la base de
-entonces.
+La llaman los dos caminos: `milestone.mjs` para cada historia del hito y
+`driver.mjs` al empezar un `noxloop run`. Durante un tiempo solo la llamaba el
+hito, y un `run` sobre un ítem cuyo worktree venía de un recorrido anterior
+rebasaba las tareas sobre la base de entonces.
 
-Se declara porque es exactamente el fallo que la función existe para evitar, y
-porque el borde tiene una forma concreta de evitarse a mano: antes de un `run`
-sobre un ítem viejo, poné la rama al día en su propio worktree.
+Si la rama del ítem conflictúa con su base, **no se fuerza**: el recorrido lo
+avisa y sigue, porque resolver ese conflicto es una decisión humana. Se resuelve
+a mano en el worktree del ítem:
 
 ```bash
 git -C "$NOXLOOP_HOME/worktrees/<repo>/item-<id>" fetch origin <base>
