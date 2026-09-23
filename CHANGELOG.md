@@ -227,6 +227,9 @@ recorrido a mano de SC-001 sobre un repositorio real (la mitad manual de T205).
   base vieja. Ahora los dos llaman a `syncItemBranch`.
 - **`noxloop dispatch` sobre una épica decía que `milestone` no existía**, con
   un mensaje que había quedado de antes de que existiera.
+- **El alta de un proyecto con una ruta relativa lo creaba donde corriera el
+  servicio.** Con `npm run service`, dentro del propio repositorio de noxloop.
+  Ahora se rechaza con `ruta_relativa` y la ruta absoluta sugerida.
 - **La plantilla del compose de Nango no viajaba en el repositorio.**
   `docs/CONEXIONES.md` manda copiar `.env.ejemplo`, y `.gitignore` lo ignoraba:
   en un clon limpio el primer paso fallaba.
