@@ -19,6 +19,9 @@ next-env.d.ts
 .env
 .env.*
 !.env.example
+# La plantilla del compose de Nango. `docs/CONEXIONES.md` manda copiarla, y sin
+# esta linea no viajaba en el repositorio: el primer paso fallaba en un clon limpio.
+!.env.ejemplo
 .DS_Store
 Thumbs.db
 *.tmp
