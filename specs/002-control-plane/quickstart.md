@@ -179,6 +179,58 @@ evidencia en `Contents/Resources/app/packages/engine/package.json`. Y
 `Contents/MacOS/noxloop-service Contents/Resources/app/packages/engine/bin/noxloop.mjs help`
 sale con 0.
 
+### El `.dmg` universal del release (spec 004, FR-009)
+
+Es el que publica `.github/workflows/release.yml` con un tag `v*` (la versión
+de `tauri.conf.json` tiene que coincidir con el tag). A mano, en un Mac con
+Apple Silicon:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+rustup target add x86_64-apple-darwin          # solo el target de compilación
+eval "$(apps/desktop/scripts/node-universal.sh 22.23.3 /tmp/node-universal | grep '^NOXLOOP_' | sed 's/^/export /')"
+cd apps/desktop
+CI=true npx tauri build --target universal-apple-darwin --bundles dmg
+```
+
+- `node-universal.sh` baja los dos Node oficiales (darwin-arm64 y darwin-x64)
+  de nodejs.org, los verifica contra `SHASUMS256.txt` y los une con
+  `lipo -create`.
+- `preparar-sidecar.mjs` con el triple `universal-apple-darwin` deja **tres**
+  sidecars (uno por arquitectura, que `tauri-build` exige al compilar cada una,
+  y el universal que va al `.app`) y, como `beforeBundleCommand`, une además el
+  llavero con `lipo`: la CLI de Tauri solo une el binario principal y sin esto
+  el bundle falla con `noxloop-llavero does not exist`.
+- `CI=true` hace que `bundle_dmg.sh` se salte la maquetación de Finder por
+  AppleScript, que falla sin sesión gráfica con permisos (ver arriba). En
+  GitHub Actions ya está puesta.
+
+Sale `apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/noxloop_<version>_universal.dmg`
+(~90 MB; el `.app`, ~280 MB: dos runtimes de Node).
+
+**Se espera**: `lipo -info` sobre cada binario de `Contents/MacOS/`
+(`noxloop-desktop`, `noxloop-service`, `noxloop-llavero`) dice `x86_64 arm64`;
+y la app arranca su servicio (`NOXLOOP_READY` en la salida) tanto con
+`arch -arm64 …/noxloop-desktop` como con `arch -x86_64 …/noxloop-desktop`
+(Rosetta), con los dos procesos en `X86-64 (translated)` según `vmmap`.
+
+### Abrir en el editor y el badge del Dock (spec 004, FR-007 y FR-008)
+
+Con la app de escritorio abierta y un run con tareas:
+
+1. En el detalle del run, abre una tarea: cada archivo del diff (salvo los
+   borrados) tiene «Abrir en el editor», y los números de línea del lado nuevo
+   son pulsables. Abre el archivo **del worktree de la tarea** en esa línea en
+   el primer editor detectado (VS Code, Cursor, Zed, Sublime Text; por bundle
+   en `/Applications` o `~/Applications`, o por CLI en el `PATH`). Sin editor
+   detectado, o en la interfaz web, el botón no aparece.
+2. La cáscara solo abre archivos que, resueltos los enlaces simbólicos, estén
+   dentro de `<home de noxloop>/worktrees/`; cualquier otra ruta que mande el
+   webview se rechaza con su causa. Lo prueban los tests de
+   `src-tauri/src/editor.rs` (`cargo test --lib`).
+3. Con dos entradas en «te necesitan», el icono del Dock muestra `2`; al
+   resolverlas baja, y en `0` desaparece.
+
 ---
 
 ## Escenario 7 — Conectar un proveedor por OAuth

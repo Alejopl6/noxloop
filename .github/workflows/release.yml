@@ -1,0 +1,164 @@
+name: release
+
+# El release de noxloop para macOS (FR-009): con un tag `v*`, un `.dmg`
+# UNIVERSAL (Apple Silicon e Intel en el mismo `.app`), su `.sha256` y las
+# instrucciones de instalacion, publicado como GitHub Release.
+#
+# POR QUE UNIVERSAL Y NO DOS DMG. El operador no tiene que saber que chip tiene
+# para descargar lo correcto; y el sidecar —el runtime de Node que ejecuta el
+# servicio— se une con `lipo` igual que el binario de la app, asi que el `.app`
+# arranca su servicio en las dos arquitecturas.
+#
+# SIN FIRMA NI NOTARIZACION todavia: Gatekeeper pone el `.app` en cuarentena y
+# el README documenta `xattr -dr com.apple.quarantine`. Se dice en las notas del
+# release en vez de dejar que el operador lo descubra.
+#
+# `escritorio.yml` sigue empaquetando por plataforma (Linux, Windows, y macOS
+# por arquitectura) como artefactos del workflow; este es el que publica.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag ya existente a publicar (p. ej. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # La MISMA version para las dos arquitecturas: un universal con dos Node
+  # distintos tendria un comportamiento distinto segun el chip.
+  NODE_SIDECAR_VERSION: "22.23.3"
+  OBJETIVO: universal-apple-darwin
+
+jobs:
+  dmg-universal:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: tag y version coinciden
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "El tag $TAG no coincide con la version de tauri.conf.json ($VERSION)." >&2
+            echo "Sube la version en apps/desktop/src-tauri/tauri.conf.json antes de etiquetar." >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: npm ci
+
+      # Los dos Node oficiales de nodejs.org, verificados contra SHASUMS256.txt
+      # y unidos con `lipo`. Ver el script para el por que de cada paso.
+      - name: Node universal para el sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          apps/desktop/scripts/node-universal.sh "$NODE_SIDECAR_VERSION" "$RUNNER_TEMP/node" \
+            | grep '^NOXLOOP_SIDECAR_NODE_' >> "$GITHUB_ENV"
+
+      # Deja los tres sidecars: uno por arquitectura (los exige `tauri-build`
+      # al compilar cada una) y el universal (el que va al `.app`).
+      - name: preparar el sidecar universal
+        env:
+          TAURI_ENV_TARGET_TRIPLE: ${{ env.OBJETIVO }}
+        run: node apps/desktop/scripts/preparar-sidecar.mjs
+
+      - name: empaquetar el dmg universal
+        working-directory: apps/desktop
+        run: npx tauri build --target "$OBJETIVO" --bundles dmg
+
+      # Lo que el tag promete: las dos arquitecturas en CADA binario del `.app`
+      # (la app, el llavero y el sidecar) y el servicio arrancando fuera del
+      # repositorio con el Node empaquetado, en arm64 y bajo Rosetta en x86_64.
+      - name: el .app es universal y funciona sin el repositorio
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE="apps/desktop/src-tauri/target/$OBJETIVO/release/bundle"
+          AISLADA="$RUNNER_TEMP/instalada"
+          mkdir -p "$AISLADA" && cp -R "$BUNDLE/macos/noxloop.app" "$AISLADA/"
+          C="$AISLADA/noxloop.app/Contents"
+          for bin in "$C"/MacOS/*; do
+            archs="$(lipo -archs "$bin")"
+            echo "$(basename "$bin"): $archs"
+            case "$archs" in
+              *arm64*x86_64*|*x86_64*arm64*) ;;
+              *) echo "$bin no es universal ($archs)" >&2; exit 1 ;;
+            esac
+          done
+          test -x "$C/MacOS/noxloop-llavero"
+          test -f "$C/Resources/app/packages/service/bin/noxloop-service.mjs"
+          cd "$RUNNER_TEMP"
+          arch -arm64 "$C/MacOS/noxloop-service" "$C/Resources/app/packages/engine/bin/noxloop.mjs" help > /dev/null
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 "$C/MacOS/noxloop-service" "$C/Resources/app/packages/engine/bin/noxloop.mjs" help > /dev/null
+          else
+            echo "::warning::Sin Rosetta en el runner: la mitad x86_64 se comprobo con lipo, no ejecutandola."
+          fi
+
+      - name: dmg y su sha256
+        id: activos
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "apps/desktop/src-tauri/target/$OBJETIVO/release/bundle/dmg"
+          DMG="$(ls *.dmg)"
+          test "$(echo "$DMG" | wc -l)" -eq 1
+          # Nombre relativo dentro del .sha256: asi `shasum -a 256 -c` funciona
+          # en la carpeta de descargas del operador.
+          shasum -a 256 "$DMG" > "$DMG.sha256"
+          cat "$DMG.sha256"
+          echo "dir=$PWD" >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: publicar el release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          DIR: ${{ steps.activos.outputs.dir }}
+          DMG: ${{ steps.activos.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/notas.md" <<EOF
+          noxloop ${TAG} para macOS, universal (Apple Silicon e Intel).
+
+          ## Instalar
+
+          1. Descarga \`${DMG}\` y \`${DMG}.sha256\` en la misma carpeta.
+          2. Verifica: \`shasum -a 256 -c ${DMG}.sha256\` tiene que decir \`OK\`.
+          3. Abre el \`.dmg\` y arrastra \`noxloop.app\` a \`/Applications\`.
+          4. La app no esta firmada ni notarizada todavia; quita la cuarentena:
+             \`xattr -dr com.apple.quarantine /Applications/noxloop.app\`
+
+          Requisitos: \`git\`, y \`claude\` o \`codex\` instalados y con sesion iniciada.
+          El runtime de Node del servicio viaja dentro de la app.
+          EOF
+          gh release create "$TAG" "$DIR/$DMG" "$DIR/$DMG.sha256" \
+            --title "noxloop $TAG" \
+            --notes-file "$RUNNER_TEMP/notas.md" \
+            --verify-tag
