@@ -17,6 +17,8 @@ import { almacenDePrueba, centinela, credencialDePrueba } from "./ayuda.mjs";
 const TABLAS_ESPERADAS = [
   "agent",
   "audit_event",
+  // El orden a mano del board (spec 005, FR-005).
+  "card_order",
   "connection",
   "constitution",
   "constitution_amendment",
@@ -33,6 +35,8 @@ const TABLAS_ESPERADAS = [
   "project",
   "project_snapshot",
   "recommendation",
+  // Los ajustes del servicio (spec 005, FR-006): el limite de runs simultaneos.
+  "service_setting",
   "snapshot_finding",
   "ssh_access",
   "workspace",

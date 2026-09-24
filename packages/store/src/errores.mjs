@@ -115,6 +115,15 @@ export const CATALOGO = {
     accion: (d) => `Pasa \`${d.campo}\` explicitamente. ${d.pista || ""}`.trim(),
   },
 
+  // Spec 005 (FR-005). Un orden con el mismo item dos veces no dice donde va
+  // ese item: quedarse con la primera o con la ultima es inventar lo que el
+  // operador quiso, y el board lo pintaria en un sitio que nadie eligio.
+  orden_invalido: {
+    causa: (d) => `El orden de la columna \`${d.columna}\` no sirve: ${d.detalle}.`,
+    accion: () =>
+      "Manda la columna entera, de arriba abajo, con cada id de tarjeta una sola vez y ninguno vacio.",
+  },
+
   valor_fuera_del_enum: {
     causa: (d) => `\`${d.valor}\` no es un valor valido de \`${d.tabla}.${d.campo}\`.`,
     accion: (d) =>

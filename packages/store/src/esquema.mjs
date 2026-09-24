@@ -53,6 +53,10 @@ export const TABLAS = Object.freeze([
   "local_task",
   "local_task_comment",
   "local_task_sequence",
+  // Spec 005 (FR-005..006): el orden a mano del board y los ajustes del
+  // servicio (el limite de runs simultaneos).
+  "card_order",
+  "service_setting",
 ]);
 
 /** Los enums de `data-model.md`, en un solo sitio. */
@@ -644,6 +648,47 @@ CREATE TABLE local_task_comment (
 CREATE INDEX comentario_por_tarea ON local_task_comment(task_id, creado);
 `;
 
+// EL ORDEN A MANO Y LOS AJUSTES (spec 005, FR-005..006). Una version nueva y
+// no un retoque de la 5, por lo mismo de siempre: su huella ya esta escrita en
+// la base del operador.
+//
+// POR QUE EL ORDEN VIVE AQUI Y NO EN EL GESTOR. El operador ordena para decidir
+// que va primero EN SU PANTALLA; escribirlo en Linear o en ADO seria cambiar la
+// prioridad que ve todo su equipo porque alguien arrastro una tarjeta. Es dato
+// del servicio, por proyecto, y el gestor no se entera (principio VI).
+//
+// POR QUE LA CLAVE ES (proyecto, item) Y NO (proyecto, columna, item). Una
+// tarjeta esta en UNA columna; con la columna en la clave, una tarjeta que pasa
+// de Todo a En revision y vuelve arrastraria dos posiciones contradictorias y
+// ganaria la que nadie recuerda haber puesto. La columna se guarda para saber
+// DONDE vale la posicion: si la tarjeta ya no esta ahi, la posicion no se
+// aplica (y la siguiente vez que se ordene su columna, se reemplaza).
+//
+// `item_id` ES EL ID DEL TICKET EN EL GESTOR, texto opaco. No hay clave foranea
+// a `local_task` porque casi nunca es una tarea local: es un issue de Linear.
+// Una tarjeta que desaparece del gestor deja una fila que simplemente no casa
+// con nada; no se borra al pintar, porque pintar no escribe (SC-007).
+//
+// LOS AJUSTES, CLAVE -> JSON. Hoy es uno (`runsSimultaneos`); una tabla con una
+// columna por ajuste obligaria a una migracion por cada ajuste nuevo, y lo que
+// se guarda aqui es preferencia del operador, no una entidad con invariantes.
+const ORDEN_Y_AJUSTES_SQL = `
+CREATE TABLE card_order (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  item_id    TEXT NOT NULL CHECK (length(item_id) > 0),
+  columna    TEXT NOT NULL CHECK (length(columna) > 0),
+  posicion   INTEGER NOT NULL CHECK (posicion >= 0),
+  PRIMARY KEY (project_id, item_id)
+) STRICT;
+
+CREATE INDEX orden_por_columna ON card_order(project_id, columna, posicion);
+
+CREATE TABLE service_setting (
+  clave TEXT PRIMARY KEY CHECK (length(clave) > 0),
+  valor TEXT NOT NULL CHECK (json_valid(valor))
+) STRICT;
+`;
+
 /**
  * Las migraciones, en orden.
  *
@@ -661,4 +706,5 @@ export const MIGRACIONES = Object.freeze([
   { version: 3, nombre: "auditoria-append-only", sql: APPEND_ONLY_SQL },
   { version: 4, nombre: "conexion-del-espacio-de-trabajo", sql: CONEXION_DEL_ESPACIO_SQL },
   { version: 5, nombre: "tareas-propias", sql: TAREAS_SQL },
+  { version: 6, nombre: "orden-y-ajustes", sql: ORDEN_Y_AJUSTES_SQL },
 ]);
