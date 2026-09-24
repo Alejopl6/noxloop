@@ -66,9 +66,29 @@ const FILAS_CUBIERTAS = [
   "searchMentioned",
   "boardFields",
   "identityAssignee",
+  "listItems",
 ];
 
 const CONTRATO = new URL("../specs/001-parallel-ticket-orchestrator/contracts/provider.md", import.meta.url);
+
+/**
+ * El contrato del board (spec 003), donde nacio `listItems`.
+ *
+ * POR QUE SE LEE UN SEGUNDO CONTRATO. La degradacion de `listItems` esta
+ * declarada en `specs/003-board-de-control/contracts/board-api.md` §1 —"Sin la
+ * capacidad: `capabilities().listItems === false`..."—, que es el contrato que
+ * comparten los tres frentes de esa feature. Exigir ademas una fila en la tabla
+ * de la spec 001 duplicaria la declaracion en dos archivos que se pueden
+ * desincronizar; lo que este test necesita es que la degradacion este DICHA en
+ * algun contrato, y que tenga test. Las dos cosas se siguen verificando.
+ */
+const CONTRATO_BOARD = new URL("../specs/003-board-de-control/contracts/board-api.md", import.meta.url);
+
+/** Las capacidades cuya degradacion declara el contrato del board. */
+function degradacionesDelBoard() {
+  const md = readFileSync(CONTRATO_BOARD, "utf8");
+  return new Set([...md.matchAll(/Sin la capacidad:\s*`capabilities\(\)\.([A-Za-z]+) === false`/g)].map((m) => m[1]));
+}
 
 /** Las capacidades nombradas en la primera columna de la tabla de degradacion. */
 function filasDeLaTabla() {
@@ -83,6 +103,7 @@ function filasDeLaTabla() {
     const primera = fila.split("|")[1] || "";
     for (const m of primera.matchAll(/`([A-Za-z]+)`/g)) caps.add(m[1]);
   }
+  for (const c of degradacionesDelBoard()) caps.add(c);
   return caps;
 }
 
@@ -546,4 +567,49 @@ test("fila identityAssignee: la capacidad se puede consultar sin llamar a search
   const { mod, llamadas } = sinCapacidad("identityAssignee");
   assert.equal(mod.capabilities().identityAssignee, false);
   assert.equal(llamadas.searchInbox, 0, "decidir el camino degradado no puede costar un viaje a la API");
+});
+
+// ---------------------------------------------------------------------------
+// Fila `listItems` (spec 003, contracts/board-api.md §1): sin la capacidad, el
+// board muestra lo que el motor ya conoce del proyecto y una nota que nombra al
+// proveedor y la capacidad. Nunca un board vacio sin explicacion.
+//
+// LA MITAD QUE SE PRUEBA ACA es la del proveedor: que la ausencia se puede
+// decidir con `can()` sin un viaje a la API, que el motivo alcanza para
+// escribir la nota de la columna, y que la funcion no finge una lista vacia. La
+// otra mitad —la nota en la columna— vive en `packages/service`, que es donde
+// se arma el board.
+// ---------------------------------------------------------------------------
+
+test("fila listItems: el contrato del board declara la degradacion", () => {
+  assert.ok(degradacionesDelBoard().has("listItems"), "board-api.md §1 ya no dice que pasa sin listItems");
+});
+
+test("fila listItems: en false, can() lo dice con un motivo que alcanza para la nota de la columna", () => {
+  const g = sinCapacidad("listItems");
+  const r = can(g.mod, "listItems");
+  assert.equal(r.available, false);
+  assert.match(String(r.reason), /listItems/);
+  assert.match(String(r.reason), new RegExp(g.mod.meta.name), "la nota nombra al proveedor");
+  assert.equal(g.llamadas.listItems, 0, "decidir el camino degradado no cuesta un viaje a la API");
+});
+
+test("fila listItems: en false, listItems() no devuelve una lista vacia — lanza", async () => {
+  const g = sinCapacidad("listItems");
+  // `{items: []}` es indistinguible de "el proyecto no tiene tickets": el board
+  // quedaria vacio y sin nota, que es exactamente lo que la spec prohibe.
+  await assert.rejects(() => g.mod.listItems({}, g.fixtures.ctx), NotSupportedError);
+  assert.equal(g.tablero.escrituras, 0);
+});
+
+test("fila listItems: en true lista los tickets del gestor, y la bandeja sigue siendo la alternativa", async () => {
+  const g = gestorFalso();
+  const r = await g.mod.listItems({ limit: 10 }, g.fixtures.ctx);
+  assert.deepEqual(r.items.map((/** @type {any} */ i) => i.id).sort(), ["h1", "p1", "raro", "s1", "s2"]);
+  assert.equal(g.llamadas.listItems, 1);
+  // Lo que el board muestra en el camino degradado —lo asignado y mencionado—
+  // sigue en pie aunque listItems este apagada: apagar una no arrastra la otra.
+  const sin = sinCapacidad("listItems");
+  const bandeja = await sin.mod.searchInbox(sin.fixtures.ctx);
+  assert.equal(bandeja.assigned.length + bandeja.mentioned.length, 2);
 });

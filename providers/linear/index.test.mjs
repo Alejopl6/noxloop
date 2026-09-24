@@ -59,7 +59,7 @@ test("Linear pasa la suite de contrato entera", async (t) => {
  * Dos corridas con dos defaults distintos no las puede pasar un nivel fijo.
  */
 test("Linear pasa la suite de contrato con OTRO default declarado", async (t) => {
-  const { ctx } = nuevoCtx({ options: { levelMap: { ...MAPA_NIVELES, default: "task" } } });
+  const { ctx } = nuevoCtx({ options: { levelMap: { ...MAPA_NIVELES, default: "task" }, teamKey: "ENG" } });
   const fx = { ...fixtures, ctx, defaultLevel: "task" };
   for (const check of contractChecks(linear, fx)) {
     await t.test(check.name, async () => {
@@ -91,6 +91,8 @@ test("capabilities dice la verdad de este gestor", () => {
     searchMentioned: false,
     boardFields: true,
     identityAssignee: false,
+    // `issues(filter: { team, state.type })`: el listado del board.
+    listItems: true,
   });
 });
 
@@ -567,4 +569,101 @@ test("un state.type que choca con el prototipo de Object no se cuela como estado
   const item = await linear.getItem(IDS.historia, ctx);
   assert.equal(item.canonicalState, null, "un type que el mapa no declara no tiene equivalente canonico");
   assert.equal(validateItem(item).ok, true);
+});
+
+// ------------------------------------------------ listItems (spec 003 §1)
+
+test("listItems lista los issues abiertos del equipo, sin cancelados ni terminados", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamKey: "ENG" } });
+  const r = await linear.listItems({}, ctx);
+  assert.deepEqual(r.items.map((i) => i.key), ["ENG-100", "ENG-123", "ENG-124", "ENG-777", "ENG-666", "ENG-500", "ENG-900"]);
+  assert.equal(r.nextCursor, null);
+  assert.equal(r.total, null, "IssueConnection no expone una cuenta: null antes que inventarla");
+  assert.equal(llamadas.length, 1);
+  const f = llamadas[0].variables.listado;
+  assert.deepEqual(f.team, { key: { eq: "ENG" } });
+  assert.deepEqual(f.state.type.nin, ["completed", "canceled", "duplicate"]);
+});
+
+test("listItems filtra por teamId si esta, que es estable ante un cambio de clave", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamId: IDS.equipo, teamKey: "ENG" } });
+  await linear.listItems({}, ctx);
+  assert.deepEqual(llamadas[0].variables.listado.team, { id: { eq: IDS.equipo } });
+});
+
+test("listItems sin equipo lo dice en vez de listar el workspace entero", async () => {
+  const { ctx, llamadas } = nuevoCtx();
+  await assert.rejects(() => linear.listItems({}, ctx), /teamId|teamKey/);
+  assert.equal(llamadas.length, 0);
+});
+
+test("listItems: backlog sale del TIPO de estado de Linear, no del nombre de la columna", async () => {
+  const { ctx } = nuevoCtx({ options: { teamKey: "ENG" } });
+  const { items } = await linear.listItems({}, ctx);
+  const e = Object.fromEntries(items.map((i) => [i.key, i.canonicalState]));
+  assert.equal(e["ENG-777"], "backlog", "estado Backlog, tipo backlog");
+  assert.equal(e["ENG-123"], "todo", "tipo unstarted");
+  assert.equal(e["ENG-124"], "in_progress", "tipo started, y en el stateMap");
+  assert.equal(e["ENG-500"], "in_progress", "'Listo para QA' no esta en el mapa: cae en su tipo, started");
+});
+
+test("listItems: un stateMap que nombra un estado de revision lo manda a in_review", async () => {
+  const { ctx } = nuevoCtx({ options: { teamKey: "ENG", stateMap: { ...MAPA_ESTADOS, in_review: "Listo para QA" } } });
+  const { items } = await linear.listItems({}, ctx);
+  assert.equal(items.find((i) => i.key === "ENG-500").canonicalState, "in_review");
+});
+
+test("listItems: la prioridad de Linear se corre un lugar, y 0 es SIN prioridad, no urgente", async () => {
+  const { ctx } = nuevoCtx({ options: { teamKey: "ENG" } });
+  const { items } = await linear.listItems({}, ctx);
+  const p = Object.fromEntries(items.map((i) => [i.key, i.priority]));
+  assert.equal(p["ENG-100"], 0, "1 urgente -> 0");
+  assert.equal(p["ENG-123"], 1, "2 alta -> 1");
+  assert.equal(p["ENG-666"], 2, "3 media -> 2");
+  assert.equal(p["ENG-777"], 3, "4 baja -> 3");
+  assert.equal(p["ENG-124"], null, "0 es 'sin prioridad' en Linear: traducirlo a 0 lo volveria urgente");
+});
+
+test("listItems traduce la tarjeta: equipo por nombre, asignado con avatar, etiquetas y fecha", async () => {
+  const { ctx } = nuevoCtx({ options: { teamKey: "ENG" } });
+  const { items } = await linear.listItems({}, ctx);
+  const h = items.find((i) => i.key === "ENG-123");
+  assert.equal(h.id, IDS.historia);
+  assert.equal(h.team, "Ingeniería");
+  assert.deepEqual(h.assignee, { id: IDS.persona, name: "noxloop[bot]", avatarUrl: "https://public.linear.app/avatars/7a1e0000-bbbb.png" });
+  assert.deepEqual(h.labels, ["Story"]);
+  assert.equal(h.updatedAt, "2026-09-20T10:00:00.000Z");
+  assert.equal(h.level, "story");
+  assert.equal(items.find((i) => i.key === "ENG-124").assignee, null);
+});
+
+test("listItems pagina con el cursor de Linear y no pide de mas", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamKey: "ENG" } });
+  const p1 = await linear.listItems({ limit: 4 }, ctx);
+  assert.equal(p1.items.length, 4);
+  assert.equal(llamadas[0].variables.first, 4, "pide exactamente lo que falta: sin sobrante que se pierda");
+  assert.equal(typeof p1.nextCursor, "string");
+  const p2 = await linear.listItems({ limit: 4, cursor: p1.nextCursor }, ctx);
+  assert.equal(llamadas[1].variables.after, p1.nextCursor);
+  assert.deepEqual([...p1.items, ...p2.items].map((i) => i.key), ["ENG-100", "ENG-123", "ENG-124", "ENG-777", "ENG-666", "ENG-500", "ENG-900"]);
+  assert.equal(p2.nextCursor, null);
+});
+
+test("listItems con includeDone trae los terminados en done, y los cancelados siguen fuera", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamKey: "ENG" } });
+  const { items } = await linear.listItems({ includeDone: true }, ctx);
+  assert.deepEqual(llamadas[0].variables.listado.state.type.nin, ["canceled", "duplicate"]);
+  assert.equal(items.find((i) => i.key === "ENG-50").canonicalState, "done");
+  assert.ok(!items.some((i) => i.key === "ENG-321"), "cancelado no es hecho");
+});
+
+test("listItems saltea un nodo null o sin id y lo anota, en vez de reventar", async () => {
+  const avisos = [];
+  const { ctx } = ctxRoto(() => ({
+    data: { issues: { nodes: [null, { title: "sin id" }], pageInfo: { hasNextPage: false, endCursor: null } } },
+  }), { teamKey: "ENG" });
+  ctx.log = { info() {}, warn: (m) => avisos.push(m), error() {} };
+  const r = await linear.listItems({}, ctx);
+  assert.deepEqual(r.items, []);
+  assert.equal(avisos.length, 2);
 });
