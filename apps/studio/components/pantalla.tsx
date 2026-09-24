@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/esqueleto'
-import { useDentroDelAsistente, useHayMigas } from '@/components/marco/contexto'
+import { useDentroDeAjustes, useDentroDelAsistente, useHayMigas } from '@/components/marco/contexto'
 import { cn } from '@/lib/utils'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import type { Lectura } from '@/lib/lectura'
@@ -63,7 +63,14 @@ export function Encabezado({
   // Dentro del recorrido guiado, el `<h1>` de la pagina es el titulo del paso
   // y este encabezado es la seccion de dentro. La explicacion entera, con el
   // fallo que se vio en el HTML generado, esta en `marco/contexto.tsx`.
-  const enAsistente = useDentroDelAsistente()
+  // Lo mismo dentro de Settings, donde el `<h1>` es el de Settings y la vista
+  // es una pestana (ver `marco/contexto.tsx`).
+  // Los dos hooks se llaman SIEMPRE y despues se combinan: con `||` el
+  // segundo dejaria de llamarse cuando el primero es cierto, y el orden de
+  // hooks cambiaria entre renders.
+  const dentroDelAsistente = useDentroDelAsistente()
+  const dentroDeAjustes = useDentroDeAjustes()
+  const enAsistente = dentroDelAsistente || dentroDeAjustes
   const Titulo = enAsistente ? 'h2' : 'h1'
 
   return (

@@ -21,6 +21,9 @@
  * @property {boolean} effort acepta un nivel de esfuerzo
  * @property {boolean} hooks puede correr hooks dentro de su subproceso
  * @property {string[]|'desconocido'} models modelos que expone, si los enumera
+ * @property {boolean} [comandos] entiende los comandos del plugin (`/noxloop-task ...`) como
+ *   comandos. OPCIONAL: su ausencia es «no se sabe», y el motor entonces le manda el texto
+ *   expandido en vez del nombre del comando. Ver `CAPACIDADES_OPCIONALES`.
  */
 
 /**
@@ -60,6 +63,8 @@
  * @typedef {object} AgentAdapter
  * @property {string} id identificador estable; es lo que guarda `Agent.runtime`
  * @property {string[]} [requiredEnv] las variables que este runtime necesita recibir en `env`
+ * @property {string[]} [sessionEnv] variables NO secretas sin las que su sesion local no se encuentra
+ *   (`HOME`, `USER`, `CODEX_HOME`...); viajan en `env` pero no cuentan como secretos
  * @property {() => AdapterCapabilities} capabilities
  * @property {() => Promise<{ok: boolean, causa?: string, accion?: string}>} preflight
  * @property {(req: PhaseRequest, opts?: {signal?: AbortSignal}) => Promise<PhaseResult>} runPhase
@@ -67,6 +72,26 @@
 
 /** @type {readonly string[]} */
 export const CLAVES_DE_CAPACIDAD = Object.freeze(["resume", "cost", "effort", "hooks", "models"]);
+
+/**
+ * Las capacidades que un adaptador PUEDE declarar y no esta obligado a hacerlo.
+ *
+ * `comandos` dice si el runtime entiende `/noxloop-task <item> <tarea> --phase
+ * X` como un comando —el plugin de Claude Code lo expande al texto de
+ * `packages/plugin/commands/noxloop-task.md`— o si recibiria esa linea como
+ * texto sin significado. El motor la consulta para decidir si manda el comando
+ * o su texto expandido (`packages/engine/src/comandos-sin-plugin.mjs`).
+ *
+ * POR QUE OPCIONAL Y NO OBLIGATORIA como las cinco de arriba. Porque llego
+ * despues, y hacerla obligatoria rompe el registro de cada doble de prueba que
+ * ya declara las cinco sin que ninguno este mintiendo. Lo que no se admite es
+ * declararla MAL. Y su ausencia se lee del lado seguro: «no se sabe» expande,
+ * porque mandar el texto a quien entendia el comando cuesta tokens, y mandar el
+ * comando a quien no lo entiende cuesta la fase entera.
+ *
+ * @type {readonly string[]}
+ */
+export const CAPACIDADES_OPCIONALES = Object.freeze(["comandos"]);
 
 /**
  * Las fases que son una REVISION.
@@ -107,6 +132,26 @@ export function validarAdaptador(adaptador) {
     if (!bien) problems.push("requiredEnv: tiene que ser una lista de nombres de variable (strings no vacios)");
   }
 
+  // `sessionEnv`, lo mismo para lo que NO es secreto: donde vive la sesion
+  // local del runtime. Va aparte porque las de `requiredEnv` entran en la
+  // guarda de argv y estas no pueden: `HOME` es prefijo de casi cualquier ruta.
+  // Por eso ningun nombre puede estar en las dos listas — seria declarar a la
+  // vez que una variable es secreta y que no lo es, y la guarda elegiria una.
+  if (adaptador.sessionEnv != null) {
+    const bien = Array.isArray(adaptador.sessionEnv)
+      && adaptador.sessionEnv.every((/** @type {any} */ x) => typeof x === "string" && x);
+    if (!bien) {
+      problems.push("sessionEnv: tiene que ser una lista de nombres de variable (strings no vacios)");
+    } else if (Array.isArray(adaptador.requiredEnv)) {
+      const cruce = adaptador.sessionEnv.filter((/** @type {string} */ n) => adaptador.requiredEnv.includes(n));
+      if (cruce.length) {
+        problems.push(
+          `sessionEnv y requiredEnv comparten ${cruce.join(", ")}: una variable es secreta o no lo es, no las dos cosas`,
+        );
+      }
+    }
+  }
+
   for (const fn of ["capabilities", "preflight", "runPhase"]) {
     if (typeof adaptador[fn] !== "function") problems.push(`falta \`${fn}()\``);
   }
@@ -117,9 +162,11 @@ export function validarAdaptador(adaptador) {
     if (!(k in caps)) problems.push(`capabilities() no declara "${k}" (hay que declararla, aunque sea false)`);
   }
   for (const k of Object.keys(caps)) {
-    if (!CLAVES_DE_CAPACIDAD.includes(k)) problems.push(`capabilities() declara "${k}", que no es una capacidad conocida`);
+    if (!CLAVES_DE_CAPACIDAD.includes(k) && !CAPACIDADES_OPCIONALES.includes(k)) {
+      problems.push(`capabilities() declara "${k}", que no es una capacidad conocida`);
+    }
   }
-  for (const k of ["resume", "cost", "effort", "hooks"]) {
+  for (const k of ["resume", "cost", "effort", "hooks", ...CAPACIDADES_OPCIONALES]) {
     if (k in caps && typeof caps[k] !== "boolean") problems.push(`capabilities().${k} tiene que ser boolean`);
   }
   if ("models" in caps) {

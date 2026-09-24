@@ -81,8 +81,10 @@ export function runtimeSinHooksParaImplementador(runtime, nombre) {
   return new ErrorDeAdaptador(
     "runtime_sin_hooks_para_implementador",
     `El agente \`${nombre}\` tiene rol \`implementador\` sobre el runtime \`${runtime}\`, que declara ` +
-      "`hooks: false`. Los hooks del paso RED y del limite de autonomia corren DENTRO del subproceso del " +
-      "runtime; sin ellos, el principio I depende de que el prompt se acuerde, y ya esta medido que un prompt " +
+      "`hooks: false`, y este camino lo correria FUERA del motor, sin la guarda posterior con la que el motor " +
+      "sostiene el TDD de un runtime sin hooks. Los hooks del paso RED y del limite de autonomia corren DENTRO " +
+      "del subproceso del runtime; sin ellos ni esa guarda, el principio I depende de que el prompt se acuerde, " +
+      "y ya esta medido que un prompt " +
       "que pide TDD funciona en las dos primeras iteraciones y deja de funcionar en la tercera. Un hook no se " +
       "cansa; un recordatorio si.",
     `Usa para implementar un runtime que declare \`hooks: true\`, y deja \`${runtime}\` para revisar, ` +

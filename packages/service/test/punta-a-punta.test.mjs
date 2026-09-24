@@ -625,14 +625,26 @@ test("T196 y T205 — de un repositorio de verdad a un PR abierto, sin editar un
     );
 
     // ---- 7. el ciclo: de ticket a PR abierto -------------------------------
-    // Hasta aqui llega lo que el servicio puede hacer solo: `POST /runs` sobre
-    // un proyecto ACTIVE contesta `pieza_ausente` DICIENDOLO, en vez de
-    // devolver un `run_id` inventado que la interfaz pintaria en curso.
+    // Desde la spec 003 `POST /runs` ARRANCA el motor, asi que ya no contesta
+    // `pieza_ausente`: sin `itemId` contesta 400 nombrando el campo, que es la
+    // prueba de que la ruta paso de declarar el hueco a lanzar.
     const lanzar = await POST(`/v1/projects/${proyecto.id}/runs`, {});
-    assert.equal(lanzar.status >= 400, true, JSON.stringify(lanzar.cuerpo));
-    assert.equal(lanzar.cuerpo.error.codigo, "pieza_ausente");
-    assert.match(lanzar.cuerpo.error.causa, /ACTIVE/, "el proyecto esta listo y la respuesta tiene que decirlo");
-    assert.match(lanzar.cuerpo.error.accion, /home/, "la accion tiene que decir sobre que home lanzar el motor");
+    assert.equal(lanzar.status, 400, JSON.stringify(lanzar.cuerpo));
+    assert.equal(lanzar.cuerpo.error.codigo, "cuerpo_invalido");
+    assert.match(lanzar.cuerpo.error.causa, /itemId/, "el 400 tiene que nombrar el campo que falta");
+
+    // Y EL PUENTE PROYECTO-MOTOR COMPONE LA CONFIGURACION DE ESTE PROYECTO desde
+    // lo que el recorrido dejo en el almacen: el remoto del repositorio, el
+    // runner que el snapshot detecto y la conexion tracker del adaptador falso.
+    // El ciclo de abajo sigue corriendo el motor EN PROCESO con la config armada
+    // a mano, porque es lo unico que deja inyectar el modelo; el recorrido por
+    // subproceso lo hace `lanzar-motor-real.test.mjs`.
+    const { prepararMotor } = await import("../src/motor.mjs");
+    const compuesta = await prepararMotor(svc.dep, svc.dep.almacen.proyectos.porId(proyecto.id), { home: svc.home });
+    assert.equal(compuesta.config.provider.name, "fake", "el tracker del adaptador falso va al proveedor falso del motor");
+    assert.equal(compuesta.config.home, svc.home);
+    assert.equal(Object.values(compuesta.config.repos)[0].remote, org.remoto, "el remoto sale del `origin` del repositorio");
+    assert.equal(Object.values(compuesta.config.repos)[0].gate, "npm test", "el gate sale del runner del snapshot");
 
     const adaptadorDeAgente = crearAdaptadorFake();
     const preflight = await adaptadorDeAgente.preflight();

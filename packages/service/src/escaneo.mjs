@@ -172,11 +172,51 @@ function guardarSnapshot(dep, proyecto, snapshotId, resultado, punto) {
 /** @param {import("./rutas.mjs").Peticion} p */
 export async function arrancarEscaneo(p) {
   const proyecto = exigirProyecto(p.dep, p.parametros.id);
+  const { snapshotId, punto } = lanzarEscaneo(p.dep, p.estado.bus, proyecto);
+
+  return {
+    codigo: 202,
+    cuerpo: {
+      snapshot_id: snapshotId,
+      // El punto se declara aqui y no cuando termina: si el repositorio no
+      // tiene commit, quien lanzo el escaneo tiene que saberlo ANTES de basar
+      // una constitution en el.
+      commit: punto.commit,
+      commit_motivo: punto.motivo,
+      progreso: "por el canal de eventos: scan.progreso, scan.hallazgo, scan.terminado, scan.cancelado",
+    },
+  };
+}
+
+/**
+ * Arranca un recorrido en su hilo y devuelve YA, con una promesa de su final.
+ *
+ * POR QUE `fin` EXISTE. `POST /scan` no espera al snapshot, y tiene sus
+ * razones (ver la cabecera). El modo rapido (US8) si necesita esperarlo: es
+ * una sola decision del operador que recorre las cinco etapas, y la segunda
+ * necesita el snapshot de la primera. Esperar la promesa NO congela el
+ * servicio —el recorrido sigue en su hilo y el bucle queda libre para las
+ * demas ventanas y para el `DELETE /v1/scans/:id`—, y los eventos del canal
+ * salen igual que con el escaneo pedido a mano. `fin` resuelve SIEMPRE, nunca
+ * rechaza: `completo`, `cancelado` o `fallido` con su causa y su accion.
+ *
+ * @param {any} dep
+ * @param {any} bus
+ * @param {any} proyecto
+ * @returns {{snapshotId: string, punto: {commit: string, motivo: string},
+ *   fin: Promise<{estado: "completo"|"cancelado"|"fallido", causa?: string, accion?: string}>}}
+ */
+export function lanzarEscaneo(dep, bus, proyecto) {
   const snapshotId = randomUUID();
   const punto = commitDe(proyecto.ruta_local);
-
-  const bus = p.estado.bus;
   const deEsteProyecto = { project_id: proyecto.id };
+
+  /** @type {(r: {estado: "completo"|"cancelado"|"fallido", causa?: string, accion?: string}) => void} */
+  let resolverFin = () => {};
+  /** @type {Promise<{estado: "completo"|"cancelado"|"fallido", causa?: string, accion?: string}>} */
+  const fin = new Promise((listo) => {
+    resolverFin = listo;
+  });
 
   let ultimoProgreso = 0;
   let cuantos = 0;
@@ -192,7 +232,7 @@ export async function arrancarEscaneo(p) {
   });
 
   const registro = { project_id: proyecto.id, hilo, arrancado: Date.now(), cancelado: false };
-  p.dep.escaneos.set(snapshotId, registro);
+  dep.escaneos.set(snapshotId, registro);
 
 
   /**
@@ -207,10 +247,21 @@ export async function arrancarEscaneo(p) {
    * que el servicio se esta yendo y no hay nada que guardar.
    */
   const cerrar = (fn) => {
-    if (cerrado || p.dep.escaneos.get(snapshotId) !== registro) return;
+    if (cerrado) return;
+    if (dep.escaneos.get(snapshotId) !== registro) {
+      // Nada que guardar, pero quien espera el final si tiene que enterarse:
+      // una promesa que no resuelve nunca cuelga la peticion que la espera.
+      cerrado = true;
+      resolverFin({
+        estado: "cancelado",
+        causa: "el recorrido se interrumpio porque el servicio se detuvo o el proyecto se dejo de gestionar",
+        accion: "Comprueba en `GET /v1/projects` que el proyecto siga dado de alta y vuelve a escanear.",
+      });
+      return;
+    }
     cerrado = true;
-    p.dep.escaneos.delete(snapshotId);
-    fn();
+    dep.escaneos.delete(snapshotId);
+    resolverFin(fn() ?? { estado: "cancelado" });
   };
 
   /**
@@ -230,29 +281,35 @@ export async function arrancarEscaneo(p) {
    */
   const persistir = (resultado) => {
     try {
-      return { ok: true, noPersistidos: guardarSnapshot(p.dep, proyecto, snapshotId, resultado, punto) };
+      return { ok: true, noPersistidos: guardarSnapshot(dep, proyecto, snapshotId, resultado, punto) };
     } catch (e) {
+      const causa =
+        `el recorrido termino pero su snapshot no se pudo guardar: ${e && e.causa ? e.causa : e.message}. ` +
+        "Lo mas probable es que el proyecto se haya dejado de gestionar mientras el escaneo corria.";
+      const accion =
+        e && e.accion ? e.accion : "Comprueba en `GET /v1/projects` que el proyecto siga dado de alta y vuelve a escanear.";
       bus.emitir(
         "scan.cancelado",
         {
           snapshot_id: snapshotId,
           codigo: e && e.codigo ? e.codigo : "snapshot_no_persistido",
-          causa:
-            `el recorrido termino pero su snapshot no se pudo guardar: ${e && e.causa ? e.causa : e.message}. ` +
-            "Lo mas probable es que el proyecto se haya dejado de gestionar mientras el escaneo corria.",
-          accion:
-            e && e.accion
-              ? e.accion
-              : "Comprueba en `GET /v1/projects` que el proyecto siga dado de alta y vuelve a escanear.",
+          causa,
+          accion,
         },
         deEsteProyecto,
       );
-      return { ok: false, noPersistidos: [] };
+      return { ok: false, noPersistidos: [], causa, accion };
     }
   };
 
   const guardarCancelado = () => {
-    if (!persistir({ estado: "cancelado" }).ok) return;
+    const guardado = persistir({ estado: "cancelado" });
+    const resultado = /** @type {const} */ ({
+      estado: "cancelado",
+      causa: "el recorrido se cancelo antes de terminar y sus hallazgos parciales no se guardan",
+      accion: "Vuelve a escanear el proyecto y deja que el recorrido termine.",
+    });
+    if (!guardado.ok) return resultado;
     bus.emitir(
       "scan.cancelado",
       {
@@ -263,6 +320,7 @@ export async function arrancarEscaneo(p) {
       },
       deEsteProyecto,
     );
+    return resultado;
   };
 
   hilo.on("message", (mensaje) => {
@@ -291,17 +349,19 @@ export async function arrancarEscaneo(p) {
       // Un escaneo que se cae se DECLARA por el canal. Tragarselo deja a la
       // interfaz esperando para siempre un `scan.terminado` que no llega, y el
       // sintoma es una barra parada al 40% sin ningun error a la vista.
-      cerrar(() =>
-        bus.emitir("scan.cancelado", { snapshot_id: snapshotId, ...mensaje.error }, deEsteProyecto),
-      );
+      cerrar(() => {
+        bus.emitir("scan.cancelado", { snapshot_id: snapshotId, ...mensaje.error }, deEsteProyecto);
+        return { estado: "fallido", causa: mensaje.error.causa, accion: mensaje.error.accion };
+      });
       return;
     }
 
     if (mensaje.tipo === "listo") {
       cerrar(() => {
         if (mensaje.snapshot.estado === "cancelado") return guardarCancelado();
-        const { ok, noPersistidos } = persistir(mensaje.snapshot);
-        if (!ok) return;
+        const guardado = persistir(mensaje.snapshot);
+        const { ok, noPersistidos } = guardado;
+        if (!ok) return { estado: "fallido", causa: guardado.causa, accion: guardado.accion };
         bus.emitir(
           "scan.terminado",
           {
@@ -315,23 +375,18 @@ export async function arrancarEscaneo(p) {
           },
           deEsteProyecto,
         );
+        return { estado: "completo" };
       });
     }
   });
 
   hilo.on("error", (e) => {
-    cerrar(() =>
-      bus.emitir(
-        "scan.cancelado",
-        {
-          snapshot_id: snapshotId,
-          codigo: "recorrido_fallido",
-          causa: `el hilo del recorrido se cayo: ${e && e.message ? e.message : String(e)}`,
-          accion: "Comprueba que la ruta del proyecto se pueda leer y vuelve a escanear.",
-        },
-        deEsteProyecto,
-      ),
-    );
+    cerrar(() => {
+      const causa = `el hilo del recorrido se cayo: ${e && e.message ? e.message : String(e)}`;
+      const accion = "Comprueba que la ruta del proyecto se pueda leer y vuelve a escanear.";
+      bus.emitir("scan.cancelado", { snapshot_id: snapshotId, codigo: "recorrido_fallido", causa, accion }, deEsteProyecto);
+      return { estado: "fallido", causa, accion };
+    });
   });
 
   hilo.on("exit", () => {
@@ -342,18 +397,7 @@ export async function arrancarEscaneo(p) {
     cerrar(guardarCancelado);
   });
 
-  return {
-    codigo: 202,
-    cuerpo: {
-      snapshot_id: snapshotId,
-      // El punto se declara aqui y no cuando termina: si el repositorio no
-      // tiene commit, quien lanzo el escaneo tiene que saberlo ANTES de basar
-      // una constitution en el.
-      commit: punto.commit,
-      commit_motivo: punto.motivo,
-      progreso: "por el canal de eventos: scan.progreso, scan.hallazgo, scan.terminado, scan.cancelado",
-    },
-  };
+  return { snapshotId, punto, fin };
 }
 
 /** @param {import("./rutas.mjs").Peticion} p */

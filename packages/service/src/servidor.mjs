@@ -29,6 +29,8 @@ import { TABLA } from "./tabla.mjs";
 import { emparejar } from "./rutas.mjs";
 import { abrirDependencias, VARIABLE_DE_FRASE } from "./dependencias.mjs";
 import { vigilarAlPadre } from "./watchdog.mjs";
+import { BIN_DEL_MOTOR, crearLanzador } from "./lanzador.mjs";
+import { MAX_PARALELO_POR_DEFECTO, RAIZ_DE_PROVEEDORES, cargarGestor } from "./motor.mjs";
 
 /** Version de la forma de las respuestas. Un cambio incompatible la sube. */
 export { ESQUEMA } from "./esquema-de-respuesta.mjs";
@@ -103,7 +105,7 @@ function leerCuerpo(req) {
 }
 
 /**
- * @param {{home: string, token: string, arranque: string, origenes: readonly string[], raicesDeExploracion: readonly string[], bus: any, dep: any}} estado
+ * @param {{home: string, token: string, arranque: string, origenes: readonly string[], raicesDeExploracion: readonly string[], bus: any, dep: any, motor?: any}} estado
  */
 export function crearServidor(estado) {
   return createServer((req, res) => {
@@ -250,6 +252,14 @@ function escribirSesion(home, datos) {
  *   frase?: string|null, backendDeSecretos?: any, proveedorDeConexiones?: any,
  *   adaptadores?: any, fabricaDeModelo?: ((conf: {clave: string, modelo?: string}) => any)|null,
  *   reloj?: () => number,
+ *   motor?: {
+ *     spawn?: (comando: string, args: string[], opciones: any) => any, binDelMotor?: string, nodo?: string,
+ *     entornoBase?: Record<string, string>, intervaloMs?: number, raizDeProveedores?: string,
+ *     cargarGestor?: (nombre: string) => Promise<any>, maxParalelo?: number, ttlDelBoardMs?: number,
+ *     reloj?: () => number,
+ *     ejecutarAutenticacion?: (argv: string[], o: {env: Record<string, string>}) => Promise<{code: number|null, stdout: string, stderr: string}>,
+ *     lanzarLogin?: (argv: string[], env: Record<string, string>) => void,
+ *   },
  * }} opts
  */
 export async function arrancar(opts) {
@@ -312,7 +322,48 @@ export async function arrancar(opts) {
     emitir: (tipo, datos, extra) => bus.emitir(tipo, dep.redactarSalida(datos ?? {}), extra),
   };
 
-  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, raicesDeExploracion, bus: canal, dep });
+  // EL MOTOR, MONTADO SOBRE EL MISMO HOME (spec 003). El lanzador arranca la
+  // CLI del motor como subproceso y lleva la cola de cada proyecto en memoria;
+  // lo demas es lo que las rutas del board necesitan para componer la
+  // configuracion y leer los tickets del gestor. Todo inyectable: los tests
+  // cambian el `spawn` y el cargador del proveedor, nunca la politica.
+  const m = opts.motor ?? {};
+  const raizDeProveedores = m.raizDeProveedores ?? RAIZ_DE_PROVEEDORES;
+  const motor = {
+    lanzador: crearLanzador({
+      home,
+      spawn: m.spawn,
+      binDelMotor: m.binDelMotor,
+      nodo: m.nodo,
+      entornoBase: m.entornoBase,
+      intervaloMs: m.intervaloMs,
+      emitir: canal.emitir,
+    }),
+    binDelMotor: m.binDelMotor ?? BIN_DEL_MOTOR,
+    raizDeProveedores,
+    cargarGestor: m.cargarGestor ?? ((/** @type {string} */ n) => cargarGestor(n, raizDeProveedores)),
+    maxParalelo: m.maxParalelo ?? MAX_PARALELO_POR_DEFECTO,
+    // El board cachea lo que el gestor contesta, por proyecto: SC-004 pide el
+    // board en menos de dos segundos con diez proyectos, y diez viajes al
+    // gestor en cada pintada no caben ahi.
+    ttlDelBoardMs: m.ttlDelBoardMs ?? 30_000,
+    cacheDelBoard: new Map(),
+    reloj: m.reloj ?? (() => Date.now()),
+    // Settings -> Modelos (`runtimes.mjs`). Inyectables: la pregunta de verdad
+    // lanza `claude auth status`, y el login abre el navegador del operador.
+    // Un test que no los inyecta pregunta a los binarios reales de la maquina.
+    ejecutarAutenticacion: m.ejecutarAutenticacion,
+    lanzarLogin: m.lanzarLogin,
+    entornoBase: m.entornoBase,
+    cacheDeRuntimes: new Map(),
+    // La direccion en la que escucha ESTE servicio. Se rellena al escuchar:
+    // el gestor local la necesita dentro del motor para pedirle las tareas al
+    // unico escritor del almacen en vez de abrirlo por su cuenta.
+    /** @type {string|null} */
+    url: null,
+  };
+
+  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, raicesDeExploracion, bus: canal, dep, motor });
 
   try {
     await new Promise((resolve, reject) => {
@@ -327,6 +378,7 @@ export async function arrancar(opts) {
 
   const direccion = /** @type {any} */ (srv.address());
   const url = `http://127.0.0.1:${direccion.port}`;
+  motor.url = url;
   const sesion = escribirSesion(home, { url, token, pid: process.pid, arranque: arranqueISO });
 
   let cerrando = null;
@@ -336,6 +388,10 @@ export async function arrancar(opts) {
     if (cerrando) return cerrando;
     cerrando = (async () => {
       if (perro) perro.detener();
+
+      // Los runs dependen del servicio que los lanzo: se matan ANTES de cerrar
+      // la base, y lo que quedo a medias se retoma desde el disco con Retry.
+      await motor.lanzador.detener();
 
       // Los escaneos EN VUELO se matan ANTES que nada. Cada uno corre en su
       // hilo y termina escribiendo el snapshot en el almacen: si el almacen se
@@ -406,6 +462,7 @@ export async function arrancar(opts) {
     srv,
     bus,
     dep,
+    motor,
     emitir: (tipo, datos, extra) => bus.emitir(tipo, datos, extra),
     ultimoId: () => bus.ultimoId(),
     detener,

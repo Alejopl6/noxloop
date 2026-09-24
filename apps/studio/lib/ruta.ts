@@ -31,38 +31,61 @@ import type { EstadoProyecto } from '@/lib/tipos'
  * `catalogo` no es una seccion de producto: es el catalogo de componentes de
  * consola, la pantalla donde se revisan en sus estados sin inventarse una
  * pantalla de producto para ello. Por eso no aparece en la navegacion y solo
- * se alcanza escribiendo `?vista=catalogo`.
+ * se alcanza escribiendo `?vista=catalogo` (o desde ⌘K).
+ *
+ * LO QUE CAMBIO CON LA SPEC 003, dicho entero porque cambia el eje. La
+ * navegacion principal son cuatro destinos —`board`, `runs`, `costos` y
+ * `settings`— y las pantallas de establecimiento de la 002 NO SE BORRARON: se
+ * movieron dentro de Settings (las del proyecto como pestanas de «Settings del
+ * proyecto», las del espacio de trabajo como pestanas de Settings general) y
+ * siguen todas en ⌘K. Siguen siendo secciones con su direccion propia: por eso
+ * un enlace viejo a `?vista=constitution&proyecto=x` sigue abriendo lo mismo,
+ * ahora con las pestanas de Settings alrededor.
+ *
+ * `runs` CAMBIO DE SIGNIFICADO, y a proposito. En la 002 era «los ciclos de un
+ * proyecto» y exigia proyecto. En la 003 es la lista de runs de TODOS los
+ * proyectos (FR-027), que es lo que el operador espera encontrar detras de la
+ * palabra «Runs» de la navegacion. La pantalla vieja no se perdio: se llama
+ * `ciclos`, que es como ya la titulaba la miga.
  */
 export type Seccion =
+  | 'board'
+  | 'runs'
+  | 'costos'
+  | 'settings'
+  | 'modelos'
+  | 'flota-por-defecto'
   | 'inicio'
   | 'asistente'
   | 'bandeja'
   | 'proyectos'
   | 'proyecto-nuevo'
+  | 'ajustes'
   | 'snapshot'
   | 'constitution'
+  | 'guidelines'
+  | 'diseno'
   | 'bootstrap'
   | 'conexiones'
   | 'flota'
-  | 'runs'
+  | 'ciclos'
   | 'credenciales'
   | 'auditoria'
   | 'catalogo'
 
 /**
- * Las secciones que NO SE PUEDEN ABRIR SIN UN PROYECTO.
+ * Las etapas del establecimiento, EN EL ORDEN DE LA MAQUINA DE ESTADOS.
  *
- * Existe como lista propia porque el marco pregunta esto tres veces —para
- * saber si pinta el conmutador de proyecto, para saber que grupo de la
- * navegacion se despliega, y para decidir la miga del medio— y porque de ella
- * se deriva `PARAMETRO_DE_ID` justo debajo.
+ * Existe como lista propia porque de ella se deriva `PARAMETRO_DE_ID` justo
+ * debajo, y porque el orden de sus entradas ES el recorrido: `DESTINO_DE_ETAPA`
+ * y el asistente lo recorren en este orden.
  *
  * EL FALLO QUE EVITA DERIVARLO: el dia que se anada una septima etapa, quien
- * la anada la escribe en `Seccion` y en la navegacion, y se olvida de darle
- * entrada en `PARAMETRO_DE_ID`. Entonces `construirRuta` descarta el
- * identificador en silencio, la direccion queda sin `?proyecto=`, todo parece
- * funcionar mientras no se recargue, y al recargar la pantalla dice que falta
- * el proyecto. Con la tabla derivada de esta lista ese olvido no se puede
+ * la anada la escribe en `Seccion` y se olvida de darle entrada en
+ * `PARAMETRO_DE_ID`. Entonces `construirRuta` descarta el identificador en
+ * silencio, la direccion queda sin `?proyecto=`, todo parece funcionar
+ * mientras no se recargue, y al recargar la pantalla dice que falta el
+ * proyecto. Con la tabla derivada de esta lista ese olvido no se puede
  * cometer.
  */
 export const SECCIONES_DE_PROYECTO = [
@@ -71,31 +94,78 @@ export const SECCIONES_DE_PROYECTO = [
   'bootstrap',
   'conexiones',
   'flota',
-  'runs',
+  'ciclos',
 ] as const satisfies readonly Seccion[]
 
 export type SeccionDeProyecto = (typeof SECCIONES_DE_PROYECTO)[number]
 
 /**
- * Todo lo que VIAJA CON UN IDENTIFICADOR DE PROYECTO, que ya no es lo mismo
- * que las seis etapas.
+ * Las pestanas de «Settings del proyecto», en el orden en que se pintan.
  *
- * `asistente` no es una etapa: es el recorrido entero, y por eso no entra en
- * `SECCIONES_DE_PROYECTO` —esa lista la consume la navegacion de segundo nivel
- * y el orden de sus seis entradas ES la maquina de estados—. Pero si lleva
- * `?proyecto=`, y el fallo que separar las dos listas evita es exactamente el
- * que ya describe la cabecera de `PARAMETRO_DE_ID`: sin entrada ahi, la
- * direccion del asistente se construye sin el proyecto, todo funciona hasta
- * que el operador recarga, y al recargar el asistente dice que no sabe de que
- * proyecto habla.
+ * El orden NO es el de la maquina de estados, y la diferencia es deliberada:
+ * aqui no se recorre nada, se ajusta algo que ya esta establecido. Primero lo
+ * que decide como trabaja el proyecto (autonomia, constitution, guidelines,
+ * diseno), despues con que (bootstrap, conexiones, flota) y al final lo que
+ * es historia (el snapshot que se acepto, los ciclos de la 002).
+ */
+export const SECCIONES_DE_AJUSTES_DE_PROYECTO = [
+  'ajustes',
+  'constitution',
+  'guidelines',
+  'diseno',
+  'bootstrap',
+  'conexiones',
+  'flota',
+  'snapshot',
+  'ciclos',
+] as const satisfies readonly Seccion[]
+
+export type SeccionDeAjustesDeProyecto = (typeof SECCIONES_DE_AJUSTES_DE_PROYECTO)[number]
+
+export function esAjusteDeProyecto(seccion: Seccion): seccion is SeccionDeAjustesDeProyecto {
+  return (SECCIONES_DE_AJUSTES_DE_PROYECTO as readonly Seccion[]).includes(seccion)
+}
+
+/**
+ * Las pestanas de Settings general: el «portal de tools» del operador.
  *
- * El asistente SIN proyecto es legitimo —es su primer paso, elegir o crear
- * uno— asi que aqui lo que se declara es que el parametro EXISTE, no que sea
- * obligatorio.
+ * `settings` es la primera pestana —herramientas y conexiones— y no una
+ * portada con enlaces: una portada es una pantalla mas entre el operador y lo
+ * que vino a tocar.
+ */
+export const SECCIONES_DE_AJUSTES_GENERALES = [
+  'settings',
+  'modelos',
+  'credenciales',
+  'flota-por-defecto',
+  'auditoria',
+] as const satisfies readonly Seccion[]
+
+export type SeccionDeAjustesGenerales = (typeof SECCIONES_DE_AJUSTES_GENERALES)[number]
+
+export function esAjusteGeneral(seccion: Seccion): seccion is SeccionDeAjustesGenerales {
+  return (SECCIONES_DE_AJUSTES_GENERALES as readonly Seccion[]).includes(seccion)
+}
+
+/**
+ * Todo lo que VIAJA CON UN IDENTIFICADOR DE PROYECTO.
+ *
+ * Tres familias con tres significados del mismo parametro:
+ *
+ *   - `asistente`: el recorrido de ESE proyecto. Sin el es legitimo —su
+ *     primer paso es crear uno—.
+ *   - `board` y `runs`: un FILTRO. Sin proyecto son el board general y la
+ *     lista de todos los runs (FR-002: el proyecto elegido queda en la
+ *     direccion para poder volver a el).
+ *   - las pestanas de Settings del proyecto: exigen proyecto.
+ *
+ * Aqui se declara que el parametro EXISTE, no que sea obligatorio.
  */
 export const SECCIONES_CON_PROYECTO = [
   'asistente',
-  ...SECCIONES_DE_PROYECTO,
+  'board',
+  'runs',
+  ...SECCIONES_DE_AJUSTES_DE_PROYECTO,
 ] as const satisfies readonly Seccion[]
 
 export type SeccionConProyecto = (typeof SECCIONES_CON_PROYECTO)[number]
@@ -123,17 +193,26 @@ const PARAMETRO_DE_ID: Partial<Record<Seccion, string>> = {
 }
 
 const SECCIONES: readonly Seccion[] = [
+  'board',
+  'runs',
+  'costos',
+  'settings',
+  'modelos',
+  'flota-por-defecto',
   'inicio',
   'asistente',
   'bandeja',
   'proyectos',
   'proyecto-nuevo',
+  'ajustes',
   'snapshot',
   'constitution',
+  'guidelines',
+  'diseno',
   'bootstrap',
   'conexiones',
   'flota',
-  'runs',
+  'ciclos',
   'credenciales',
   'auditoria',
   'catalogo',
@@ -163,33 +242,61 @@ export interface Ruta {
    * al entrar de nuevas y lo correcto tras crear un proyecto.
    */
   paso?: string | null
+  /**
+   * EL RUN ABIERTO en la lista de runs. Solo lo lleva `runs`, por el mismo
+   * motivo que `paso` es un campo aparte: el `id` de `runs` ya es el filtro de
+   * proyecto, y «Abrir run» desde una tarjeta tiene que poder recargarse y
+   * seguir abierto.
+   */
+  run?: string | null
+  /** LA TAREA ABIERTA dentro del run abierto: su diff. Solo con `run`. */
+  tarea?: string | null
 }
 
-export const RUTA_INICIAL: Ruta = { seccion: 'inicio', id: null }
+/**
+ * La pantalla de inicio es el BOARD GENERAL (FR-001).
+ *
+ * La vieja pantalla de inicio —indicadores agregados y la bandeja— sigue
+ * existiendo en `?vista=inicio` y en ⌘K: su contenido no era falso, era la
+ * puerta equivocada.
+ */
+export const RUTA_INICIAL: Ruta = { seccion: 'board', id: null }
 
 /** Como se llama el paso del asistente en la direccion. */
 const PARAMETRO_DE_PASO = 'paso'
+/** Como se llama el run abierto en la direccion. */
+const PARAMETRO_DE_RUN = 'run'
+/** Como se llama la tarea abierta del run en la direccion. */
+const PARAMETRO_DE_TAREA = 'tarea'
 
 export function analizarRuta(busqueda: string): Ruta {
   const parametros = new URLSearchParams(busqueda)
   const vista = parametros.get('vista')
-  if (!esSeccion(vista) || vista === 'inicio') return RUTA_INICIAL
+  if (!esSeccion(vista)) return RUTA_INICIAL
 
   const nombre = PARAMETRO_DE_ID[vista]
   return {
     seccion: vista,
     id: nombre ? parametros.get(nombre) : null,
     paso: vista === 'asistente' ? parametros.get(PARAMETRO_DE_PASO) : null,
+    run: vista === 'runs' ? parametros.get(PARAMETRO_DE_RUN) : null,
+    tarea: vista === 'runs' ? parametros.get(PARAMETRO_DE_TAREA) : null,
   }
 }
 
 export function construirRuta(ruta: Ruta): string {
-  if (ruta.seccion === 'inicio') return '/'
+  // El board general es la raiz. Con proyecto no: el filtro tiene que quedar
+  // escrito para que recargar devuelva el mismo board (FR-002).
+  if (ruta.seccion === 'board' && !ruta.id) return '/'
   const parametros = new URLSearchParams({ vista: ruta.seccion })
   const nombre = PARAMETRO_DE_ID[ruta.seccion]
   if (nombre && ruta.id) parametros.set(nombre, ruta.id)
   if (ruta.seccion === 'asistente' && ruta.paso) {
     parametros.set(PARAMETRO_DE_PASO, ruta.paso)
+  }
+  if (ruta.seccion === 'runs' && ruta.run) {
+    parametros.set(PARAMETRO_DE_RUN, ruta.run)
+    if (ruta.tarea) parametros.set(PARAMETRO_DE_TAREA, ruta.tarea)
   }
   return `/?${parametros.toString()}`
 }
@@ -206,12 +313,11 @@ export type Navegar = (destino: Ruta) => void
  * dice exactamente eso: tres copias de esta respuesta divergen a la primera.
  * `tipos.ts` no la puede tener porque no conoce `Seccion`; `ruta.ts` si.
  *
- * `ACTIVE` lleva a `runs` y no es una excepcion al patron: un proyecto activo
- * no tiene etapa pendiente, tiene un sitio al que ir — lanzar. Antes de que
- * existiera esa pantalla, `CONNECTED` y `ACTIVE` valian `null` y la fila se
- * quedaba sin boton, que es lo correcto mientras el destino no existe: un
- * boton que no lleva a ningun sitio hace creer al operador que el camino esta
- * y que el no lo encuentra.
+ * `ACTIVE` lleva al BOARD del proyecto y no es una excepcion al patron: un
+ * proyecto activo no tiene etapa pendiente, tiene un sitio al que ir — su
+ * board, que es donde se lanza el trabajo (spec 003: un proyecto es su board).
+ * En la 002 llevaba a la pantalla de ciclos, que era el unico sitio desde el
+ * que se lanzaba algo.
  */
 export const DESTINO_DE_ETAPA: Record<EstadoProyecto, Seccion> = {
   CREATED: 'snapshot',
@@ -219,7 +325,7 @@ export const DESTINO_DE_ETAPA: Record<EstadoProyecto, Seccion> = {
   CONSTITUTED: 'bootstrap',
   BOOTSTRAPPED: 'conexiones',
   CONNECTED: 'flota',
-  ACTIVE: 'runs',
+  ACTIVE: 'board',
 }
 
 export function useRuta(): { ruta: Ruta; navegar: (destino: Ruta) => void } {

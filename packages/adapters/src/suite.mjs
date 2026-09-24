@@ -153,6 +153,24 @@ export function pruebasDelContrato(fx) {
           afirmar(fx.evidenciaDeHooks(), "declara hooks:true y no hay evidencia de que hayan corrido en el subproceso");
         }
 
+        if (typeof caps.comandos === "boolean") {
+          // `comandos` decide QUE manda el motor: el comando, o su texto
+          // expandido. Las dos cosas solo sirven si el adaptador entrega el
+          // prompt INTEGRO, sin reescribirlo ni anteponerle nada: un adaptador
+          // que "arreglara" el comando por su cuenta interpretaria el encargo
+          // distinto que el motor, que es la regla 3 del contrato al reves.
+          const prompt = caps.comandos
+            ? "/noxloop-task IT-1 T-1 --phase GREEN"
+            : "# /noxloop-task — una fase, una tarea\n\nFase: GREEN. El encargo, expandido por el motor.";
+          fx.guionar({ texto: "hecho", exito: true });
+          await a.runPhase(fx.peticion({ phase: "GREEN", prompt }));
+          const l = fx.ultimoLanzamiento();
+          afirmar(
+            Array.isArray(l.argv) && l.argv.includes(prompt),
+            `declara comandos:${caps.comandos} y el prompt no llego integro al runtime`,
+          );
+        }
+
         if (Array.isArray(caps.models)) {
           afirmar(caps.models.length > 0, 'models es una lista vacia: si no los enumera, el valor es "desconocido"');
         }

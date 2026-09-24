@@ -64,6 +64,8 @@ function nangoDePrueba({ integracionesRegistradas = ["github", "linear", "jira",
     sondeosPendientes: new Map(),
     llamadas: [],
     integraciones: new Set(integracionesRegistradas),
+    /** El Client ID vigente de cada integracion. El secreto no se guarda: no se compara nunca. */
+    credenciales: new Map(),
   };
 
   /** @param {any} cuerpo @param {number} [estado] */
@@ -97,10 +99,30 @@ function nangoDePrueba({ integracionesRegistradas = ["github", "linear", "jira",
         ? json({ data: { unique_key: integracion[1], provider: integracion[1] } })
         : json({ error: { code: "not_found" } }, 404);
     }
+    // Crear una que ya existe NO la pisa: Nango 0.71.10 contesta 400
+    // `integrationId is already used by another integration` (medido en
+    // `postIntegration.js`). El doble decia que si, y por eso nadie vio que unas
+    // credenciales equivocadas no se podian reemplazar desde el producto.
     if (ruta === "/api/v1/integrations" && metodo === "POST") {
       const cuerpo = JSON.parse(init.body);
-      estado.integraciones.add(cuerpo.integrationId ?? cuerpo.provider);
-      return json({ data: { unique_key: cuerpo.integrationId ?? cuerpo.provider } });
+      const clave = cuerpo.integrationId ?? cuerpo.provider;
+      if (estado.integraciones.has(clave)) {
+        return json({ error: { code: "invalid_body", message: "integrationId is already used by another integration" } }, 400);
+      }
+      estado.integraciones.add(clave);
+      estado.credenciales.set(clave, cuerpo.auth?.clientId ?? null);
+      return json({ data: { unique_key: clave } });
+    }
+    // Reemplazar credenciales: el cuerpo va PLANO (`authType`, `clientId`...),
+    // no dentro de `auth` como al crear. Medido en `patchIntegration.js`.
+    if (integracion && metodo === "PATCH") {
+      if (!estado.integraciones.has(integracion[1])) return json({ error: { code: "not_found" } }, 404);
+      const cuerpo = JSON.parse(init.body);
+      if (cuerpo.auth !== undefined || cuerpo.authType !== "OAUTH2") {
+        return json({ error: { code: "invalid_body", message: "unrecognized key auth" } }, 400);
+      }
+      estado.credenciales.set(integracion[1], cuerpo.clientId ?? null);
+      return json({ data: { unique_key: integracion[1] } });
     }
 
     if (ruta === "/connect/sessions" && metodo === "POST") {
@@ -319,6 +341,31 @@ test("registrar la aplicacion deja el proveedor conectable, y la respuesta no ll
   // Y ahora si conecta.
   const alta = await proveedor.conectar({ projectId: null, slug: "linear" });
   assert.ok(alta.url);
+});
+
+test("registrar sobre una aplicacion ya registrada REEMPLAZA sus credenciales, no falla", async () => {
+  // El caso real: una instancia con una integracion de GitHub registrada con
+  // valores de prueba. Crear otra choca (400 en el servidor), y sin este camino
+  // el operador no tenia forma de poner las credenciales buenas desde el
+  // producto: la pantalla decia "registrada" y autorizar fallaba en GitHub.
+  const fx = fixturesDeNango();
+  const { proveedor, estado } = fx.montar();
+  assert.ok(estado.integraciones.has("github"));
+
+  const secreto = centinela("client-secret-nuevo");
+  const registrada = await proveedor.registrarAplicacion({
+    slug: "github",
+    client_id: "Ov23-el-bueno",
+    client_secret: secreto,
+    scopes: "repo,read:user",
+  });
+
+  assert.equal(registrada.registrada, true);
+  assert.equal(estado.credenciales.get("github"), "Ov23-el-bueno", "las credenciales no se reemplazaron");
+  assert.equal(trozoDelCentinela(registrada, secreto), null, "la respuesta devolvio el client secret");
+  const patch = estado.llamadas.find((l) => l.metodo === "PATCH");
+  assert.ok(patch, "no se uso el camino de reemplazo");
+  assert.equal(patch.ruta, "/api/v1/integrations/github");
 });
 
 test("`aplicaciones()` dice cuales faltan y trae el recorrido de cada una", async () => {

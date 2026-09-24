@@ -707,25 +707,38 @@ export function crearAdaptadorNango({
       }
     }
 
-    const r = await contraElServidor("/api/v1/integrations", {
-      metodo: "POST",
-      busqueda: { env: entorno },
-      cuerpo: {
-        provider: slug,
-        integrationId: slug,
-        displayName: entrada.nombre ?? slug,
-        // `useSharedCredentials: false` es OBLIGATORIO en el cuerpo y no
-        // opcional: sin el, el servidor contesta 400 diciendo
-        // `expected boolean, received undefined`. Medido.
-        useSharedCredentials: false,
-        auth: {
-          authType: "OAUTH2",
-          clientId,
-          clientSecret,
-          ...(scopes ? { scopes } : {}),
-        },
-      },
-    });
+    // SI YA ESTA REGISTRADA, SE REEMPLAZA. Crear otra con el mismo slug choca:
+    // el servidor contesta 400 `integrationId is already used`, y el operador
+    // con unas credenciales equivocadas —o de prueba— no tenia como poner las
+    // buenas desde el producto. El reemplazo va por PATCH y con el cuerpo
+    // PLANO (`authType`, `clientId`...), no dentro de `auth` como al crear:
+    // medido en `patchIntegration.js` de la 0.71.10.
+    const yaRegistrada = await integracionRegistrada(slug);
+    const r = yaRegistrada
+      ? await contraElServidor(`/api/v1/integrations/${encodeURIComponent(slug)}`, {
+          metodo: "PATCH",
+          busqueda: { env: entorno },
+          cuerpo: { authType: "OAUTH2", clientId, clientSecret, ...(scopes ? { scopes } : {}) },
+        })
+      : await contraElServidor("/api/v1/integrations", {
+          metodo: "POST",
+          busqueda: { env: entorno },
+          cuerpo: {
+            provider: slug,
+            integrationId: slug,
+            displayName: entrada.nombre ?? slug,
+            // `useSharedCredentials: false` es OBLIGATORIO en el cuerpo y no
+            // opcional: sin el, el servidor contesta 400 diciendo
+            // `expected boolean, received undefined`. Medido.
+            useSharedCredentials: false,
+            auth: {
+              authType: "OAUTH2",
+              clientId,
+              clientSecret,
+              ...(scopes ? { scopes } : {}),
+            },
+          },
+        });
 
     if (r.estado >= 400) {
       // EL MENSAJE DEL SERVIDOR VIAJA, EL CUERPO NO. El cuerpo de un error de

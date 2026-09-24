@@ -129,6 +129,56 @@ cargo fmt --check
 verde en `cargo test`. Entre esas pruebas está la de que ningún comando de la
 bóveda llega al webview.
 
+### Construir el `.dmg` (macOS, Apple Silicon)
+
+El sidecar tiene que ser un Node **oficial** de nodejs.org: el de Homebrew está
+enlazado contra dylibs de `/opt/homebrew` y `preparar-sidecar.mjs` corta si se
+lo pasan.
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cd apps/desktop
+NOXLOOP_SIDECAR_NODE=/ruta/a/node-v22.x-darwin-arm64/bin/node \
+  npx tauri build --bundles app,dmg
+```
+
+Sale en `apps/desktop/src-tauri/target/release/bundle/dmg/noxloop_<version>_aarch64.dmg`
+(~45 MB; el `.app` descomprimido, ~155 MB, casi todo el runtime de Node). Si
+`bundle_dmg.sh` falla sin más detalle, suele ser el paso de Finder por
+AppleScript: `hdiutil info` muestra un `rw.*.dmg` montado; desmontarlo con
+`hdiutil detach` y repetir.
+
+Qué hay dentro, y por qué tiene esa forma:
+
+- `Contents/MacOS/`: `noxloop-desktop`, `noxloop-service` (el Node) y
+  `noxloop-llavero`. El llavero no se declara como `externalBin`: el bundler
+  copia todos los binarios del crate, y `llavero_junto_a` lo busca ahí.
+- `Contents/Resources/app/`: una **réplica de la estructura del repositorio**
+  (`packages/<x>/src`, `packages/engine/{bin,schemas}`, `providers/`,
+  `node_modules/<terceros>`). Así `../../engine/bin/` y `../../../providers/`
+  resuelven igual que en el repo. La guarda es
+  `packages/service/test/recursos-del-escritorio.test.mjs`: prohíbe globs en
+  `bundle.resources` (Tauri los aplana), exige la réplica bajo `app/`, comprueba
+  que ninguna ruta relativa de lo empaquetado sale de lo empaquetado, y monta el
+  árbol fuera del repo para importarlo con un Node limpio.
+
+**Verificar el `.app` sin el repositorio**: copiarlo del `.dmg` a un directorio
+cualquiera, lanzarlo con un home aislado y preguntarle al servicio:
+
+```bash
+MP=$(hdiutil attach -nobrowse -readonly <ruta-al-.dmg> | grep -o '/Volumes/.*$')
+cp -R "$MP/noxloop.app" /tmp/prueba/ && hdiutil detach "$MP"
+NOXLOOP_HOME=/tmp/prueba/home /tmp/prueba/noxloop.app/Contents/MacOS/noxloop-desktop &
+# token y puerto: `ps ax -o command | grep noxloop-service` y la línea NOXLOOP_READY
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:<puerto>/v1/capabilities
+```
+
+**Se espera**: `boveda.valor.tipo` = `keychain_so` con evidencia en
+`Contents/MacOS/noxloop-llavero`, y `motor.valor.presente` = `true` con
+evidencia en `Contents/Resources/app/packages/engine/package.json`. Y
+`Contents/MacOS/noxloop-service Contents/Resources/app/packages/engine/bin/noxloop.mjs help`
+sale con 0.
+
 ---
 
 ## Escenario 7 — Conectar un proveedor por OAuth

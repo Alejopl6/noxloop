@@ -55,6 +55,8 @@ Opciones globales:
   --config <ruta>   por defecto ./noxloop.config.json
   --json            fuerza salida JSON, tambien en status
   --search <dir>    donde buscar checkouts de repos sin \`path\` declarado
+  --project <id>    en plan/milestone: el proyecto del servicio de control que lanza.
+                    Queda escrito en el run para que el board lo atribuya sin adivinar
 `;
 
 function parseArgs(argv) {
@@ -238,6 +240,9 @@ async function main() {
       port: args.flags.port ? Number(args.flags.port) : undefined,
       open: Boolean(args.flags.open),
       volverA: args.flags["volver-a"] ? String(args.flags["volver-a"]) : undefined,
+      // De que proyecto es el run. Lo sabe quien lanza —el servicio de control—
+      // y no el motor: por eso viaja como opcion y no se deduce de la config.
+      projectId: args.flags.project ? String(args.flags.project) : undefined,
       signal: ac.signal,
     }));
     salidaJson(r);

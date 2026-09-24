@@ -27,7 +27,7 @@
 // research.md para este gestor, que es el que cambio de modelo mas
 // recientemente de los tres).
 
-import { NotSupportedError } from "../contract.mjs";
+import { NotSupportedError, listQuery } from "../contract.mjs";
 
 export const meta = { name: "github", version: "1.0.0" };
 
@@ -69,6 +69,7 @@ export function capabilities() {
     searchMentioned: true,
     boardFields: false,      // Projects v2 es solo GraphQL
     identityAssignee: false, // /issues?filter=assigned es del dueño del token y no se puede cambiar
+    listItems: true,         // GET /repos/{o}/{r}/issues, paginado por el header Link
   };
 }
 
@@ -100,6 +101,13 @@ export const optionsSchema = {
     typeMap: { type: "object", description: "De tipo nativo a nivel canonico." },
     typeMapById: { type: "object", description: "Igual, pero por id de tipo." },
     stateReasonMap: { type: "object", description: "De estado canonico a state_reason de GitHub." },
+    priorityLabels: {
+      type: "object",
+      description:
+        "De nombre de etiqueta a prioridad del board (0 urgente .. 4 baja). GitHub Issues no tiene prioridad " +
+        "nativa: sin este mapa, la tarjeta no muestra ninguna.",
+      additionalProperties: { type: "integer", minimum: 0, maximum: 4 },
+    },
   },
 };
 
@@ -725,6 +733,208 @@ export async function searchInbox(ctx) {
   };
 
   return { assigned: await traer("assigned"), mentioned: await traer("mentioned") };
+}
+
+// --------------------------------------------------------------------------
+// El listado del board (spec 003, contracts/board-api.md §1)
+// --------------------------------------------------------------------------
+
+/**
+ * La pagina SIGUIENTE segun el header `Link`, o null si no hay.
+ *
+ * Se lee el header y no "si la pagina vino llena": el header es lo que GitHub
+ * afirma, y una pagina llena justo al final costaria un pedido de mas que
+ * vuelve vacio. Se toma solo el `page` de la URL y no la URL entera, por dos
+ * motivos: GitHub la escribe como `/repositories/{id}/issues`, que no es la
+ * ruta que arma este proveedor; y el cursor viaja al board y vuelve, y un
+ * cursor que fuera una URL completa haria que el proveedor pida lo que el
+ * cliente quiera, con el token del proyecto.
+ *
+ * @param {any} r la respuesta de `ctx.fetch`
+ * @returns {number|null}
+ */
+function paginaSiguiente(r) {
+  const link = typeof r?.headers?.get === "function" ? r.headers.get("link") : null;
+  if (!link) return null;
+  for (const parte of String(link).split(",")) {
+    const m = /<([^>]+)>\s*;\s*rel="?next"?/.exec(parte);
+    if (!m) continue;
+    const pagina = /[?&]page=(\d+)/.exec(m[1]);
+    return pagina ? Number(pagina[1]) : null;
+  }
+  return null;
+}
+
+/**
+ * El cursor de `listItems`: `"<pagina>:<salto>"`.
+ *
+ * POR QUE DOS NUMEROS Y NO SOLO LA PAGINA. El `limit` del board no coincide con
+ * el `per_page` de GitHub, y ademas este endpoint mezcla pull requests que se
+ * descartan: cortar en `limit` deja la pagina a medias. Con solo el numero de
+ * pagina, lo que sobro de esa pagina se perderia en silencio —tickets que no
+ * aparecen en ninguna columna—. El salto cuenta sobre la pagina YA filtrada,
+ * que es determinista mientras el gestor no cambie entre dos pedidos.
+ */
+const RE_CURSOR = /^(\d+):(\d+)$/;
+
+function leerCursor(cursor) {
+  if (cursor == null) return { pagina: 1, salto: 0 };
+  const m = RE_CURSOR.exec(String(cursor));
+  if (!m || Number(m[1]) < 1) {
+    throw new Error(`cursor de GitHub invalido: ${JSON.stringify(cursor)} (tiene que ser el nextCursor de un listItems anterior)`);
+  }
+  return { pagina: Number(m[1]), salto: Number(m[2]) };
+}
+
+/** Los nombres de etiqueta de un issue crudo, como strings. */
+const nombresDeEtiqueta = (crudo) =>
+  (Array.isArray(crudo?.labels) ? crudo.labels : [])
+    .map((l) => (typeof l === "string" ? l : l?.name))
+    .filter((n) => typeof n === "string" && n.length > 0);
+
+/**
+ * La prioridad del board, de `options.priorityLabels`, y de nada mas.
+ *
+ * GitHub Issues NO tiene prioridad nativa. Deducirla de etiquetas que "parecen"
+ * prioridad (`P1`, `urgent`) seria inventarla: la convencion es de cada equipo.
+ * Sin el mapa, `null`, y la tarjeta no muestra prioridad. Con varias etiquetas
+ * mapeadas gana la mas urgente (el numero menor): es la lectura conservadora,
+ * la que no esconde un ticket urgente detras de una etiqueta vieja.
+ *
+ * Las etiquetas se comparan SIN mayusculas porque GitHub las trata asi (no deja
+ * crear `P1` y `p1` en el mismo repositorio).
+ */
+function prioridadDeEtiquetas(nombres, ctx) {
+  const mapa = ctx?.options?.priorityLabels;
+  if (!mapa || typeof mapa !== "object") return null;
+  /** @type {Map<string, number>} */
+  const porNombre = new Map();
+  for (const [nombre, valor] of Object.entries(mapa)) {
+    if (Number.isInteger(valor) && valor >= 0 && valor <= 4) porNombre.set(nombre.toLowerCase(), valor);
+    else ctx?.log?.warn?.(`github: priorityLabels["${nombre}"] = ${JSON.stringify(valor)} no es una prioridad 0..4 y se ignora`);
+  }
+  let mejor = null;
+  for (const n of nombres) {
+    const v = porNombre.get(n.toLowerCase());
+    if (v !== undefined && (mejor === null || v < mejor)) mejor = v;
+  }
+  return mejor;
+}
+
+/**
+ * El estado del board. GitHub tiene `open`/`closed` y nada en el medio:
+ *   - `closed` -> `done` (solo llega con includeDone).
+ *   - `open` con la etiqueta de `stateMap.backlog` -> `backlog`.
+ *   - `open` -> `todo`.
+ * `backlog` NUNCA se deduce sin ese mapeo: el gestor no lo distingue, y el
+ * board lo declara en su columna en vez de adivinarlo.
+ */
+function estadoDelBoard(crudo, nombres, ctx) {
+  if (crudo?.state === "closed") return "done";
+  const declarado = ctx?.options?.stateMap?.backlog;
+  const etiquetas = (Array.isArray(declarado) ? declarado : declarado ? [declarado] : []).map((e) => String(e).toLowerCase());
+  if (etiquetas.length && nombres.some((n) => etiquetas.includes(n.toLowerCase()))) return "backlog";
+  return "todo";
+}
+
+/**
+ * Un cerrado que NO es "terminado". `not_planned` y `duplicate` son descartes:
+ * mostrarlos en la columna de hechos le diria al operador que se hizo un
+ * trabajo que se decidio no hacer. Un cerrado sin motivo (issues anteriores a
+ * que existiera `state_reason`) cuenta como completado, que es lo que era el
+ * unico cierre posible entonces.
+ */
+const esDescarte = (crudo) => crudo?.state === "closed" && crudo?.state_reason != null && crudo.state_reason !== "completed";
+
+function aListado(crudo, ctx) {
+  const item = aItem(crudo, ctx);
+  const { owner, repo } = repoDe(crudo, ctx);
+  const nombres = nombresDeEtiqueta(crudo);
+  const quien = crudo.assignee;
+  return {
+    ...item,
+    canonicalState: estadoDelBoard(crudo, nombres, ctx),
+    priority: prioridadDeEtiquetas(nombres, ctx),
+    assignee: quien?.login
+      ? {
+          id: String(quien.id ?? quien.login),
+          name: String(quien.login),
+          ...(quien.avatar_url ? { avatarUrl: String(quien.avatar_url) } : {}),
+        }
+      : null,
+    team: `${owner}/${repo}`,
+    // Sin respaldo inventado: GitHub manda `updated_at` en todo issue, y si no
+    // viene la respuesta esta rota — el contrato la rechaza con el campo.
+    updatedAt: crudo.updated_at ?? null,
+  };
+}
+
+/**
+ * Los issues abiertos del repositorio de la configuracion, para el board.
+ *
+ * `GET /repos/{owner}/{repo}/issues` y no `/issues` ni el buscador: es el unico
+ * que se acota al repositorio del proyecto, y va contra la cuota del core
+ * (5000/h) y no contra la del buscador (30/min). Este endpoint devuelve los
+ * PULL REQUESTS mezclados —la API los cuenta como issues— y se descartan por la
+ * clave `pull_request`, igual que en la bandeja.
+ *
+ * `total` es null: el endpoint no lo dice, y el header Link solo da la ultima
+ * PAGINA, que por el filtro de PRs no se puede convertir en una cuenta exacta.
+ *
+ * @param {{limit?: number, cursor?: string|null, includeDone?: boolean}} query
+ */
+export async function listItems(query, ctx) {
+  const { limit, cursor, includeDone } = listQuery(query);
+  const owner = ctx?.options?.owner;
+  const repo = ctx?.options?.repo;
+  if (!owner || !repo) {
+    throw new Error(
+      "faltan `owner` y `repo` en provider.options: sin ellos no hay repositorio que listar, " +
+        "y listar todo lo que el token ve mezclaria tickets de otros proyectos en este board",
+    );
+  }
+  let { pagina, salto } = leerCursor(cursor);
+  const porPagina = Math.max(1, Math.min(100, ctx?.options?.perPage ?? 100));
+  const maxPaginas = ctx?.options?.maxPages ?? 20;
+  const estado = includeDone ? "all" : "open";
+  const ruta = `/repos/${owner}/${repo}/issues`;
+
+  const items = [];
+  /** @type {string|null} */
+  let nextCursor = null;
+  for (let pedidas = 0; ; pedidas++) {
+    // El mismo tope que `paginar`, y por lo mismo: un Link que siempre anuncia
+    // otra pagina haria girar el listado contra la cuota. Cortar aca NO es
+    // silencioso: el cursor queda apuntando a donde se corto.
+    if (pedidas >= maxPaginas) {
+      nextCursor = `${pagina}:${salto}`;
+      ctx?.log?.warn?.(`github: listItems corto en ${maxPaginas} paginas (options.maxPages); el cursor sigue desde ahi`);
+      break;
+    }
+    const completa = `${ruta}?state=${estado}&per_page=${porPagina}&page=${pagina}`;
+    const r = await pedir(ctx, completa);
+    const lote = await leer(r, "GET", completa);
+    const tickets = soloIssues(Array.isArray(lote) ? lote : [], ctx, completa).filter(
+      (c) => !c?.pull_request && !esDescarte(c),
+    );
+    const disponibles = tickets.slice(salto);
+    const tomados = disponibles.slice(0, limit - items.length);
+    items.push(...tomados.map((c) => aListado(c, ctx)));
+
+    if (tomados.length < disponibles.length) {
+      nextCursor = `${pagina}:${salto + tomados.length}`;
+      break;
+    }
+    const siguiente = paginaSiguiente(r);
+    if (siguiente == null || siguiente <= pagina) break;
+    pagina = siguiente;
+    salto = 0;
+    if (items.length >= limit) {
+      nextCursor = `${pagina}:0`;
+      break;
+    }
+  }
+  return { items, nextCursor, total: null };
 }
 
 /**

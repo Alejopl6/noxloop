@@ -26,7 +26,7 @@
 // Los niveles canonicos se IMPORTAN del contrato, no se copian aca: un
 // proveedor que escriba la lista de memoria queda con una lista vieja el dia
 // que el enum cambie, y el sintoma es un Item rechazado sin explicacion.
-import { LEVELS } from "../contract.mjs";
+import { LEVELS, listQuery } from "../contract.mjs";
 
 export const meta = { name: "linear", version: "1.0.0" };
 
@@ -67,6 +67,7 @@ export function capabilities() {
     // estimate. Declararlo true es honesto porque `createChild` los pasa.
     boardFields: true,
     identityAssignee: false, // assignee: { isMe: { eq: true } } es del token; pedir otro exige otra consulta
+    listItems: true, // issues(filter: { team, state.type }) con pageInfo
   };
 }
 
@@ -79,8 +80,14 @@ export const optionsSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    teamId: { type: "string", description: "El UUID del equipo donde se crean las hijas." },
-    teamKey: { type: "string", description: "La clave corta del equipo (ENG), para resolver identificadores humanos." },
+    teamId: {
+      type: "string",
+      description: "El UUID del equipo: donde se crean las hijas, y el espacio que lista el board (gana sobre teamKey).",
+    },
+    teamKey: {
+      type: "string",
+      description: "La clave corta del equipo (ENG), para resolver identificadores humanos y listar el board.",
+    },
     acceptanceHeading: { type: "string", description: "El encabezado de la descripcion donde viven los criterios." },
   },
 };
@@ -768,6 +775,142 @@ function descripcionDe(spec) {
     partes.push(["## Criterios de aceptación", ...criterios.map((c) => `- [ ] ${String(c).trim()}`)].join("\n"));
   }
   return partes.join("\n\n");
+}
+
+// ------------------------------------------------ el listado del board (003)
+
+/**
+ * La seleccion del listado: la de siempre mas lo que pinta la tarjeta.
+ *
+ * Aparte de `CAMPOS_ISSUE` y no sumada a ella: `getItem`, `children` y
+ * `createChild` no necesitan prioridad, fecha, nombre de equipo ni avatar, y
+ * cada campo de mas es complejidad de consulta que Linear cobra contra el
+ * limite de tasa en CADA lectura del motor.
+ */
+const CAMPOS_LISTADO = `
+      id identifier title description url estimate priority updatedAt
+      state { id name type }
+      parent { id identifier }
+      assignee { id name displayName avatarUrl }
+      labels { nodes { id name } }
+      team { id key name }
+      project { id name }
+      projectMilestone { id name }
+      cycle { id number }`;
+
+/** Tipos de estado que NO son trabajo abierto. `completed` entra con includeDone. */
+const TIPOS_CERRADOS = ["completed", "canceled", "duplicate"];
+
+/**
+ * La prioridad del board a partir de la de Linear.
+ *
+ * Linear: 0 sin prioridad, 1 urgente, 2 alta, 3 media, 4 baja.
+ * Board:  0 urgente … 4 baja, y null sin dato.
+ *
+ * Se CORRE un lugar (1->0, 2->1, 3->2, 4->3) y el 0 de Linear va a null. El
+ * error que evita es el obvio y el peor: pasar el numero tal cual convierte todo
+ * ticket sin prioridad —el caso mas comun en Linear— en URGENTE, y el board se
+ * llena de rojo por tickets que nadie priorizo. El 4 del board queda sin usar:
+ * Linear tiene cuatro niveles y el board cinco, y estirarlos seria inventar
+ * una distancia que el gestor no afirma. Azure DevOps usa el mismo corrimiento,
+ * asi que "la mas alta del gestor" es 0 en los dos.
+ */
+function prioridadDelBoard(p) {
+  if (!Number.isInteger(p) || p < 1 || p > 4) return null;
+  return p - 1;
+}
+
+/**
+ * El estado del board. `backlog` sale del TIPO de estado (`state.type ==
+ * "backlog"`), que es el enum del gestor y no el nombre que el equipo le puso
+ * a la columna; el resto sigue la misma regla que `getItem` (el stateMap por
+ * nombre y, si no nombra el estado, su tipo). Un tipo sin canonico devuelve
+ * null y el ticket se saltea: sin columna no hay tarjeta que pintar.
+ */
+function estadoDelBoard(state, ctx) {
+  if (state?.type === "backlog") return "backlog";
+  return estadoCanonico(state, ctx);
+}
+
+/** El espacio del proyecto: un equipo, por UUID (estable) o por clave. */
+function filtroDeEquipo(ctx) {
+  const id = ctx.options?.teamId;
+  if (id) return { id: { eq: String(id) } };
+  const key = ctx.options?.teamKey;
+  if (key) return { key: { eq: String(key) } };
+  throw new Error(
+    "listItems de Linear necesita `teamId` o `teamKey` en provider.options: el board lista el espacio de UN " +
+      "equipo, y listar el workspace entero mezclaria tickets de otros proyectos en este board",
+  );
+}
+
+/**
+ * Los tickets abiertos del equipo, para el board.
+ *
+ * Se pide `first` EXACTAMENTE igual a lo que falta para el limite (tope 250 por
+ * pagina, el de Linear): el cursor que devuelve Linear apunta despues del ultimo
+ * nodo recibido, asi que pedir de mas y recortar perderia los recortados en
+ * silencio. `total` es null: IssueConnection no expone una cuenta.
+ *
+ * @param {{limit?: number, cursor?: string|null, includeDone?: boolean}} query
+ */
+export async function listItems(query, ctx) {
+  const { limit, cursor, includeDone } = listQuery(query);
+  const listado = {
+    team: filtroDeEquipo(ctx),
+    state: { type: { nin: includeDone ? TIPOS_CERRADOS.filter((t) => t !== "completed") : TIPOS_CERRADOS } },
+  };
+  const consulta = `query($listado: IssueFilter!, $first: Int!, $after: String) {
+    issues(filter: $listado, first: $first, after: $after, orderBy: updatedAt) {
+      nodes {${CAMPOS_LISTADO} }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+  const items = [];
+  let after = cursor;
+  /** @type {string|null} */
+  let nextCursor = null;
+  // El mismo tope que `children`, y por lo mismo: un `hasNextPage: true` con el
+  // mismo cursor giraria contra la cuota.
+  for (let pagina = 0; pagina < 200 && items.length < limit; pagina++) {
+    const data = await gql(ctx, consulta, { listado, first: Math.min(250, limit - items.length), after });
+    const conexion = data?.issues;
+    for (const nodo of Array.isArray(conexion?.nodes) ? conexion.nodes : []) {
+      if (!nodo?.id) {
+        ctx.log?.warn?.("Linear: un ticket del listado vino sin id y se saltea");
+        continue;
+      }
+      const estado = estadoDelBoard(nodo.state, ctx);
+      if (!estado) {
+        ctx.log?.warn?.(`Linear: ${nodo.identifier ?? nodo.id} esta en un estado sin columna (${nodo.state?.type}) y se saltea`);
+        continue;
+      }
+      const quien = nodo.assignee;
+      items.push({
+        ...aItem(nodo, ctx),
+        canonicalState: estado,
+        priority: prioridadDelBoard(nodo.priority),
+        assignee: quien?.id
+          ? {
+              id: String(quien.id),
+              name: String(quien.displayName || quien.name || quien.id),
+              ...(quien.avatarUrl ? { avatarUrl: String(quien.avatarUrl) } : {}),
+            }
+          : null,
+        team: nodo.team?.name ?? nodo.team?.key ?? null,
+        updatedAt: nodo.updatedAt ?? null,
+      });
+    }
+    const hay = conexion?.pageInfo?.hasNextPage && conexion?.pageInfo?.endCursor;
+    if (!hay) {
+      nextCursor = null;
+      break;
+    }
+    after = conexion.pageInfo.endCursor;
+    nextCursor = after;
+  }
+  return { items, nextCursor, total: null };
 }
 
 // Nada mas se exporta, y es a proposito: una capacidad en `false` no expone una

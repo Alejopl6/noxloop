@@ -47,6 +47,12 @@ export const TABLAS = Object.freeze([
   "inbox_entry",
   "audit_event",
   "danger_policy",
+  // Spec 003 (FR-030): el gestor de tareas local. Tres tablas para UNA entidad
+  // —la tarea—, y no es un descuadre: la numeracion por proyecto y los
+  // comentarios son sub-entidades que necesitan su fila.
+  "local_task",
+  "local_task_comment",
+  "local_task_sequence",
 ]);
 
 /** Los enums de `data-model.md`, en un solo sitio. */
@@ -91,6 +97,15 @@ export const ENUMS = Object.freeze({
   ],
   "inbox_entry.estado": ["esperando", "aprobada", "rechazada", "cambios_solicitados", "caducada"],
   "audit_event.resultado": ["permitido", "denegado", "error"],
+  // Los cinco canonicos del contrato de proveedor mas `backlog`, que es el
+  // estado de LECTURA del board (ver `LISTED_STATES` en providers/contract.mjs).
+  // Aqui si se escribe: el gestor local distingue backlog de todo porque el
+  // operador lo decide al crear la tarea.
+  "local_task.estado": ["backlog", "todo", "in_progress", "blocked", "in_review", "done"],
+  // Como termina la tarea (FR-032). NINGUNO mergea: la autonomia termina en el
+  // PR abierto (principio IV), y un valor `merge` que el CHECK aceptara seria
+  // un valor que alguien acabaria poniendo.
+  "local_task.termino": ["changes", "commit", "pr"],
   "danger_policy.capacidad": [
     "merge_autonomo",
     "despliegue",
@@ -557,6 +572,78 @@ BEGIN
 END;
 `;
 
+// LAS TAREAS PROPIAS (spec 003, FR-030..032). Una version nueva y no un
+// retoque de la 1: la huella de la 1 esta escrita en la base del operador.
+//
+// POR QUE `local_task` Y NO `task`. Una tabla `task` es exactamente la senal que
+// la guarda de `paquete-autocontenido.test.mjs` busca para detectar que el
+// almacen empezo a guardar las tareas DEL RUN (T001, T002...), que son del
+// motor y viven en archivos (principio III). Esto es otra cosa —un ticket del
+// gestor local, lo que el motor RECIBE para planificar— y el nombre tiene que
+// decirlo: con `task` a secas, el proximo que lea el esquema creeria que el
+// run se proyecta aqui.
+//
+// POR QUE LA NUMERACION TIENE TABLA PROPIA Y NO ES UN `MAX(numero) + 1`. Con
+// `MAX + 1`, borrar la ultima tarea devuelve su numero a la siguiente, y
+// `PAY-12` pasa a nombrar dos cosas distintas en dos momentos: el comentario
+// de un PR viejo que dice «cierra PAY-12» apunta a la tarea equivocada. La
+// secuencia solo avanza. Y el prefijo vive con ella porque es del PROYECTO, no
+// de cada tarea: cambiarlo afecta a las siguientes y no reescribe las claves
+// que ya se citaron en algun sitio.
+//
+// POR QUE `clave` SE GUARDA ENTERA ademas del numero. Es lo que se busca, se
+// cita y se muestra; recomponerla del prefijo ACTUAL cambiaria la clave de las
+// tareas viejas el dia que el operador cambie el prefijo.
+const TAREAS_SQL = `
+CREATE TABLE local_task_sequence (
+  project_id TEXT PRIMARY KEY REFERENCES project(id) ON DELETE CASCADE,
+  -- Mayusculas y digitos, empezando por letra: viaja en nombres de rama y en
+  -- mensajes de commit, donde un espacio o una barra rompen algo.
+  prefijo    TEXT NOT NULL CHECK (prefijo GLOB '[A-Z]*' AND prefijo NOT GLOB '*[^A-Z0-9]*' AND length(prefijo) <= 10),
+  ultimo     INTEGER NOT NULL DEFAULT 0 CHECK (ultimo >= 0)
+) STRICT;
+
+CREATE TABLE local_task (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  -- \`NULL\` = el repositorio del proyecto. Un proyecto de varios repos lo
+  -- concreta; hoy el motor corre sobre el unico que tiene.
+  repo        TEXT,
+  numero      INTEGER NOT NULL CHECK (numero > 0),
+  clave       TEXT NOT NULL,
+  titulo      TEXT NOT NULL CHECK (length(trim(titulo)) > 0),
+  -- Markdown. Es el cuerpo que el planificador lee.
+  plan        TEXT NOT NULL DEFAULT '',
+  criterios   TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(criterios) AND json_type(criterios) = 'array'),
+  -- 0 urgente ... 4 baja, la escala del contrato de proveedor. \`NULL\` es «sin
+  -- prioridad», que no es lo mismo que la mas baja.
+  prioridad   INTEGER CHECK (prioridad IS NULL OR prioridad BETWEEN 0 AND 4),
+  etiquetas   TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(etiquetas) AND json_type(etiquetas) = 'array'),
+  -- {runtime, agente?} o \`NULL\`: sin ejecutor propio la tarea hereda en
+  -- cascada (FR-031), y la cascada se resuelve al lanzar, no se copia aqui.
+  ejecutor    TEXT CHECK (ejecutor IS NULL OR (json_valid(ejecutor) AND json_type(ejecutor, '$.runtime') = 'text')),
+  termino     TEXT NOT NULL DEFAULT 'pr' CHECK (termino ${en("local_task.termino")}),
+  estado      TEXT NOT NULL DEFAULT 'todo' CHECK (estado ${en("local_task.estado")}),
+  creado      TEXT NOT NULL,
+  actualizado TEXT NOT NULL,
+  UNIQUE (project_id, numero),
+  UNIQUE (project_id, clave)
+) STRICT;
+
+CREATE INDEX tarea_por_proyecto ON local_task(project_id, estado, numero);
+
+-- Lo que el motor deja dicho sobre la tarea (el enlace al PR, el resumen del
+-- plan). Append-only en la practica: nadie edita lo que el motor dijo.
+CREATE TABLE local_task_comment (
+  id      TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES local_task(id) ON DELETE CASCADE,
+  texto   TEXT NOT NULL,
+  creado  TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX comentario_por_tarea ON local_task_comment(task_id, creado);
+`;
+
 /**
  * Las migraciones, en orden.
  *
@@ -573,4 +660,5 @@ export const MIGRACIONES = Object.freeze([
   { version: 2, nombre: "indices-de-consulta", sql: INDICES_SQL },
   { version: 3, nombre: "auditoria-append-only", sql: APPEND_ONLY_SQL },
   { version: 4, nombre: "conexion-del-espacio-de-trabajo", sql: CONEXION_DEL_ESPACIO_SQL },
+  { version: 5, nombre: "tareas-propias", sql: TAREAS_SQL },
 ]);

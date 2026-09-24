@@ -26,10 +26,50 @@ export const CAPABILITY_KEYS = [
   // System.AssignedTo); GitHub y Linear no, y sin esta capacidad declarar un
   // responsable se ignoraba en silencio.
   "identityAssignee",
+  // Si el gestor sabe LISTAR los tickets abiertos del espacio del proyecto (spec
+  // 003, contracts/board-api.md §1). Es lo que llena Backlog y Todo del board.
+  // Sin ella el board no queda vacio: muestra lo que el motor ya conoce del
+  // proyecto y una nota que nombra al proveedor y la capacidad que le falta.
+  "listItems",
 ];
+
+/**
+ * Las capacidades que llegaron DESPUES de que existieran proveedores, y que por
+ * eso se pueden omitir: ausente vale `false`.
+ *
+ * POR QUE NO SE EXIGEN COMO LAS DEMAS. Hacer obligatoria una clave nueva rompe
+ * al cargar a todo proveedor escrito contra el contrato anterior —incluidos los
+ * que viven fuera de este repositorio, que el motor carga por configuracion—, y
+ * los rompe por algo que no usan. Omitirla es exactamente la degradacion
+ * declarada: `can(mod, "listItems")` devuelve `available: false` con el motivo.
+ * Lo que SI se exige es que, si se declara, sea boolean, y que en `true` venga
+ * con su funcion. Los cuatro proveedores de este repositorio la declaran
+ * explicita.
+ */
+export const OPTIONAL_CAPABILITY_KEYS = ["listItems"];
 
 export const CANONICAL_STATES = ["todo", "in_progress", "blocked", "in_review", "done"];
 export const LEVELS = ["epic", "feature", "story", "task"];
+
+/**
+ * Los estados en que puede venir un ticket LISTADO: los cinco canonicos mas
+ * `backlog`.
+ *
+ * POR QUE `backlog` NO ENTRA EN CANONICAL_STATES. Los cinco de arriba son los
+ * que `setState` sabe escribir y los que el `stateMap` de todo proyecto declara
+ * (el chequeo 7 lo exige). `backlog` es solo de LECTURA: el board lo usa para
+ * separar lo que todavia no se planifico de lo que esta por hacer, y solo
+ * cuando el gestor lo distingue de verdad (Linear: tipo de estado `backlog`;
+ * Azure DevOps: estado propuesto sin iteracion o mapeo explicito; GitHub: solo
+ * con `stateMap.backlog` por etiqueta). Meterlo en el enum de escritura
+ * obligaria a todo proyecto a declararlo, y un gestor que no lo tiene
+ * terminaria inventando un nombre nativo para algo que no existe.
+ */
+export const LISTED_STATES = ["backlog", "todo", "in_progress", "blocked", "in_review", "done"];
+
+/** Limites de `listItems`, del contrato: default 100, tope 500. */
+export const LIST_DEFAULT_LIMIT = 100;
+export const LIST_MAX_LIMIT = 500;
 
 // Que funcion respalda cada capacidad. `searchAssigned` y `searchMentioned`
 // comparten `searchInbox` a proposito: son dos senales de la misma consulta, y
@@ -45,6 +85,7 @@ export const CAPABILITY_FUNCTIONS = {
   searchAssigned: "searchInbox",
   searchMentioned: "searchInbox",
   boardFields: null, // no es una funcion: es un campo del Item
+  listItems: "listItems",
   // NO tiene funcion propia, igual que `boardFields`: no es una operacion
   // nueva, es COMO se llama a `searchInbox`. Mapearla a `searchInbox` obligaba
   // a exportarla a un gestor con los dos disparos en false — que es legitimo:
@@ -81,8 +122,12 @@ export function validateProvider(mod) {
 
   const caps = mod.capabilities() || {};
   for (const k of CAPABILITY_KEYS) {
-    if (!(k in caps)) problems.push(`capabilities() no declara "${k}" (hay que declararla, aunque sea false)`);
-    else if (typeof caps[k] !== "boolean") problems.push(`capabilities().${k} tiene que ser boolean`);
+    if (!(k in caps)) {
+      // Una opcional ausente es la degradacion declarada, no un olvido: ver
+      // OPTIONAL_CAPABILITY_KEYS.
+      if (OPTIONAL_CAPABILITY_KEYS.includes(k)) continue;
+      problems.push(`capabilities() no declara "${k}" (hay que declararla, aunque sea false)`);
+    } else if (typeof caps[k] !== "boolean") problems.push(`capabilities().${k} tiene que ser boolean`);
   }
   for (const k of Object.keys(caps)) {
     if (!CAPABILITY_KEYS.includes(k)) problems.push(`capabilities() declara "${k}", que no es una capacidad conocida`);
@@ -115,6 +160,110 @@ export function validateItem(item) {
   return { ok: problems.length === 0, problems };
 }
 
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * Un ticket LISTADO: el `Item` de siempre mas lo que el board pinta en la
+ * tarjeta (contracts/board-api.md §1).
+ *
+ * No se llama a `validateItem` tal cual por dos diferencias que son del
+ * contrato y no descuidos: `canonicalState` admite `backlog` y es OBLIGATORIO
+ * (un ticket sin columna no se puede pintar), y `assignee` es un objeto
+ * `{id, name, avatarUrl?}` y no el string del `Item` —el board muestra nombre
+ * y avatar, y un string no alcanza para las dos cosas—.
+ *
+ * `priority` es obligatoria como CLAVE y puede valer `null`: la diferencia entre
+ * "este gestor no tiene prioridad" (null) y "el proveedor se olvido del campo"
+ * (undefined) es la que evita que el board invente una.
+ *
+ * @returns {{ok: boolean, problems: string[]}}
+ */
+export function validateListedItem(item) {
+  if (!item || typeof item !== "object") return { ok: false, problems: ["el item no es un objeto"] };
+  const { canonicalState: _estado, assignee: _asignado, ...base } = item;
+  const problems = [...validateItem(base).problems];
+
+  if (!LISTED_STATES.includes(item.canonicalState)) {
+    problems.push(`canonicalState: tiene que ser uno de ${LISTED_STATES.join(", ")}, llego ${JSON.stringify(item.canonicalState)}`);
+  }
+  if (!("priority" in item) || (item.priority !== null && !(Number.isInteger(item.priority) && item.priority >= 0 && item.priority <= 4))) {
+    problems.push(`priority: tiene que ser un entero 0..4 o null (sin dato), llego ${JSON.stringify(item.priority)}`);
+  }
+  if (item.assignee !== null) {
+    const a = item.assignee;
+    const ok =
+      a && typeof a === "object" && typeof a.id === "string" && a.id && typeof a.name === "string" &&
+      (a.avatarUrl === undefined || a.avatarUrl === null || typeof a.avatarUrl === "string");
+    if (!ok) problems.push(`assignee: tiene que ser {id, name, avatarUrl?} o null, llego ${JSON.stringify(a)}`);
+  }
+  if (item.team !== null && typeof item.team !== "string") {
+    problems.push(`team: tiene que ser un string o null, llego ${JSON.stringify(item.team)}`);
+  }
+  if (!Array.isArray(item.labels) || item.labels.some((l) => typeof l !== "string")) {
+    problems.push(`labels: tiene que ser un array de strings, llego ${JSON.stringify(item.labels)}`);
+  }
+  if (typeof item.updatedAt !== "string" || !ISO_8601.test(item.updatedAt) || Number.isNaN(Date.parse(item.updatedAt))) {
+    problems.push(`updatedAt: tiene que ser una fecha ISO 8601, llego ${JSON.stringify(item.updatedAt)}`);
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * La consulta de `listItems`, normalizada: la misma para todo proveedor.
+ *
+ * Un limite que no es numero NO se interpreta (`"7"` cae en el default): el
+ * servicio lo manda como numero, y adivinar en el proveedor es como dos gestores
+ * terminan entendiendo cosas distintas por la misma consulta.
+ *
+ * @param {{limit?: number, cursor?: string|null, includeDone?: boolean}} [query]
+ * @returns {{limit: number, cursor: string|null, includeDone: boolean}}
+ */
+export function listQuery(query) {
+  const q = query && typeof query === "object" ? query : {};
+  let limit = LIST_DEFAULT_LIMIT;
+  if (typeof q.limit === "number" && Number.isFinite(q.limit)) {
+    limit = Math.min(LIST_MAX_LIMIT, Math.max(1, Math.floor(q.limit)));
+  }
+  const cursor = typeof q.cursor === "string" && q.cursor ? q.cursor : null;
+  return { limit, cursor, includeDone: q.includeDone === true };
+}
+
+/**
+ * La pagina que devuelve `listItems`: `{items, nextCursor, total}`, cada item
+ * valido, sin repetidos, sin pasarse del limite, y sin `done` si no se pidio.
+ *
+ * @param {any} page
+ * @param {{limit?: number, includeDone?: boolean}} [query] la consulta que la produjo
+ * @returns {{ok: boolean, problems: string[]}}
+ */
+export function validateListPage(page, query = {}) {
+  const problems = [];
+  if (!page || typeof page !== "object") return { ok: false, problems: ["la pagina no es un objeto"] };
+  if (!Array.isArray(page.items)) {
+    problems.push(`items: tiene que ser un array, llego ${JSON.stringify(page.items)}`);
+    return { ok: false, problems };
+  }
+  if (!("nextCursor" in page) || (page.nextCursor !== null && (typeof page.nextCursor !== "string" || !page.nextCursor))) {
+    problems.push(`nextCursor: tiene que ser un string no vacio o null, llego ${JSON.stringify(page.nextCursor)}`);
+  }
+  if (!("total" in page) || (page.total !== null && !(Number.isInteger(page.total) && page.total >= 0))) {
+    problems.push(`total: tiene que ser un entero >= 0 o null (el gestor no lo da), llego ${JSON.stringify(page.total)}`);
+  }
+  const { limit, includeDone } = listQuery(query);
+  if (page.items.length > limit) problems.push(`items: vinieron ${page.items.length} con limit ${limit}`);
+  const vistos = new Set();
+  page.items.forEach((item, i) => {
+    const r = validateListedItem(item);
+    for (const p of r.problems) problems.push(`items[${i}] (${JSON.stringify(item?.id)}): ${p}`);
+    if (item && vistos.has(item.id)) problems.push(`items[${i}]: el id ${JSON.stringify(item.id)} vino repetido`);
+    if (item) vistos.add(item.id);
+    if (item?.canonicalState === "done" && !includeDone) {
+      problems.push(`items[${i}]: vino en done sin includeDone — el board lo volveria a ofrecer para correr`);
+    }
+  });
+  return { ok: problems.length === 0, problems };
+}
+
 /**
  * Consulta una capacidad antes de usarla, y devuelve la degradacion declarada
  * en vez de reventar. Es la funcion que el motor usa en cada punto donde una
@@ -136,7 +285,9 @@ export function can(mod, capacidad) {
  * proveedor la recorra con el runner que quiera.
  *
  * @param {object} mod
- * @param {{ctx: object, defaultLevel: string, knownItemId: string, unknownItemId: string, unknownTypeItemId: string, sourceUrl: URL}} fx
+ * @param {{ctx: object, defaultLevel: string, knownItemId: string, unknownItemId: string, unknownTypeItemId: string, sourceUrl: URL, listLimit?: number}} fx
+ *   `listLimit` es el limite con que el chequeo 9 pide la primera pagina (2 por
+ *   defecto, para que el cursor se ejercite con fixtures chicos).
  */
 export function contractChecks(mod, fx) {
   const assert = (cond, mensaje) => {
@@ -255,6 +406,43 @@ export function contractChecks(mod, fx) {
           !/process\.env/.test(sinComentarios),
           "lee process.env directamente: las credenciales y opciones llegan por ctx",
         );
+      },
+    },
+    {
+      name: "9. listItems: en true lista paginas validas y el cursor avanza; en false la degradacion esta declarada",
+      run: async () => {
+        const caps = mod.capabilities() || {};
+        if (caps.listItems !== true) {
+          // Sin la capacidad no se llama NADA: la decision del board sale de
+          // `can()`, y una llamada "a ver si anda" es un viaje a la API por
+          // tarjeta que el gestor ya dijo que no puede contestar.
+          const r = can(mod, "listItems");
+          assert(!r.available, "listItems no esta en true pero can() la da por disponible");
+          assert(/listItems/.test(String(r.reason)), `el motivo no nombra la capacidad: ${r.reason}`);
+          return;
+        }
+
+        // Limite chico A PROPOSITO: con el default (100) ningun fixture llega a
+        // la segunda pagina, y el cursor —que es donde los proveedores se
+        // equivocan— quedaria sin probar.
+        const limit = fx.listLimit ?? 2;
+        const p1 = await mod.listItems({ limit }, fx.ctx);
+        const v1 = validateListPage(p1, { limit });
+        assert(v1.ok, `la primera pagina no valida:\n  - ${v1.problems.join("\n  - ")}`);
+        assert(p1.items.length > 0, "los fixtures no traen ningun ticket abierto: el chequeo no prueba nada");
+
+        if (p1.nextCursor) {
+          const p2 = await mod.listItems({ limit, cursor: p1.nextCursor }, fx.ctx);
+          const v2 = validateListPage(p2, { limit });
+          assert(v2.ok, `la pagina del cursor no valida:\n  - ${v2.problems.join("\n  - ")}`);
+          const antes = new Set(p1.items.map((/** @type {any} */ i) => i.id));
+          const repetidos = p2.items.filter((/** @type {any} */ i) => antes.has(i.id)).map((/** @type {any} */ i) => i.id);
+          assert(
+            repetidos.length === 0,
+            `el cursor ${JSON.stringify(p1.nextCursor)} devolvio otra vez ${repetidos.join(", ")}: ` +
+              `un cursor que no avanza hace girar al board para siempre`,
+          );
+        }
       },
     },
   ];

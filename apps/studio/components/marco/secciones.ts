@@ -1,4 +1,4 @@
-import { SECCIONES_DE_PROYECTO, type Seccion } from '@/lib/ruta'
+import { SECCIONES_DE_PROYECTO, esAjusteGeneral, type Seccion } from '@/lib/ruta'
 
 /**
  * El modelo de la navegacion, en un solo sitio.
@@ -21,52 +21,73 @@ import { SECCIONES_DE_PROYECTO, type Seccion } from '@/lib/ruta'
  * llamandose por su identificador interno en la miga.
  */
 export const ETIQUETA_DE_SECCION: Record<Seccion, string> = {
-  inicio: 'Inicio',
+  board: 'Board',
+  runs: 'Runs',
+  costos: 'Costos',
+  settings: 'Settings',
+  modelos: 'Modelos',
+  'flota-por-defecto': 'Flota por defecto',
+  inicio: 'Indicadores',
   asistente: 'Asistente',
   bandeja: 'Bandeja',
   proyectos: 'Proyectos',
   'proyecto-nuevo': 'Anadir proyecto',
+  ajustes: 'General',
   snapshot: 'Snapshot',
   constitution: 'Constitution',
+  guidelines: 'Guidelines',
+  diseno: 'Diseno',
   bootstrap: 'Bootstrap',
   conexiones: 'Conexiones',
   flota: 'Flota',
-  runs: 'Ciclos',
+  ciclos: 'Ciclos',
   credenciales: 'Credenciales',
   auditoria: 'Auditoria',
   catalogo: 'Catalogo de componentes',
 }
 
 /**
- * Nivel uno: lo que es del espacio de trabajo y existe siempre.
+ * El nombre de la pestana cuando no coincide con el de la seccion.
  *
- * `proyecto-nuevo` NO esta aqui aunque sea de este nivel: es una accion, no un
- * destino permanente, y ya tiene su boton en la pantalla de proyectos y su
- * comando en ⌘K. Una entrada fija en la navegacion para un formulario de alta
- * gasta una linea del nivel uno en algo que se usa una vez por proyecto.
+ * `settings` como seccion se llama «Settings» en la navegacion —es el destino—
+ * y como pestana se llama por lo que contiene. Sin esta tabla la primera
+ * pestana de Settings diria «Settings», que no dice nada.
  */
-export const SECCIONES_DEL_WORKSPACE: readonly Seccion[] = [
-  'inicio',
-  'asistente',
-  'bandeja',
-  'proyectos',
-  'credenciales',
-  'auditoria',
-]
+export const ETIQUETA_DE_PESTANA: Partial<Record<Seccion, string>> = {
+  settings: 'Herramientas y conexiones',
+  conexiones: 'Conexiones del proyecto',
+}
+
+export function etiquetaDePestana(seccion: Seccion): string {
+  return ETIQUETA_DE_PESTANA[seccion] ?? ETIQUETA_DE_SECCION[seccion]
+}
 
 /**
- * Las secciones que se pintan SIN el rail de navegacion.
+ * LOS CUATRO DESTINOS PRINCIPALES, y son exactamente cuatro (FR-022).
+ *
+ * Es la simplificacion que pidio el operador: «un proyecto tiene un board de
+ * control y listo». En la 002 el nivel principal tenia seis destinos del
+ * espacio de trabajo y seis mas por proyecto, y el conjunto obligaba a saber
+ * cual tocaba. Todo lo que salio de aqui sigue en Settings y en ⌘K; la guarda
+ * de que ninguna pantalla quedo solo por direccion es `aplicacion.tsx`.
+ */
+export const DESTINOS_PRINCIPALES = ['board', 'runs', 'costos', 'settings'] as const satisfies readonly Seccion[]
+
+export type DestinoPrincipal = (typeof DESTINOS_PRINCIPALES)[number]
+
+/**
+ * Las secciones que se pintan SIN la navegacion lateral.
  *
  * EL FALLO CONCRETO: el asistente existe para que haya UNA decision en
- * pantalla. Con el rail montado al lado hay once destinos compitiendo con
+ * pantalla. Con la navegacion montada al lado hay destinos compitiendo con
  * ella, y el paso que dice "decide estos 57 hallazgos" queda a la misma
- * distancia visual que "Auditoria". Lo que se corrige no es el ancho: es que
- * la pantalla siga ofreciendo salida por once sitios cuando lo que pide es
+ * distancia visual que "Costos". Lo que se corrige no es el ancho: es que la
+ * pantalla siga ofreciendo salida por muchos sitios cuando lo que pide es
  * atencion en uno.
  *
- * NO ES UNA CARCEL. La cabecera se queda entera —migas, conmutador de
- * proyecto, ⌘K— y el asistente pinta su propia salida al modo consola en cada
- * paso. Lo que desaparece es el menu permanente, no la puerta.
+ * NO ES UNA CARCEL. La cabecera se queda entera —migas y ⌘K— y el asistente
+ * pinta su propia salida en cada paso. Lo que desaparece es el menu
+ * permanente, no la puerta.
  */
 export const SECCIONES_SIN_RAIL: readonly Seccion[] = ['asistente']
 
@@ -75,29 +96,29 @@ export function pintaRail(seccion: Seccion): boolean {
 }
 
 /**
- * Nivel dos: las etapas del proyecto abierto, en el orden en que se recorren.
- *
- * ESTE ORDEN NO ES ALFABETICO NI CASUAL: es el mismo recorrido que declara
- * `DESTINO_DE_ETAPA` en `lib/ruta.ts` (CREATED -> snapshot, DISCOVERED ->
- * constitution, ...). Que la navegacion lo liste en otro orden que el que la
- * maquina de estados impone ensena un recorrido que el sistema no permite.
+ * Nivel dos del recorrido: las etapas del proyecto, en el orden en que se
+ * recorren. Lo consume el menu de comandos para ofrecerlas atadas al proyecto
+ * abierto.
  */
 export const SECCIONES_DE_LA_ETAPA = SECCIONES_DE_PROYECTO
 
 /**
- * Que entrada de la navegacion queda marcada cuando la ruta no es ninguna.
+ * Que destino principal queda marcado estando donde se esta.
  *
- * Solo queda una pareja: las seis etapas ya se marcan a si mismas desde que
- * existe el nivel dos. Antes estaban todas aqui apuntando a `proyectos`, que
- * era la unica forma de que el marco no se quedara sin nada resaltado — y el
- * sintoma era el que motiva esta feature: estar dentro de la constitution de
- * un proyecto y que el marco marcara "Proyectos", sin decir de cual.
+ * Las pestanas de Settings general marcan «Settings». Las de Settings DEL
+ * PROYECTO no marcan ningun destino: las marca el proyecto en la lista
+ * lateral, que es lo que el operador eligio para llegar ahi. Marcar «Settings»
+ * estando en la constitution de un proyecto repetiria el fallo que motivo el
+ * marco de la 002 — decir en que etapa se esta y no de que proyecto.
  */
-export const SECCION_PADRE: Partial<Record<Seccion, Seccion>> = {
-  'proyecto-nuevo': 'proyectos',
-}
-
-/** Que entrada se marca como activa estando donde se esta. */
-export function seccionActiva(seccion: Seccion): Seccion {
-  return SECCION_PADRE[seccion] ?? seccion
+export function destinoActivo(seccion: Seccion): DestinoPrincipal | null {
+  if ((DESTINOS_PRINCIPALES as readonly Seccion[]).includes(seccion)) {
+    return seccion as DestinoPrincipal
+  }
+  if (esAjusteGeneral(seccion)) return 'settings'
+  // Las pantallas de la 002 que no son de proyecto ni pestanas de Settings
+  // —inicio, bandeja, proyectos, alta— se alcanzan desde Settings y desde
+  // ⌘K. Marcar Settings es decir por donde se vuelve a ellas.
+  if (['inicio', 'bandeja', 'proyectos', 'proyecto-nuevo'].includes(seccion)) return 'settings'
+  return null
 }

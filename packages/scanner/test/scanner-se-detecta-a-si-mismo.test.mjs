@@ -3,7 +3,7 @@
 // POR QUE SOBRE ESTE REPOSITORIO Y NO SOBRE UN FIXTURE MAS. Porque un fixture
 // lo escribe la misma persona que escribe el detector, y sale exactamente con
 // las señales que el detector sabe leer. Este arbol no: es un monorepo de
-// verdad, con workspaces, con un plugin, con cuatro implementaciones de un
+// verdad, con workspaces, con un plugin, con cinco implementaciones de un
 // contrato, con un `.gitignore` que excluye una parte de `.specify/` y vuelve a
 // incluir otra. Si el scanner sirve para el proyecto de alguien, tiene que
 // empezar por servir para el suyo.
@@ -123,7 +123,7 @@ test("detecta el plugin del agente, sus hooks, sus comandos y sus skills", () =>
   assert.ok(subagentes.valor.length >= 4, `se detectaron ${subagentes.valor.length} subagentes`);
 });
 
-test("detecta las cuatro implementaciones del contrato de proveedor", () => {
+test("detecta las cinco implementaciones del contrato de proveedor", () => {
   // Es el principio VI hecho estructura: el motor habla con una interfaz y las
   // implementaciones son archivos planos al lado. El detector no sabe como se
   // llama ese directorio en este proyecto; lo encuentra por la forma —un
@@ -137,8 +137,9 @@ test("detecta las cuatro implementaciones del contrato de proveedor", () => {
   assert.ok(proveedores, `los puntos detectados fueron ${JSON.stringify(puntos.valor)}`);
   assert.deepEqual(
     [...proveedores.implementaciones].sort(),
-    ["azure-devops", "fake", "github", "linear"],
-    "no salieron los cuatro proveedores incluidos",
+    // `local` es el gestor de tareas propio (spec 003), un proveedor mas.
+    ["azure-devops", "fake", "github", "linear", "local"],
+    "no salieron los cinco proveedores incluidos",
   );
 });
 

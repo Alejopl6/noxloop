@@ -30,7 +30,13 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
 import { abrirAlmacen } from "../../store/src/index.mjs";
-import { crearBoveda, crearRedactor, crearBackendDeArchivo, elegirBackend } from "../../vault/src/index.mjs";
+import {
+  crearBoveda,
+  crearRedactor,
+  crearBackendDeArchivo,
+  crearBackendDeLlavero,
+  elegirBackend,
+} from "../../vault/src/index.mjs";
 
 import { ErrorDeServicio } from "./errores.mjs";
 import { repositorioDeNucleoSobreAlmacen } from "./nucleo-repositorio.mjs";
@@ -43,6 +49,16 @@ export const ARCHIVO_DE_LA_BOVEDA = "boveda-cifrada.json";
 
 /** La variable de entorno con la frase de paso del respaldo cifrado. */
 export const VARIABLE_DE_FRASE = "NOXLOOP_BOVEDA_FRASE";
+
+/**
+ * La variable con la ruta del binario `noxloop-llavero`.
+ *
+ * La pone el escritorio al lanzar el sidecar —el binario viaja junto al
+ * ejecutable de la aplicacion— y se puede poner a mano en `npm run service`
+ * apuntando a `apps/desktop/src-tauri/target/debug/noxloop-llavero`. Es una
+ * RUTA, no un secreto: por eso puede ir por entorno sin mas ceremonia.
+ */
+export const VARIABLE_DEL_LLAVERO = "NOXLOOP_LLAVERO";
 
 /**
  * La sal de las huellas, persistida.
@@ -207,32 +223,50 @@ export function bovedaDeLaCapaDeConexiones({ backend, repositorio, auditoria, sa
 /**
  * El backend de secretos, o la constancia de por que no hay ninguno.
  *
- * @param {{home: string, frase?: string|null}} opts
- * @returns {{backend: any, ausencia: null}|{backend: null, ausencia: {porque: string, comoConseguirlo: string}}}
+ * EL LLAVERO VA PRIMERO, Y SE SONDEA DE VERDAD. Antes este servicio no lo
+ * sondeaba nunca y solo montaba la boveda con frase de paso; nadie la pasaba,
+ * asi que en la instalacion real no habia boveda, ni adaptador de tokens, ni
+ * forma de conectar GitHub. El sondeo es `disponible`, que pregunta si hay
+ * llavero y no lee ninguna credencial. Si contesta que si, el llavero guarda
+ * los valores y no hace falta frase. Si no, se declara por que, y solo
+ * entonces se mira la frase.
+ *
+ * @param {{home: string, frase?: string|null, llavero?: {ejecutable: string, argumentosPrevios?: string[]}|null}} opts
+ * @returns {Promise<{backend: any, ausencia: null}|{backend: null, ausencia: {porque: string, comoConseguirlo: string}}>}
  */
-function backendDeSecretos({ home, frase }) {
-  // El sondeo del llavero del sistema todavia no existe en este servicio, y
-  // `elegirBackend` esta hecho justamente para que esa ausencia se declare en
-  // vez de caerse callada al archivo cifrado: el operador cree que lo protege
-  // el sistema operativo y en realidad lo protege una frase de paso.
-  const eleccion = elegirBackend({
-    llavero: {
-      disponible: false,
-      causa:
-        "este servicio todavia no sondea el llavero del sistema operativo; la deteccion llega con la etapa de " +
-        "credenciales y declarar el llavero sin haberlo ejercido seria prometer una proteccion que nadie probo",
-    },
-  });
+async function backendDeSecretos({ home, frase, llavero }) {
+  let sondeo = {
+    disponible: false,
+    causa:
+      `no hay binario del llavero declarado: \`${VARIABLE_DEL_LLAVERO}\` no esta en el entorno. El escritorio lo ` +
+      "pone al lanzar este servicio; a mano, apuntalo a `noxloop-llavero`",
+  };
+  /** @type {any} */
+  let delLlavero = null;
+  if (llavero?.ejecutable) {
+    delLlavero = crearBackendDeLlavero({
+      ejecutable: llavero.ejecutable,
+      argumentosPrevios: llavero.argumentosPrevios ?? [],
+      motivo: "el llavero del sistema operativo respondio al sondeo",
+    });
+    sondeo = await delLlavero.disponible();
+  }
+  const eleccion = elegirBackend({ llavero: sondeo });
+  if (eleccion.tipo === "keychain_so" && delLlavero) {
+    return { backend: Object.assign(delLlavero, { motivo: eleccion.motivo }), ausencia: null };
+  }
 
   if (!frase) {
     return {
       backend: null,
       ausencia: {
         porque:
-          "no hay backend de secretos montado: el llavero del sistema no se sondea todavia y el respaldo " +
-          "cifrado no tiene frase de paso.",
+          `no hay backend de secretos montado: el llavero del sistema no esta disponible (${sondeo.causa ?? "sin causa"}) ` +
+          "y el respaldo cifrado no tiene frase de paso.",
         comoConseguirlo:
-          `Arranca el servicio con \`${VARIABLE_DE_FRASE}\` en el entorno —la frase con la que se cifra ` +
+          `Lo normal es el llavero: arranca el servicio desde la aplicacion de escritorio, o con ` +
+          `\`${VARIABLE_DEL_LLAVERO}\` apuntando al binario \`noxloop-llavero\`. Sin llavero, ` +
+          `arranca con \`${VARIABLE_DE_FRASE}\` en el entorno —la frase con la que se cifra ` +
           `\`<home>/${ARCHIVO_DE_LA_BOVEDA}\`— y vuelve a intentarlo. No se genera una sola: una frase ` +
           "guardada junto al archivo que cifra no protege de nadie, y el operador creeria que si.",
       },
@@ -330,6 +364,7 @@ export function bovedaDelAlmacenParaLaBoveda(almacen) {
  * @param {{
  *   home: string,
  *   frase?: string|null,
+ *   llavero?: {ejecutable: string, argumentosPrevios?: string[]}|null,
  *   backendDeSecretos?: any,
  *   proveedorDeConexiones?: any|((piezas: {boveda: any, home: string, workspace: any}) => any),
  *   adaptadores?: any,
@@ -347,7 +382,18 @@ export async function abrirDependencias(opts) {
   // evento de auditoria — o sea, al peor momento.
   const eleccion = opts.backendDeSecretos
     ? { backend: opts.backendDeSecretos, ausencia: null }
-    : backendDeSecretos({ home, frase: opts.frase ?? null });
+    : await backendDeSecretos({
+        home,
+        frase: opts.frase ?? null,
+        // Sin opcion explicita se toma del entorno, igual que la frase en
+        // `servidor.mjs`: es lo que pone el escritorio al lanzar el sidecar.
+        llavero:
+          opts.llavero !== undefined
+            ? opts.llavero
+            : process.env[VARIABLE_DEL_LLAVERO]
+              ? { ejecutable: String(process.env[VARIABLE_DEL_LLAVERO]) }
+              : null,
+      });
   const ausenciaDeLaBoveda = eleccion.ausencia;
 
   /** @type {any} */

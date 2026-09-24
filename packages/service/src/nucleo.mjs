@@ -656,3 +656,145 @@ export async function completarBootstrap(p) {
   );
   return { cuerpo: { proyecto: actualizado } };
 }
+
+// ---------------------------------------------------------------------------
+// El modo rapido (spec 003, US8): las etapas 02 y 05 decididas por UNA sola
+// decision del operador, sin escribir en su repositorio.
+// ---------------------------------------------------------------------------
+
+/**
+ * Un arbol que LEE del disco y NO ESCRIBE: anota lo que se habria escrito.
+ *
+ * POR QUE EXISTE. `fijarConstitution` escribe el documento en el repositorio
+ * (FR-021: vive versionada junto al codigo), y eso esta bien cuando el
+ * operador pulso «Fijar» con el documento delante. En el modo rapido pulso
+ * «Activar»: decidio llegar al board, no escribir un archivo en su repo. Nada
+ * se escribe sin decision explicita, asi que la constitution queda en el
+ * almacen —que es lo que la guarda `constitution_vigente` mira— y lo que no se
+ * escribio se DEVUELVE para decirlo como hueco, en vez de callarlo.
+ *
+ * @param {any} proyecto
+ */
+function arbolQueNoEscribe(proyecto) {
+  const disco = arbolDe(proyecto);
+  /** @type {string[]} */
+  const noEscritas = [];
+  return {
+    noEscritas,
+    arbol: {
+      raiz: disco.raiz,
+      existe: disco.existe,
+      leer: disco.leer,
+      escribir: (/** @type {string} */ ruta) => {
+        noEscritas.push(ruta);
+      },
+    },
+  };
+}
+
+/**
+ * Fija la constitution MINIMA que el nucleo sabe derivar del snapshot aceptado,
+ * sin escribirla en el repositorio. Pasa por `fijarConstitution` —la misma via
+ * que el `PUT`— asi que la transicion la sigue juzgando el almacen.
+ *
+ * `sobreescribir: true` NO pisa nada: el arbol de arriba no escribe. Sin el,
+ * un repositorio que ya trae su constitution en esa ruta haria fallar el modo
+ * rapido por un archivo que este camino ni siquiera iba a tocar.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} proyecto
+ */
+export function fijarConstitutionMinima(p, proyecto) {
+  const snapshot = snapshotDelNucleo(p.dep, proyecto);
+  const propuesta = proponerConstitution({ snapshot, proyecto });
+  const { arbol, noEscritas } = arbolQueNoEscribe(proyecto);
+
+  const salida = fijarConstitution({
+    project_id: proyecto.id,
+    contenido: propuesta.documento,
+    ruta_en_repo: propuesta.ruta_en_repo,
+    arbol,
+    repositorio: p.dep.nucleo,
+    version: propuesta.version,
+    sobreescribir: true,
+  });
+
+  // El origen de cada apartado viaja como lo produjo el nucleo, igual que en el
+  // `PUT` del asistente: un inferido nunca se guarda como detectado.
+  apartadosPorConstitution.set(
+    salida.constitution.id,
+    propuesta.apartados.map((/** @type {any} */ a) => ({
+      clave: a.id,
+      contenido: a.contenido ?? "",
+      origen: a.origen,
+      evidencia: a.evidencia ?? [],
+    })),
+  );
+
+  p.estado.bus.emitir(
+    "proyecto.estado",
+    { estado: salida.proyecto.estado, motivo: `constitution ${salida.constitution.version} fijada por el modo rapido` },
+    { project_id: proyecto.id },
+  );
+
+  return {
+    constitution: { id: salida.constitution.id, version: salida.constitution.version, ruta_en_repo: salida.constitution.ruta_en_repo },
+    proyecto: salida.proyecto,
+    noEscritas,
+    vacios: propuesta.apartados.filter((/** @type {any} */ a) => a.origen === "vacio").map((/** @type {any} */ a) => a.id),
+  };
+}
+
+/**
+ * Resuelve el bootstrap OMITIENDO cada recomendacion pendiente, con motivo.
+ *
+ * OMITIR Y NO APLICAR. Aplicar escribe en el repositorio del operador, y el
+ * modo rapido no tiene la decision de escribir (FR-026 de la 002). Omitir es
+ * una decision registrada —con su motivo, en la base y en la historia de la
+ * recomendacion— que el operador puede revisar despues desde Settings ->
+ * Bootstrap: `analyze` vuelve a proponer lo que se omitio.
+ *
+ * Si todavia no hay ninguna recomendacion, se ANALIZA primero: la guarda
+ * distingue «no corrio» de «corrio y todo quedo decidido», y el modo rapido no
+ * puede fingir lo segundo.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} proyecto
+ * @param {string} motivo
+ */
+export function resolverBootstrapOmitiendo(p, proyecto, motivo) {
+  const base = p.dep.almacen.base;
+  const contar = () => Number(base.consultarUno("SELECT COUNT(*) AS n FROM recommendation WHERE project_id = ?", [proyecto.id]).n);
+
+  let analizado = false;
+  if (contar() === 0) {
+    analizar({
+      snapshot: snapshotDelNucleo(p.dep, proyecto),
+      arbol: arbolDe(proyecto),
+      constitution: constitutionParaElBootstrap(p.dep, proyecto.id),
+      project_id: proyecto.id,
+      repositorio: p.dep.nucleo,
+    });
+    analizado = true;
+  }
+
+  let omitidas = 0;
+  // Primero por el nucleo, que deja la decision en la historia de la
+  // recomendacion en memoria ademas de en la base.
+  for (const rec of p.dep.nucleo.recomendaciones(proyecto.id)) {
+    if (rec.decision !== "pendiente") continue;
+    omitir(rec, { repositorio: p.dep.nucleo, motivo });
+    omitidas++;
+  }
+  // Y lo que quede pendiente en la base sin copia en memoria —un analisis de
+  // antes de reiniciar el servicio— se decide directo en el almacen: la guarda
+  // cuenta filas, y una fila pendiente huerfana bloquearia la etapa para
+  // siempre.
+  const huerfanas = base.consultar("SELECT id FROM recommendation WHERE project_id = ? AND decision = 'pendiente'", [proyecto.id]);
+  for (const fila of huerfanas) {
+    p.dep.almacen.recomendaciones.decidir(String(fila.id), { decision: "omitida", motivo_decision: motivo });
+    omitidas++;
+  }
+
+  return { analizado, total: contar(), omitidas };
+}

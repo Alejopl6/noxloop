@@ -65,7 +65,13 @@ const MARCA_LISTO: &str = "NOXLOOP_READY ";
 const SIDECAR: &str = "noxloop-service";
 
 /// Ruta del punto de entrada del servicio dentro de los recursos empaquetados.
-const ENTRADA_SERVICIO: &str = "servicio/bin/noxloop-service.mjs";
+///
+/// Los recursos REPLICAN la estructura del repositorio bajo `app/`
+/// (`tauri.conf.json`, `bundle.resources`): asi cada ruta relativa del codigo
+/// —`../../engine/bin/`, `../../../providers/`— significa lo mismo en el `.app`
+/// que en el repo. La guarda que lo exige, y que lee esta constante, es
+/// `packages/service/test/recursos-del-escritorio.test.mjs`.
+const ENTRADA_SERVICIO: &str = "app/packages/service/bin/noxloop-service.mjs";
 
 /// Lo que la interfaz necesita para hablarle al servicio, y nada mas.
 ///
@@ -139,8 +145,8 @@ fn url_de_la_marca(linea: &str) -> Option<String> {
 ///
 /// En el bundle vive bajo el directorio de recursos del `.app`. Bajo `tauri dev`
 /// el directorio de recursos es `target/debug`, y ahi `tauri-build` **si** copia
-/// lo declarado en `bundle.resources` — verificado en esta maquina: tras un
-/// `cargo check`, `target/debug/servicio/` contiene `bin/` y `src/`.
+/// lo declarado en `bundle.resources` — tras un `cargo check`,
+/// `target/debug/app/packages/service/` contiene `bin/` y `src/`.
 ///
 /// El segundo intento existe igual, y no es redundante: esa copia solo ocurre
 /// cuando `build.rs` vuelve a correr. Un `packages/service` que cambio despues
@@ -149,6 +155,18 @@ fn url_de_la_marca(linea: &str) -> Option<String> {
 /// file" que apunta a `target/debug` y no menciona el paquete del repositorio,
 /// que es donde hay que mirar.
 fn ruta_del_servicio(app: &AppHandle) -> Result<PathBuf, String> {
+    // EN DESARROLLO MANDA EL ARBOL, no la copia: la copia de `target/debug`
+    // solo se refresca cuando `build.rs` vuelve a correr, y puede estar vieja
+    // respecto del codigo que se esta editando. En un build de release no hay
+    // arbol, y se usa lo empaquetado.
+    if cfg!(debug_assertions) {
+        let del_arbol = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../packages/service/bin/noxloop-service.mjs");
+        if del_arbol.exists() {
+            return Ok(del_arbol);
+        }
+    }
+
     if let Ok(empaquetada) = app
         .path()
         .resolve(ENTRADA_SERVICIO, BaseDirectory::Resource)
@@ -181,13 +199,43 @@ fn ruta_del_servicio(app: &AppHandle) -> Result<PathBuf, String> {
 /// servicio es codigo `.mjs` que viaja como recurso. Por eso el primer argumento
 /// es la ruta del script. La decision y su motivo estan en `research.md` §1
 /// (Node SEA no soporta macOS x64; `vercel/pkg` esta archivado).
+/// El binario del llavero, si viaja junto al ejecutable de la aplicacion.
+///
+/// Es el que usa el servicio para montar la boveda sin frase de paso
+/// (`NOXLOOP_LLAVERO`, ver `packages/service/src/dependencias.mjs`). Si no
+/// esta, no se inventa una ruta: el servicio declara la ausencia con su causa.
+///
+/// Como llega ahi: no es un `externalBin`. El bundler de Tauri copia TODOS los
+/// binarios del crate junto al principal (`Contents/MacOS/` en el `.app`), y
+/// `noxloop-llavero` es un `src/bin/` de este crate. Verificado en un `.app`
+/// construido con `tauri build`. Declararlo ademas como `externalBin` pediria
+/// un archivo con sufijo de triple que existiera ANTES de compilar el crate
+/// que lo produce.
+///
+/// `EXE_SUFFIX` porque en Windows el binario es `noxloop-llavero.exe`: sin el
+/// sufijo, la boveda no se montaria nunca ahi y nada diria por que.
+fn llavero_junto_a(directorio: &std::path::Path) -> Option<PathBuf> {
+    let candidato = directorio.join(format!("noxloop-llavero{}", std::env::consts::EXE_SUFFIX));
+    candidato.exists().then_some(candidato)
+}
+
 fn arrancar_el_daemon(app: &AppHandle, token: &str) -> Result<CommandChild, String> {
     let script = ruta_del_servicio(app)?;
 
-    let (mut eventos, hijo) = app
+    let mut orden = app
         .shell()
         .sidecar(SIDECAR)
-        .map_err(|e| format!("No se pudo resolver el sidecar '{SIDECAR}': {e}"))?
+        .map_err(|e| format!("No se pudo resolver el sidecar '{SIDECAR}': {e}"))?;
+    if let Some(llavero) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
+        .and_then(|d| llavero_junto_a(&d))
+    {
+        // Una RUTA, no un secreto: va por entorno igual que el resto.
+        orden = orden.env("NOXLOOP_LLAVERO", llavero.to_string_lossy().to_string());
+    }
+
+    let (mut eventos, hijo) = orden
         .args([
             script.to_string_lossy().to_string(),
             // Puerto efimero: el sistema elige uno libre y el servicio lo anuncia
@@ -402,6 +450,31 @@ pub fn run() {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn el_llavero_se_encuentra_junto_al_ejecutable_y_si_no_esta_no_se_inventa() {
+        let dir = std::env::temp_dir().join(format!("llavero-junto-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(llavero_junto_a(&dir), None);
+        let nombre = format!("noxloop-llavero{}", std::env::consts::EXE_SUFFIX);
+        std::fs::write(dir.join(&nombre), b"").unwrap();
+        assert_eq!(llavero_junto_a(&dir), Some(dir.join(&nombre)));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn el_llavero_es_un_binario_de_este_crate_para_que_el_bundler_lo_deje_junto_al_ejecutable() {
+        // El `.app` lleva el llavero porque el bundler copia todos los binarios
+        // del crate a `Contents/MacOS/`. Si alguien lo renombra o lo mueve a otro
+        // crate, `llavero_junto_a` deja de encontrarlo y la boveda de la app
+        // instalada cae sin frase de paso, sin ningun error en el build.
+        let fuente = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/bin/noxloop-llavero.rs");
+        assert!(
+            fuente.exists(),
+            "no existe {}: el binario que `llavero_junto_a` busca ya no se construye en este crate",
+            fuente.display()
+        );
+    }
 
     // La comprobacion que T035 pide de verdad —cerrar la aplicacion y que no
     // quede ningun proceso del servicio— no se puede escribir aca: necesita una

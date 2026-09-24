@@ -207,6 +207,39 @@ export const GUARDAS = {
         comoConseguirlo: "",
       };
     }
+
+    // EL GESTOR LOCAL NO NECESITA CONEXION EXTERNA (spec 003, US8, FR-035).
+    //
+    // Lo que esta guarda comprueba es una capacidad —alcanzar de donde salen
+    // los tickets y donde se abre el PR— y desde FR-030 un proyecto puede
+    // sacar sus tickets del propio servicio. Para ese proyecto la capacidad
+    // YA ESTA: exigirle una conexion viva era exigirle conectar algo que no
+    // va a usar, y fue lo que dejo proyectos del operador varados en
+    // `CREATED` sin camino corto al board.
+    //
+    // EL ARTEFACTO SE VA A BUSCAR, como en todas las guardas: la secuencia de
+    // claves del proyecto (`local_task_sequence`), que existe desde que el
+    // proyecto declaro el gestor local o creo su primera tarea propia.
+    //
+    // Y EL LIMITE, que es la mitad que importa: un proyecto con un TRACKER
+    // PROPIO declarado —en el estado que sea— no entra por aqui. El operador
+    // dijo de donde salen sus tickets; si ese tracker no esta vivo, el rojo de
+    // abajo lo dice, y tener tareas locales no lo tapa. Relajar la guarda para
+    // el seria ejecutar tickets de otro sitio del que declaro.
+    const local = base.consultarUno("SELECT prefijo FROM local_task_sequence WHERE project_id = ?", [proyecto.id]);
+    const trackerPropio = base.consultarUno(
+      "SELECT COUNT(*) AS n FROM connection WHERE project_id = ? AND clase = 'tracker'",
+      [proyecto.id],
+    );
+    if (local && Number(trackerPropio.n) === 0) {
+      return {
+        listo: true,
+        hallado:
+          `el proyecto usa el gestor local (tareas propias, claves \`${local.prefijo}-<n>\`): sus tickets los ` +
+          "lleva este servicio y no necesita ninguna conexion externa",
+        comoConseguirlo: "",
+      };
+    }
     // El rojo cuenta LOS DOS ALCANCES. Decir "este proyecto no tiene ninguna
     // conexion" teniendo el espacio una `pendiente` manda a conectar otra vez
     // en vez de a terminar la que esta a medias.

@@ -33,6 +33,7 @@ import { aplicarMigraciones, versionDeEsquema } from "./migraciones.mjs";
 import { repositorioDeProyectos } from "./proyecto.mjs";
 import { repositorioDeAuditoria } from "./auditoria.mjs";
 import { repositorioDeBoveda } from "./boveda.mjs";
+import { repositorioDeTareas } from "./tareas.mjs";
 import {
   repositorioDeAgentes,
   repositorioDeBandeja,
@@ -92,6 +93,8 @@ export function abrirAlmacen(opciones = {}) {
     bandeja: repositorioDeBandeja(base),
     politicas: repositorioDePoliticas(base),
     boveda: repositorioDeBoveda(base),
+    // El gestor local (spec 003, FR-030). Su unico escritor es el servicio.
+    tareas: repositorioDeTareas(base),
     auditoria,
     inicio: vistaDeInicio(base),
     cerrar() {

@@ -256,6 +256,147 @@ export const CATALOGO = {
     accion: (d) => d.comoConseguirlo,
   },
 
+  // Spec 003, US8. El modo rapido para EN la etapa que no pudo dar y deja el
+  // proyecto donde llego: las etapas anteriores ya tienen su artefacto y no se
+  // deshacen. La etapa va en la causa y en `objeto.etapa`, para que la
+  // interfaz mande al paso del asistente sin leer prosa.
+  modo_rapido_detenido: {
+    estado: 409,
+    causa: (d) =>
+      `El modo rapido se detuvo en la etapa \`${d.etapa}\` del proyecto \`${d.nombre}\`, que queda en ` +
+      `\`${d.estado}\`: ${d.hallado}. Lo que ya se hizo antes de esa etapa se conserva.`,
+    accion: (d) => d.comoConseguirlo,
+  },
+
+  // ---- El puente proyecto-motor (spec 003) --------------------------------
+  //
+  // TRES CODIGOS Y NO UNO, porque cada uno manda a un sitio distinto. Un
+  // `no_se_puede_lanzar` generico obligaria a la pantalla a leer la causa para
+  // decidir a que pantalla de Settings mandar al operador, y leer prosa para
+  // decidir es como se rompe una interfaz el dia que alguien reescribe la frase.
+  // Los tres son 409: la peticion esta bien escrita, lo que falta es un dato del
+  // proyecto.
+  sin_repo: {
+    estado: 409,
+    causa: (d) =>
+      `El proyecto \`${d.nombre}\` no tiene un repositorio remoto: ni el proyecto declara \`remoto\` ni ` +
+      `\`${d.ruta}\` tiene un \`origin\`. El motor trabaja en ramas que empuja al remoto y abre el PR contra el; ` +
+      "sin remoto no hay donde dejar el trabajo.",
+    accion: (d) =>
+      `Declara el remoto del proyecto con \`PATCH /v1/projects/${d.id}\` (\`{"remoto": "..."}\`) desde Settings del ` +
+      "proyecto, o agrega un `origin` al repositorio local, y vuelve a pulsar Run.",
+  },
+
+  sin_gate: {
+    estado: 409,
+    causa: (d) =>
+      `El proyecto \`${d.nombre}\` no tiene un gate: el comando cuyo exit code decide si una tarea cumple. ` +
+      `${d.hallado}. Un run sin gate integraria codigo que nadie verifico, y el motor no lo arranca.`,
+    accion: (d) =>
+      `Vuelve a escanear el proyecto (\`POST /v1/projects/${d.id}/scan\`) despues de declarar el script \`test\` ` +
+      "en el manifiesto, o corrige el hallazgo `testing.runner` del snapshot en Settings del proyecto.",
+  },
+
+  sin_gestor: {
+    estado: 409,
+    causa: (d) =>
+      `El proyecto \`${d.nombre}\` no tiene un gestor de tickets que el motor sepa usar: ${d.hallado}. El motor ` +
+      "lee el ticket, escribe su estado y deja el enlace al PR a traves de un proveedor; sin uno no hay ticket " +
+      "que ejecutar.",
+    accion: () =>
+      "Conecta el gestor del proyecto —uno con proveedor en `providers/`— en Settings del proyecto -> Conexiones, " +
+      "y vuelve a pulsar Run.",
+  },
+
+  // Principio IX: la credencial del gestor viaja al subproceso por el entorno y
+  // solo con grant. Si no hay de donde sacarla, el motor NO se lanza: lanzarlo
+  // igual lo haria morir en `loadProvider` con «falta la variable», que es un
+  // mensaje del motor en el stderr de un proceso que nadie mira.
+  sin_credencial_del_gestor: {
+    estado: 409,
+    causa: (d) =>
+      `El gestor \`${d.gestor}\` del proyecto \`${d.nombre}\` necesita ${d.variables} en el entorno del motor, ` +
+      `y no se puede entregar: ${d.porque}. La credencial solo llega al subproceso desde la boveda y con un ` +
+      "grant vigente; nunca por la linea de comandos.",
+    accion: () =>
+      "Guarda el token del gestor en Settings -> Credenciales y concede un grant sobre ella a un agente del " +
+      "proyecto (`POST /v1/grants`); despues vuelve a pulsar Run.",
+  },
+
+  // Aprobar un plan que no esta esperando aprobacion, o reintentar un run que
+  // no fallo. UN codigo con la accion pedida y el estado adentro, porque lo que
+  // el operador necesita saber es lo mismo en los dos casos: en que esta el run
+  // y que acciones tiene de verdad.
+  run_sin_esa_accion: {
+    estado: 409,
+    causa: (d) =>
+      `El run del ticket \`${d.itemId}\` esta en \`${d.estado}\`, y \`${d.accion}\` solo tiene sentido ` +
+      `${d.cuando}. Hacerlo igual ${d.riesgo}.`,
+    accion: (d) =>
+      `Pide \`GET /v1/runs?project=${d.projectId ?? ""}\` para ver el estado actual del run; ` +
+      `${d.disponible ? `lo que si se puede hacer ahora es \`${d.disponible}\`.` : "ahora no tiene ninguna accion pendiente."}`,
+  },
+
+  // ---- Tareas propias y su ejecutor (spec 003, FR-030..032) -------------
+
+  // Un run en disco lleva el id de la tarea en su nombre de archivo, en su rama
+  // y en sus commits. Borrar la tarea deja todo eso apuntando a nada: el board
+  // pintaria una tarjeta sintetica sin titulo y Retry pediria un ticket que ya
+  // no existe.
+  tarea_con_run: {
+    estado: 409,
+    causa: (d) =>
+      `La tarea \`${d.clave}\` tiene un run del motor (\`${d.estado}\`), y borrarla dejaria el run, su rama y sus ` +
+      "commits apuntando a un ticket que ya no existe.",
+    accion: () =>
+      "Si la tarea ya no tiene sentido, muevela a `done` con `PATCH /v1/tasks/:id {\"estado\": \"done\"}`: sale del " +
+      "board sin perder el rastro del run. Solo se borra una tarea que nunca se lanzo.",
+  },
+
+  // FR-031, y el hueco declarado en vez de rellenado (principio X): el motor
+  // monta como implementador SOLO los runtimes que registra (con hooks, o sin
+  // ellos con la guarda posterior de `alcance-de-fase.mjs`). Lanzar igual con
+  // otro seria un run que muere al cargar; lanzar con el de referencia en su
+  // lugar seria ignorar la eleccion del operador sin decirselo.
+  ejecutor_sin_soporte: {
+    estado: 409,
+    causa: (d) =>
+      `La tarea pide el runtime \`${d.runtime}\` (resuelto ${d.de}), y el motor solo sabe montar como ` +
+      `implementador ${d.soportados.map((/** @type {string} */ s) => `\`${s}\``).join(", ")}: ${d.porque}`,
+    accion: (d) =>
+      `Cambia el ejecutor de la tarea a ${d.soportados.map((/** @type {string} */ s) => `\`${s}\``).join(" o ")} ` +
+      "(`PATCH /v1/tasks/:id {\"ejecutor\": null}` para que herede del proyecto), o el implementador de la flota " +
+      "del proyecto en Settings del proyecto -> Flota.",
+  },
+
+  // FR-032. `changes` y `commit` estan en el contrato de la tarea y el motor
+  // todavia no sabe parar antes del PR: hoy su recorrido termina SIEMPRE en el
+  // PR abierto. Lanzar igual abriria un PR que el operador pidio no abrir.
+  termino_sin_soporte: {
+    estado: 409,
+    causa: (d) =>
+      `La tarea \`${d.clave}\` pide terminar en \`${d.termino}\`, y el motor todavia no sabe parar antes del PR: ` +
+      "su recorrido integra las tareas en la rama del ticket y abre el pull request. Lanzarla igual abriria un PR " +
+      "que pediste no abrir. Ningun modo mergea (principio IV); este hueco es de los otros dos.",
+    accion: () =>
+      "Cambia el termino de la tarea a `pr` (`PATCH /v1/tasks/:id {\"termino\": \"pr\"}`) y vuelve a pulsar Run. " +
+      "El PR queda abierto y sin mergear: nada llega a la rama base sin tu revision.",
+  },
+
+  // Las opciones de un gestor viven en su conexion, y una conexion del espacio
+  // de trabajo la comparten todos los proyectos que la usan: escribir ahi las
+  // de uno cambiaria el gestor de los demas sin que nadie lo vea.
+  gestor_compartido: {
+    estado: 409,
+    causa: (d) =>
+      `El gestor del proyecto \`${d.nombre}\` es la conexion \`${d.proveedor}\` del espacio de trabajo, que ` +
+      "comparten todos los proyectos que la usan. Guardar aqui las opciones de este proyecto cambiaria el gestor " +
+      "de los demas.",
+    accion: () =>
+      "Conecta el gestor como conexion DEL PROYECTO en Settings del proyecto -> Conexiones, y guarda sus " +
+      "opciones ahi. Las de una cuenta de codigo (`owner/repo`) ya salen del remoto de cada proyecto.",
+  },
+
   // Principio X aplicado a las costuras que todavia no estan montadas. UN
   // codigo, con la pieza adentro: declarar el hueco es el contrato, y un
   // `fallo_interno` en su lugar manda al operador a leer una traza que no es suya.

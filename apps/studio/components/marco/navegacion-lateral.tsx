@@ -1,165 +1,501 @@
 'use client'
 
-import { useId } from 'react'
+import { useCallback, useId, useState, type ReactNode } from 'react'
+import { ChartColumn, Kanban, Plus, Search, Settings2, SquareActivity } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
-import { esSeccionDeProyecto, type Navegar, type Ruta, type Seccion } from '@/lib/ruta'
+import { comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
+import { esAjusteDeProyecto, type Navegar, type Ruta } from '@/lib/ruta'
+import { ETAPA_PENDIENTE, type Board, type Proyecto } from '@/lib/tipos'
+import { Spinner } from '@/components/ui/indicador-de-carga'
+import { useServicio } from '@/components/proveedor-servicio'
+import { DialogoNuevoProyecto } from '@/components/marco/dialogo-nuevo-proyecto'
 import {
+  DESTINOS_PRINCIPALES,
   ETIQUETA_DE_SECCION,
-  SECCIONES_DEL_WORKSPACE,
-  SECCIONES_DE_LA_ETAPA,
-  seccionActiva,
+  destinoActivo,
+  type DestinoPrincipal,
 } from '@/components/marco/secciones'
+import { COLOR_DE_TONO, textoDelChip, tonoDeChip } from '@/components/board/chip'
+import { colorDeProyecto, runsActivos } from '@/components/board/derivar'
+import { useBoard } from '@/components/board/contexto-board'
 
 /**
- * La navegacion, con sus dos niveles a la vista al mismo tiempo.
+ * LA NAVEGACION LATERAL DE LA 003: cuatro destinos, los proyectos y lo que
+ * esta corriendo.
  *
- * LO QUE FALTABA. La barra horizontal tenia cinco entradas y las seis etapas
- * del proyecto no estaban en ninguna parte del marco: existian como pantallas
- * y se alcanzaban desde la fila del proyecto, y una vez dentro no habia forma
- * de pasar de la constitution al bootstrap sin volver a la lista. Meterlas en
- * la misma barra horizontal tampoco servia: la mitad del tiempo no hay
- * proyecto abierto, y once pestanas de las que seis no llevan a ningun sitio
- * ensenan a no mirar la barra.
+ * QUE CAMBIO Y POR QUE. En la 002 el rail tenia dos niveles —seis destinos
+ * del espacio de trabajo y seis etapas del proyecto abierto— y era correcto
+ * pantalla por pantalla; el conjunto obligaba a saber cual tocaba, que es la
+ * misma densidad que el producto existe para quitar. El operador lo dijo asi:
+ * «un proyecto tiene un board de control y listo». Ahora hay tres bloques y
+ * cada uno contesta una pregunta:
  *
- * La solucion es que sean DOS GRUPOS y que el segundo aparezca solo cuando hay
- * proyecto: entonces cada entrada visible lleva siempre a algo.
+ *   - Board · Runs · Costos · Settings   ¿a donde voy? (FR-022, exactamente cuatro)
+ *   - Proyectos                           ¿de cual?
+ *   - Runs activos                        ¿que me necesita ahora? (US3)
  *
- * FORMA. Texto, sin iconos. Un icono al lado de una etiqueta que ya esta
- * escrita no anade informacion; con once entradas siempre visibles, anade once
- * manchas que compiten con la unica senal que importa aqui, que es cual esta
- * seleccionada. La seleccion SI se gana una superficie —`gray-alpha-100`—
- * porque comunica exactamente eso.
+ * ICONOS EN LOS CUATRO DESTINOS, y es un cambio consciente respecto al rail de
+ * la 002, que los prohibia con buen motivo: once entradas con icono eran once
+ * manchas compitiendo con la seleccion. Cuatro no compiten, y el icono es lo
+ * que deja reconocerlas de un vistazo cuando el lateral se lee de refilon
+ * mientras se mira el board.
  *
- * DEBAJO DE `lg` la misma lista se convierte en una tira horizontal
- * desplazable en vez de desaparecer detras de un boton de hamburguesa. Un rail
- * fijo de 240px en una ventana de 900px se come un cuarto del lienzo, y esta
- * aplicacion tambien corre en una ventana de escritorio que el operador
- * redimensiona.
+ * UN PROYECTO A MEDIO ESTABLECER NO LLEVA A UN BOARD VACIO (US4, escenario
+ * 3): lleva al asistente, que retoma en la etapa que le falta. Un board vacio
+ * de un proyecto que no puede tener tarjetas se lee como «no hay tickets».
+ *
+ * Y TIENE DOS SALIDAS, NO UNA (US8, FR-034). «Activar» lo lleva a ACTIVE en
+ * un clic por el modo rapido —las cinco guardas de verdad, sin escribir en el
+ * repositorio— y abre su board; «Configurar» abre el asistente completo. Antes
+ * solo existia la segunda, y el operador acumulaba proyectos en `CREATED` que
+ * el board ignoraba.
  */
 
-interface GrupoDeNavegacion {
-  etiqueta: string
-  secciones: readonly Seccion[]
-  /** El identificador que acompana a cada destino del grupo. */
-  id: string | null
+/** El modo rapido de la lista: quien esta activandose y que fallo en cada fila. */
+export interface ActivacionRapida {
+  activar: (proyectoId: string) => void
+  trabajandoEn: string | null
+  errores: Record<string, ErrorDelServicio>
 }
 
-/**
- * El identificador con el que sale cada entrada, que casi siempre es el del
- * grupo — y una excepcion.
- *
- * LA EXCEPCION ES `asistente`, Y EL FALLO QUE EVITA ES CONCRETO. El recorrido
- * guiado vive en el nivel uno porque tambien se usa SIN proyecto: su primer
- * paso es elegir o crear uno. Pero con un proyecto abierto, ese mismo destino
- * sin identificador lleva al operador a la pantalla de "elige un proyecto"
- * teniendo uno delante — y el proyecto que tenia abierto desaparece de la
- * cabecera al llegar. Lo que corresponde es que "Asistente" signifique
- * siempre lo mismo: el recorrido, del proyecto que tengas abierto si tienes
- * uno.
- *
- * La alternativa era meterlo tambien en el nivel dos, y entonces la misma
- * palabra aparece dos veces en la navegacion con dos significados distintos.
- */
-function idDeLaEntrada(
-  seccion: Seccion,
-  grupo: GrupoDeNavegacion,
-  proyectoId: string | null,
-): string | null {
-  if (seccion === 'asistente') return proyectoId
-  return grupo.id
+const ICONO_DE_DESTINO: Record<DestinoPrincipal, typeof Kanban> = {
+  board: Kanban,
+  runs: SquareActivity,
+  costos: ChartColumn,
+  settings: Settings2,
 }
 
-export function NavegacionLateral({
-  ruta,
-  navegar,
-  className,
-}: {
+/** Cuantos runs activos caben antes del «ver todos». */
+const RUNS_A_LA_VISTA = 8
+
+export interface PropsDePanelLateral {
   ruta: Ruta
   navegar: Navegar
+  alAbrirComandos: () => void
+  /** `GET /v1/projects`: todos, tambien los que no estan `ACTIVE`. */
+  proyectos: Proyecto[] | null
+  /** El board compartido, para contadores, colores y runs activos. */
+  board: Board | null
+  /** Lo que va al pie: el estado del servicio y del gestor, el tema. */
+  pie?: ReactNode
+  /** El «+». Sin el, abre el asistente (el catalogo de pantallas no tiene servicio). */
+  alCrearProyecto?: () => void
+  /** «Activar» en los proyectos no ACTIVE. Sin el, solo se ofrece «Configurar». */
+  activacion?: ActivacionRapida
   className?: string
-}) {
+}
+
+/** El logotipo: un lazo, porque es lo que el producto hace. */
+function Logo() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 shrink-0 text-ds-gray-1000">
+      <rect width="24" height="24" rx="6" fill="currentColor" />
+      <path
+        d="M7.5 15.5V8.5l9 7V8.5"
+        fill="none"
+        stroke="var(--ds-background-100)"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** Titulo de un bloque, en caja baja: el eyebrow en versales lo descarta Geist. */
+function TituloDeBloque({ id, children, accion }: { id: string; children: ReactNode; accion?: ReactNode }) {
+  return (
+    <div className="flex h-7 items-center justify-between px-2">
+      <p id={id} className="text-label-12 text-ds-gray-700">
+        {children}
+      </p>
+      {accion}
+    </div>
+  )
+}
+
+export function PanelLateral({
+  ruta,
+  navegar,
+  alAbrirComandos,
+  proyectos,
+  board,
+  pie,
+  alCrearProyecto,
+  activacion,
+  className,
+}: PropsDePanelLateral) {
   const base = useId()
-  const activa = seccionActiva(ruta.seccion)
+  const activo = destinoActivo(ruta.seccion)
 
-  // El nivel dos solo existe con proyecto abierto Y con identificador. Sin
-  // identificador la ruta ya esta rota (el contenido lo dice), y ofrecer seis
-  // destinos que heredarian el mismo hueco seria ofrecer seis veces el mismo
-  // fallo.
-  const proyectoId = esSeccionDeProyecto(ruta.seccion) ? ruta.id : null
+  // Los colores y el estado del board mandan sobre la lista si llegan: el
+  // board sabe el color de cada proyecto; la lista sabe los que no estan
+  // activos. Sin lista todavia, se pintan los del board.
+  const delBoard = new Map((board?.proyectos ?? []).map((proyecto) => [proyecto.id, proyecto]))
+  const lista: Array<Pick<Proyecto, 'id' | 'nombre' | 'estado'> & { color: string | null }> = (
+    proyectos ??
+    (board?.proyectos as Array<Pick<Proyecto, 'id' | 'nombre' | 'estado'>> | undefined) ??
+    []
+  ).map((proyecto) => ({
+    id: proyecto.id,
+    nombre: proyecto.nombre,
+    estado: proyecto.estado,
+    color: delBoard.get(proyecto.id)?.color ?? null,
+  }))
 
-  const grupos: GrupoDeNavegacion[] = [
-    { etiqueta: 'Espacio de trabajo', secciones: SECCIONES_DEL_WORKSPACE, id: null },
-    ...(proyectoId
-      ? [{ etiqueta: 'Proyecto abierto', secciones: SECCIONES_DE_LA_ETAPA, id: proyectoId }]
-      : []),
-  ]
+  const activos = runsActivos(board?.tarjetas ?? [])
+  const contador: Partial<Record<DestinoPrincipal, number>> = board
+    ? { board: board.tarjetas.length, runs: activos.length }
+    : {}
+
+  const proyectoMarcado =
+    ruta.seccion === 'board' || ruta.seccion === 'asistente' || esAjusteDeProyecto(ruta.seccion)
+      ? ruta.id
+      : null
 
   return (
     <nav
       aria-label="Navegacion principal"
-      className={cn(
-        'shrink-0 border-b border-ds-gray-400',
-        // A partir de `lg` es un rail: pegado bajo la cabecera (que mide
-        // `h-14` = 3.5rem) y con su propio desplazamiento, para que una tabla
-        // de auditoria de trescientas filas no se lleve la navegacion consigo.
-        'lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:w-60 lg:overflow-y-auto lg:border-b-0 lg:border-r',
-        className,
-      )}
+      className={cn('flex h-full w-60 flex-col bg-ds-background-200', className)}
     >
-      <div className="flex gap-8 overflow-x-auto px-4 py-3 lg:flex-col lg:gap-7 lg:overflow-x-visible lg:px-3 lg:py-6">
-        {grupos.map((grupo, indice) => {
-          // El identificador sale del INDICE y no de la etiqueta. Con la
-          // etiqueta dentro, "Espacio de trabajo" producia el id
-          // `...-Espacio de trabajo`, y `aria-labelledby` es una lista de
-          // identificadores SEPARADA POR ESPACIOS: el lector de pantalla
-          // buscaba tres elementos —`...-Espacio`, `de`, `trabajo`—, no
-          // encontraba ninguno, y los dos grupos se quedaban sin nombre. Se
-          // veia perfecto y no se oia nada.
-          const idGrupo = `${base}-grupo-${indice}`
-          return (
-            <div key={grupo.etiqueta} className="shrink-0">
-              {/* Etiqueta de grupo en caja baja: un "ESPACIO DE TRABAJO" en
-                  versales es el eyebrow que Geist descarta. */}
-              <p id={idGrupo} className="px-2 pb-1 text-label-12 text-ds-gray-700">
-                {grupo.etiqueta}
-              </p>
+      <div className="flex flex-col gap-3 px-3 pb-2 pt-3">
+        <button
+          type="button"
+          onClick={() => navegar({ seccion: 'board', id: null })}
+          className="flex h-8 items-center gap-2 rounded-md px-2 text-heading-14 text-ds-gray-1000 transition-colors hover:bg-ds-gray-alpha-100"
+        >
+          <Logo />
+          noxloop
+        </button>
 
-              <ul
-                aria-labelledby={idGrupo}
-                className="flex items-center gap-0.5 lg:flex-col lg:items-stretch"
+        {/* EL BUSCADOR ES EL MENU DE COMANDOS, no un campo que filtre el
+            lateral: «buscar o ejecutar» es llegar a cualquier pantalla o
+            lanzar cualquier accion, y eso ya lo hace ⌘K. Un segundo buscador
+            que solo encuentra proyectos ensenaria a no usar el primero. */}
+        <button
+          type="button"
+          onClick={alAbrirComandos}
+          aria-keyshortcuts="Meta+K Control+K"
+          className="flex h-8 items-center gap-2 rounded-md bg-ds-background-100 px-2 text-label-13 text-ds-gray-900 shadow-ds-border transition-colors hover:text-ds-gray-1000"
+        >
+          <Search aria-hidden="true" className="size-3.5 shrink-0" />
+          <span className="flex-1 text-left">Buscar o ejecutar…</span>
+          <kbd className="fuente-operativa rounded-[4px] px-1 text-label-12 text-ds-gray-700 shadow-ds-border">
+            ⌘K
+          </kbd>
+        </button>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 pb-3">
+        <ul className="flex flex-col gap-px">
+          {DESTINOS_PRINCIPALES.map((destino) => {
+            const Icono = ICONO_DE_DESTINO[destino]
+            const esEste = activo === destino
+            const cuenta = contador[destino]
+            return (
+              <li key={destino}>
+                <button
+                  type="button"
+                  aria-current={esEste ? 'page' : undefined}
+                  onClick={() => navegar({ seccion: destino, id: null })}
+                  className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-button-14 transition-colors ${
+                    esEste
+                      ? 'bg-ds-gray-alpha-200 text-ds-gray-1000'
+                      : 'text-ds-gray-900 hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000'
+                  }`}
+                >
+                  <Icono aria-hidden="true" className="size-4 shrink-0" />
+                  <span className="flex-1">{ETIQUETA_DE_SECCION[destino]}</span>
+                  {cuenta !== undefined ? (
+                    <span className="fuente-operativa text-label-12 text-ds-gray-700">{cuenta}</span>
+                  ) : null}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+
+        <div>
+          <TituloDeBloque
+            id={`${base}-proyectos`}
+            accion={
+              // CREAR ES NOMBRE Y CARPETA (FR-033, revisa FR-023): el dialogo
+              // crea y activa por el modo rapido, con la configuracion completa
+              // como salida secundaria. Sin dialogo montado, el asistente.
+              <button
+                type="button"
+                aria-label="Crear proyecto"
+                title="Crear proyecto"
+                onClick={() => (alCrearProyecto ? alCrearProyecto() : navegar({ seccion: 'asistente', id: null }))}
+                className="flex size-6 items-center justify-center rounded-md text-ds-gray-900 transition-colors hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000"
               >
-                {grupo.secciones.map((seccion) => {
-                  const esLaActiva = activa === seccion
-                  return (
-                    <li key={seccion} className="shrink-0 lg:w-full">
+                <Plus aria-hidden="true" className="size-3.5" />
+              </button>
+            }
+          >
+            Proyectos
+          </TituloDeBloque>
+
+          {lista.length === 0 ? (
+            <p className="px-2 py-1 text-label-12 text-ds-gray-700">
+              {proyectos === null && board === null ? 'Cargando…' : 'Ninguno todavia'}
+            </p>
+          ) : (
+            <ul aria-labelledby={`${base}-proyectos`} className="flex flex-col gap-px">
+              {lista.map((proyecto) => {
+                const activoEnElBoard = proyecto.estado === 'ACTIVE'
+                const pendiente = ETAPA_PENDIENTE[proyecto.estado]
+                const esEste = proyectoMarcado === proyecto.id
+                const activandose = activacion?.trabajandoEn === proyecto.id
+                const errorDeActivar = activacion?.errores[proyecto.id] ?? null
+                return (
+                  <li key={proyecto.id} className="group/proyecto relative">
+                    <button
+                      type="button"
+                      aria-current={esEste ? 'page' : undefined}
+                      title={
+                        activoEnElBoard
+                          ? `Board de ${proyecto.nombre}`
+                          : `${proyecto.nombre}: le falta ${pendiente?.etapa ?? 'terminar el establecimiento'}. Abre el asistente donde quedo.`
+                      }
+                      onClick={() =>
+                        navegar(
+                          activoEnElBoard
+                            ? { seccion: 'board', id: proyecto.id }
+                            : { seccion: 'asistente', id: proyecto.id },
+                        )
+                      }
+                      className={`flex h-8 w-full items-center gap-2 rounded-md pl-2.5 ${
+                        activoEnElBoard || !activacion ? 'pr-8' : 'pr-[7.5rem]'
+                      } text-left text-label-13 transition-colors ${
+                        esEste
+                          ? 'bg-ds-gray-alpha-200 text-ds-gray-1000'
+                          : 'text-ds-gray-900 hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000'
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="size-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: colorDeProyecto(proyecto) }}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{proyecto.nombre}</span>
+                      {activoEnElBoard || activacion ? null : (
+                        <span className="shrink-0 text-label-12 text-ds-amber-900">Configurar</span>
+                      )}
+                    </button>
+                    {!activoEnElBoard && activacion ? (
+                      // LAS DOS SALIDAS, SIEMPRE A LA VISTA y no al pasar el
+                      // raton: son la razon de que la fila este aqui.
+                      <div className="absolute right-1 top-1 flex h-6 items-center gap-0.5">
+                        <button
+                          type="button"
+                          disabled={activacion.trabajandoEn !== null}
+                          title={`Activar ${proyecto.nombre} en un clic: lee el repositorio, lo deja listo sin escribir nada en el y abre su board`}
+                          onClick={() => activacion.activar(proyecto.id)}
+                          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-label-12 text-ds-blue-900 transition-colors hover:bg-ds-gray-alpha-200 disabled:opacity-50"
+                        >
+                          {activandose ? <Spinner tamano="sm" etiqueta={`Activando ${proyecto.nombre}`} /> : null}
+                          {activandose ? 'Activando' : 'Activar'}
+                        </button>
+                        <button
+                          type="button"
+                          title={`Configuracion completa de ${proyecto.nombre}: el asistente, en la etapa que le falta`}
+                          onClick={() => navegar({ seccion: 'asistente', id: proyecto.id })}
+                          className="flex h-6 items-center rounded-md px-1.5 text-label-12 text-ds-amber-900 transition-colors hover:bg-ds-gray-alpha-200"
+                        >
+                          Configurar
+                        </button>
+                      </div>
+                    ) : null}
+                    {errorDeActivar ? (
+                      // El 409 del modo rapido nombra la etapa en la que paro;
+                      // la salida es «Configurar», que retoma ahi.
+                      <p role="alert" className="px-2.5 pb-1 text-label-12 text-ds-red-900" title={errorDeActivar.accion}>
+                        {errorDeActivar.causa} {errorDeActivar.accion}
+                      </p>
+                    ) : null}
+                    {activoEnElBoard ? (
+                      // Settings del proyecto, a un clic y sin ocupar sitio: el
+                      // engranaje aparece al pasar por la fila o al llegarle el
+                      // foco, que es cuando se esta pensando en ESE proyecto.
                       <button
                         type="button"
-                        aria-current={esLaActiva ? 'page' : undefined}
-                        onClick={() =>
-                          navegar({ seccion, id: idDeLaEntrada(seccion, grupo, proyectoId) })
-                        }
-                        // Sin `cn()`: `twMerge` no conoce `text-button-14` y la
-                        // borra al ver el `text-ds-gray-*` que viene detras.
-                        // Comprobado en el HTML generado — las once entradas
-                        // salian con el cuerpo por defecto en vez del de boton.
-                        // La explicacion larga esta en `migas.tsx`.
-                        className={`flex h-8 w-full items-center whitespace-nowrap rounded-md px-2 text-left text-button-14 transition-colors ${
-                          esLaActiva
-                            ? 'bg-ds-gray-alpha-100 text-ds-gray-1000'
-                            : 'text-ds-gray-900 hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000'
-                        }`}
+                        aria-label={`Settings de ${proyecto.nombre}`}
+                        title={`Settings de ${proyecto.nombre}`}
+                        onClick={() => navegar({ seccion: 'ajustes', id: proyecto.id })}
+                        className="absolute right-1 top-1 flex size-6 items-center justify-center rounded-md text-ds-gray-700 opacity-0 transition-opacity hover:bg-ds-gray-alpha-200 hover:text-ds-gray-1000 focus-visible:opacity-100 group-hover/proyecto:opacity-100"
                       >
-                        {ETIQUETA_DE_SECCION[seccion]}
+                        <Settings2 aria-hidden="true" className="size-3.5" />
                       </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          )
-        })}
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <TituloDeBloque id={`${base}-runs`}>Runs activos</TituloDeBloque>
+          {activos.length === 0 ? (
+            <p className="px-2 py-1 text-label-12 text-ds-gray-700">
+              {board ? 'Nada corriendo ni esperandote' : 'Sin datos del board'}
+            </p>
+          ) : (
+            <ul aria-labelledby={`${base}-runs`} className="flex flex-col gap-px">
+              {activos.slice(0, RUNS_A_LA_VISTA).map((tarjeta) => {
+                const chip = tarjeta.chip!
+                const color = COLOR_DE_TONO[tonoDeChip(chip.tipo)]
+                const clave = tarjeta.ticket.key ?? tarjeta.ticket.id
+                return (
+                  <li key={tarjeta.id}>
+                    <button
+                      type="button"
+                      title={chip.detalle ?? `${clave}: ${tarjeta.ticket.titulo}`}
+                      onClick={() =>
+                        navegar({
+                          seccion: 'runs',
+                          id: tarjeta.proyecto.id,
+                          run: tarjeta.run?.itemId ?? tarjeta.ticket.id,
+                        })
+                      }
+                      className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-ds-gray-alpha-100"
+                    >
+                      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                      <span className="fuente-operativa shrink-0 text-label-12 text-ds-gray-1000">{clave}</span>
+                      <span className="min-w-0 flex-1 truncate text-right text-label-12" style={{ color }}>
+                        {textoDelChip(chip)}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+              {activos.length > RUNS_A_LA_VISTA ? (
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => navegar({ seccion: 'runs', id: null })}
+                    className="flex h-7 w-full items-center rounded-md px-2.5 text-label-12 text-ds-gray-900 hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000"
+                  >
+                    Ver los {activos.length}
+                  </button>
+                </li>
+              ) : null}
+            </ul>
+          )}
+        </div>
       </div>
+
+      {pie ? <div className="shrink-0 border-t border-ds-gray-400 px-3 py-2.5">{pie}</div> : null}
     </nav>
+  )
+}
+
+/**
+ * El pie: con que habla el board.
+ *
+ * «El estado del gestor conectado» del referente, dicho sin inventar: los
+ * gestores que el servicio declara para los proyectos del board, y si alguno
+ * NO sabe listar tickets —en cuyo caso sus columnas Backlog y Todo van
+ * incompletas, y eso se dice aqui ademas de en la columna.
+ */
+export function EstadoDeGestores({ board }: { board: Board | null }) {
+  if (!board) return null
+  const porGestor = new Map<string, { nombre: string; sinListado: boolean }>()
+  for (const proyecto of board.proyectos) {
+    if (!proyecto.gestor) continue
+    const previo = porGestor.get(proyecto.gestor)
+    porGestor.set(proyecto.gestor, {
+      nombre: proyecto.gestor,
+      sinListado: (previo?.sinListado ?? false) || !proyecto.listItems,
+    })
+  }
+  if (porGestor.size === 0) {
+    return <p className="text-label-12 text-ds-gray-700">Ningun gestor de tickets conectado</p>
+  }
+  return (
+    <ul className="flex flex-wrap gap-x-2 gap-y-0.5 text-label-12 text-ds-gray-900">
+      {[...porGestor.values()].map((gestor) => (
+        <li key={gestor.nombre} className="inline-flex items-center gap-1">
+          <span
+            aria-hidden="true"
+            className={`size-1.5 rounded-full ${gestor.sinListado ? 'bg-ds-amber-700' : 'bg-ds-green-700'}`}
+          />
+          {gestor.nombre}
+          {gestor.sinListado ? <span className="text-ds-gray-700">(sin listado)</span> : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** La cascara: el board compartido del marco y la lista de proyectos. */
+export function NavegacionLateral({
+  ruta,
+  navegar,
+  alAbrirComandos,
+  proyectos,
+  pie,
+  className,
+}: Omit<PropsDePanelLateral, 'board' | 'alCrearProyecto' | 'activacion'>) {
+  const compartido = useBoard()
+  const board = compartido?.lectura.datos ?? null
+  const { cliente } = useServicio()
+  const [creando, setCreando] = useState(false)
+  const [trabajandoEn, setTrabajandoEn] = useState<string | null>(null)
+  const [errores, setErrores] = useState<Record<string, ErrorDelServicio>>({})
+
+  // POR EL CLIENTE Y NO POR `useMutacion`: cada fila necesita su propio error,
+  // y el modo rapido escanea el repositorio, asi que no puede vivir con el tope
+  // de 15 s de una peticion normal (`ESPERA_DEL_MODO_RAPIDO_MS`). Nada se
+  // escribe aqui: se le pide al servicio (principio VIII). La lista se relee
+  // sola con el evento `proyecto.estado` que el servicio emite en cada etapa.
+  const activar = useCallback(
+    async (proyectoId: string) => {
+      setErrores(({ [proyectoId]: _quitado, ...resto }) => resto)
+      if (!cliente) {
+        setErrores((previos) => ({
+          ...previos,
+          [proyectoId]: comoErrorDelServicio(
+            new Error('esta interfaz no tiene conexion con el servicio de control'),
+            'activar el proyecto',
+          ),
+        }))
+        return
+      }
+      setTrabajandoEn(proyectoId)
+      try {
+        const r = await cliente.activarRapido(proyectoId)
+        navegar({ seccion: 'board', id: r.proyecto.id })
+      } catch (fallo: unknown) {
+        setErrores((previos) => ({ ...previos, [proyectoId]: comoErrorDelServicio(fallo, 'activar el proyecto') }))
+      } finally {
+        setTrabajandoEn(null)
+      }
+    },
+    [cliente, navegar],
+  )
+
+  return (
+    <>
+      <PanelLateral
+        ruta={ruta}
+        navegar={navegar}
+        alAbrirComandos={alAbrirComandos}
+        proyectos={proyectos}
+        board={board}
+        alCrearProyecto={() => setCreando(true)}
+        activacion={{ activar: (id) => void activar(id), trabajandoEn, errores }}
+        pie={
+          <div className="flex flex-col gap-2">
+            <EstadoDeGestores board={board} />
+            {pie}
+          </div>
+        }
+        className={className}
+      />
+      <DialogoNuevoProyecto abierto={creando} alCerrar={() => setCreando(false)} navegar={navegar} />
+    </>
   )
 }

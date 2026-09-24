@@ -59,6 +59,9 @@ export function crearAdaptadorFake(opts = {}) {
         // eso lo comprueba el modelo de flota AL GUARDAR.
         hooks: conHooks,
         models: ["fake"],
+        // No carga ningun plugin: recibe el encargo expandido, como Codex. Es
+        // lo que permite probar sin modelo el camino de un runtime sin plugin.
+        comandos: false,
       };
     },
 
@@ -255,7 +258,9 @@ export function fixturesDeContrato({ dir }) {
         cwd,
         resume: null,
         model: "fake",
-        prompt: "/noxloop-task IT-1 T-1 --phase GREEN",
+        // Expandido: este runtime declara `comandos: false`, y el motor no le
+        // manda el nombre de un comando que no sabe expandir.
+        prompt: "# /noxloop-task — una fase, una tarea\n\nFase: GREEN. El encargo, expandido por el motor.",
         tier: "normal",
         env: { TOKEN_CENTINELA: "valor-centinela-de-la-boveda-9137" },
         ...over,

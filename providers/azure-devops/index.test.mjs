@@ -120,6 +120,85 @@ const ITEMS = {
   }),
 };
 
+// ------------------------------------------------ el listado del board (003)
+
+/**
+ * `GET _apis/wit/workitemtypes`, recortado a lo que el proveedor lee: el nombre
+ * de cada tipo y sus estados con su CATEGORIA (Proposed, InProgress, Resolved,
+ * Completed, Removed). La categoria es el enum del gestor —el equivalente del
+ * `state.type` de Linear—; el nombre del estado cambia por plantilla.
+ *
+ * "Ticket" es un tipo de proceso heredado con un estado propio ("En espera")
+ * que ningun stateMap nombra: su columna tiene que salir de la categoria.
+ */
+const estadosAgile = [
+  { name: "New", color: "b2b2b2", category: "Proposed" },
+  { name: "Active", color: "007acc", category: "InProgress" },
+  { name: "Resolved", color: "ff9d00", category: "Resolved" },
+  { name: "Closed", color: "339933", category: "Completed" },
+  { name: "Removed", color: "ffffff", category: "Removed" },
+];
+const TIPOS_AGILE = {
+  count: 5,
+  value: [
+    { name: "Epic", referenceName: "Microsoft.VSTS.WorkItemTypes.Epic", states: estadosAgile },
+    { name: "Feature", referenceName: "Microsoft.VSTS.WorkItemTypes.Feature", states: estadosAgile },
+    { name: "User Story", referenceName: "Microsoft.VSTS.WorkItemTypes.UserStory", states: estadosAgile },
+    { name: "Bug", referenceName: "Microsoft.VSTS.WorkItemTypes.Bug", states: estadosAgile.filter((e) => e.name !== "Removed") },
+    {
+      name: "Task",
+      referenceName: "Microsoft.VSTS.WorkItemTypes.Task",
+      states: estadosAgile.filter((e) => e.name !== "Resolved"),
+    },
+    {
+      name: "Ticket",
+      referenceName: "Fabrikam.Ticket",
+      states: [
+        { name: "New", color: "b2b2b2", category: "Proposed" },
+        { name: "En espera", color: "cccccc", category: "InProgress" },
+        { name: "Closed", color: "339933", category: "Completed" },
+      ],
+    },
+  ],
+};
+
+/** Una identidad con avatar, como la manda `$expand=all` en System.AssignedTo. */
+const ANA = {
+  displayName: "Ana Pérez",
+  uniqueName: "ana@contoso.test",
+  id: "a1b2c3d4-0000-4000-8000-000000000001",
+  imageUrl: `${B}/${ORG}/_apis/GraphProfile/MemberAvatars/aad.ana`,
+  _links: { avatar: { href: `${B}/${ORG}/_apis/GraphProfile/MemberAvatars/aad.ana` } },
+};
+
+function wiListado(id, tipo, titulo, estado, { iteracion = `${PROY}\\Sprint 12`, prioridad, asignado = null, area = `${PROY}\\Pagos`, cambio } = {}) {
+  const campos = {
+    "System.IterationPath": iteracion,
+    "System.AreaPath": area,
+    "System.AssignedTo": asignado,
+    "System.ChangedDate": cambio,
+  };
+  if (prioridad !== undefined) campos["Microsoft.VSTS.Common.Priority"] = prioridad;
+  return wi(id, tipo, titulo, estado, { fields: campos });
+}
+
+/** @type {Record<string, any>} */
+const LISTADO = {
+  // Propuesto y en la RAIZ de iteraciones: no esta en ningun sprint. Backlog.
+  501: wiListado(501, "User Story", "Cobrar en cuotas", "New", { iteracion: PROY, prioridad: 1, asignado: ANA, cambio: "2026-09-21T10:00:00.000Z" }),
+  // Propuesto pero YA en un sprint: por hacer.
+  502: wiListado(502, "User Story", "Conciliar el cobro", "New", { prioridad: 2, cambio: "2026-09-20T10:00:00.000Z" }),
+  503: wiListado(503, "Task", "Escribir la migracion", "Active", { prioridad: 4, cambio: "2026-09-19T10:00:00.000Z" }),
+  // Sin campo de prioridad: null, no un default.
+  504: wiListado(504, "Bug", "El recibo sale en blanco", "Resolved", { area: `${PROY}\\Pagos\\Recibos`, cambio: "2026-09-18T10:00:00.000Z" }),
+  // Estado que el stateMap no nombra: la columna sale de la categoria.
+  505: wiListado(505, "Ticket", "Esperando al proveedor", "En espera", { prioridad: 3, cambio: "2026-09-17T10:00:00.000Z" }),
+  507: wiListado(507, "User Story", "Ya cobrado", "Closed", { prioridad: 2, cambio: "2026-09-16T10:00:00.000Z" }),
+  // Retirado: solo llega con una WIQL propia que no lo excluye.
+  508: wiListado(508, "User Story", "Retirado", "Removed", { cambio: "2026-09-15T10:00:00.000Z" }),
+};
+const IDS_LISTADO = [501, 502, 503, 504, 505];
+
 /** Los ids que el gestor no tiene: el batch los omite y el GET da 404. */
 const NO_EXISTEN = new Set(["9999", "999999"]);
 
@@ -170,6 +249,7 @@ const URL_COMENTARIO = (id) =>
   `POST ${B}/${ORG}/${PROY}/_apis/wit/workItems/${id}/comments?${q({ "api-version": "7.0-preview.3" })}`;
 const URL_CREAR = (tipo) =>
   `POST ${B}/${ORG}/${PROY}/_apis/wit/workitems/$${encodeURIComponent(tipo)}?${q({ $expand: "all", "api-version": "7.1" })}`;
+const URL_TIPOS = `GET ${B}/${ORG}/${PROY}/_apis/wit/workitemtypes?${q({ "api-version": "7.1" })}`;
 const URL_BACKLOG = `GET ${B}/${ORG}/${PROY}/${encodeURIComponent(EQUIPO)}/_apis/work/backlogconfiguration?${q({ "api-version": "7.1" })}`;
 
 /** El PATCH del gestor, con su control de concurrencia optimista sobre /rev. */
@@ -265,11 +345,34 @@ const GRABACIONES = {
       value: pedido.body.ids
         .map(String)
         .filter((id) => !NO_EXISTEN.has(id))
-        .map((id) => ITEMS[id] || sintetico(id)),
+        .map((id) => ITEMS[id] || LISTADO[id] || sintetico(id)),
     },
   }),
 
+  [URL_TIPOS]: { status: 200, body: TIPOS_AGILE },
+
   [URL_WIQL]: (pedido) => {
+    // El listado del board: se reconoce por su ORDER BY, que la bandeja no usa.
+    if (String(pedido.body.query).includes("ORDER BY [System.ChangedDate] DESC")) {
+      // Lo que la WIQL no excluye, el gestor lo devuelve: asi se prueba que el
+      // proveedor filtra igual una WIQL propia que no excluye nada.
+      const consulta = String(pedido.body.query);
+      const ids = [
+        ...IDS_LISTADO,
+        ...(consulta.includes("'Closed'") ? [] : [507]),
+        ...(consulta.includes("'Removed'") ? [] : [508]),
+      ];
+      return {
+        status: 200,
+        body: {
+          queryType: "flat",
+          asOf: "2026-09-21T00:00:00Z",
+          columns: [{ referenceName: "System.Id", name: "ID", url: `${API}` }],
+          sortColumns: [{ field: { referenceName: "System.ChangedDate", name: "Changed Date" }, descending: true }],
+          workItems: ids.map((id) => ({ id, url: `${API}/${id}` })),
+        },
+      };
+    }
     const esMencion = String(pedido.body.query).includes("@RecentMentions");
     return {
       status: 200,
@@ -375,6 +478,8 @@ test("el proveedor de Azure DevOps pasa la suite de contrato entera", async () =
 // ------------------------------------------------- 2. capacidades y entorno
 test("declara las diez capacidades, todas en true: este gestor no ejercita ningun camino degradado", () => {
   const caps = azdo.capabilities();
+  // `listItems` incluida, explicita: la clave es opcional en el contrato, pero
+  // este gestor la tiene y la declara.
   assert.deepEqual(Object.keys(caps).sort(), [...CAPABILITY_KEYS].sort());
   const enFalse = Object.entries(caps).filter(([, v]) => v !== true).map(([k]) => k);
   assert.deepEqual(enFalse, [], "la degradacion se prueba con el proveedor falso, no bajando a false algo que el gestor si tiene");
@@ -818,4 +923,109 @@ test("los criterios se escriben escapados: el campo es HTML y el ida y vuelta ti
   // vuelta, y un `<b>` ajeno termina interpretado en el tablero.
   const hijo = await azdo.createChild("297", { title: "t", acceptance: ["a < b && c > d"] }, ctx);
   assert.deepEqual(hijo.acceptance, ["a < b && c > d"]);
+});
+
+// ------------------------------------------------ listItems (spec 003 §1)
+
+test("listItems: los estados cerrados de la WIQL salen del gestor, no de memoria", async () => {
+  const { ctx, calls } = hacerCtx();
+  await azdo.listItems({}, ctx);
+  assert.equal(calls[0].url, URL_TIPOS.slice(4), "primero lee los tipos y sus categorias de estado");
+  const wiql = deTipo(calls, "/_apis/wit/wiql")[0].body.query;
+  assert.match(wiql, /\[System\.TeamProject\] = @project/);
+  assert.match(wiql, /\[System\.State\] NOT IN \('Closed', 'Removed'\)/, "Completed y Removed, por categoria");
+  assert.ok(!/'Resolved'/.test(wiql), "Resolved es revision, no cerrado: sigue en el board");
+  assert.match(wiql, /ORDER BY \[System\.ChangedDate\] DESC$/);
+});
+
+test("listItems traduce la tarjeta: backlog, prioridad, area como equipo, asignado con avatar", async () => {
+  const { ctx } = hacerCtx();
+  const r = await azdo.listItems({}, ctx);
+  assert.deepEqual(r.items.map((i) => i.id), ["501", "502", "503", "504", "505"], "el orden de la WIQL se respeta");
+  assert.equal(r.total, 5, "WIQL devuelve todos los ids: aca el total si se sabe");
+  assert.equal(r.nextCursor, null);
+  const e = Object.fromEntries(r.items.map((i) => [i.id, i]));
+  assert.equal(e["501"].canonicalState, "backlog", "propuesto y sin iteracion");
+  assert.equal(e["502"].canonicalState, "todo", "propuesto pero en un sprint");
+  assert.equal(e["503"].canonicalState, "in_progress");
+  assert.equal(e["504"].canonicalState, "in_review");
+  assert.equal(e["505"].canonicalState, "in_progress", "'En espera' no esta en el stateMap: sale de su categoria InProgress");
+
+  assert.equal(e["501"].priority, 0, "1 (la mas alta de ADO) -> 0");
+  assert.equal(e["502"].priority, 1);
+  assert.equal(e["503"].priority, 3, "4 (la mas baja de ADO) -> 3");
+  assert.equal(e["504"].priority, null, "sin campo de prioridad: null, no un default");
+
+  assert.equal(e["501"].team, "Pagos");
+  assert.equal(e["504"].team, "Recibos", "el ultimo tramo del area");
+  assert.deepEqual(e["501"].assignee, { id: "ana@contoso.test", name: "Ana Pérez", avatarUrl: ANA._links.avatar.href });
+  assert.equal(e["502"].assignee, null);
+  assert.equal(e["501"].updatedAt, "2026-09-21T10:00:00.000Z");
+  assert.equal(e["501"].key, "#501");
+});
+
+test("listItems: un stateMap.backlog explicito manda sobre la iteracion", async () => {
+  const { ctx } = hacerCtx({ options: { stateMap: { ...ESTADOS, backlog: "Active" } } });
+  const { items } = await azdo.listItems({}, ctx);
+  assert.equal(items.find((i) => i.id === "503").canonicalState, "backlog");
+});
+
+test("listItems pagina por posicion en la WIQL, sin repetir ni perder", async () => {
+  const { ctx, calls } = hacerCtx();
+  const p1 = await azdo.listItems({ limit: 2 }, ctx);
+  assert.deepEqual(p1.items.map((i) => i.id), ["501", "502"]);
+  assert.equal(p1.nextCursor, "2");
+  assert.equal(p1.total, 5);
+  const lote = deTipo(calls, "workitemsbatch")[0].body;
+  assert.deepEqual(lote.ids, [501, 502], "solo se hidrata la pagina, no los cinco");
+  const p2 = await azdo.listItems({ limit: 2, cursor: p1.nextCursor }, ctx);
+  assert.deepEqual(p2.items.map((i) => i.id), ["503", "504"]);
+  const p3 = await azdo.listItems({ limit: 2, cursor: p2.nextCursor }, ctx);
+  assert.deepEqual(p3.items.map((i) => i.id), ["505"]);
+  assert.equal(p3.nextCursor, null);
+});
+
+test("listItems: un cursor que no es una posicion se rechaza con su valor", async () => {
+  const { ctx } = hacerCtx();
+  await assert.rejects(() => azdo.listItems({ cursor: "abc" }, ctx), /cursor/);
+});
+
+test("listItems con includeDone: solo Removed queda fuera, y lo cerrado sale en done", async () => {
+  const { ctx, calls } = hacerCtx();
+  const { items } = await azdo.listItems({ includeDone: true }, ctx);
+  const wiql = deTipo(calls, "/_apis/wit/wiql")[0].body.query;
+  assert.match(wiql, /\[System\.State\] NOT IN \('Removed'\)/);
+  assert.equal(items.find((i) => i.id === "507").canonicalState, "done");
+});
+
+test("listItems acota por areaPath si se declara", async () => {
+  const { ctx, calls } = hacerCtx({ options: { areaPath: "Fabrikam\\Pagos" } });
+  await azdo.listItems({}, ctx);
+  const wiql = deTipo(calls, "/_apis/wit/wiql")[0].body.query;
+  assert.match(wiql, /\[System\.AreaPath\] UNDER 'Fabrikam\\Pagos'/);
+});
+
+test("listItems: una WIQL propia gana, y lo retirado o cerrado que traiga igual queda fuera", async () => {
+  const propia = "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project ORDER BY [System.ChangedDate] DESC";
+  const { ctx, calls } = hacerCtx({ options: { wiql: { list: propia } } });
+  // La WIQL propia no excluye nada: el grabado devuelve tambien 507 (cerrado) y
+  // 508 (retirado), y el proveedor tiene que filtrarlos por categoria.
+  const r = await azdo.listItems({}, ctx);
+  assert.equal(deTipo(calls, "/_apis/wit/wiql")[0].body.query, propia);
+  assert.ok(!r.items.some((i) => i.id === "507"), "un cerrado no se lista sin includeDone, venga de donde venga");
+  assert.ok(!r.items.some((i) => i.id === "508"), "un retirado no se lista nunca");
+  const conHechos = await azdo.listItems({ includeDone: true }, ctx);
+  assert.ok(conHechos.items.some((i) => i.id === "507"));
+  assert.ok(!conHechos.items.some((i) => i.id === "508"), "ni siquiera con includeDone: retirado no es hecho");
+});
+
+test("listItems exige organizacion y proyecto antes de gastar un viaje", async () => {
+  const { ctx, calls } = hacerCtx({ options: { project: undefined } });
+  await assert.rejects(() => azdo.listItems({}, ctx), /project/);
+  assert.equal(calls.length, 0);
+});
+
+test("areaPath y wiql.list estan descritas en el esquema de opciones", () => {
+  assert.ok(azdo.optionsSchema.properties.areaPath);
+  assert.ok(azdo.optionsSchema.properties.wiql.properties.list);
 });

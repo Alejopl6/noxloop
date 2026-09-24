@@ -40,9 +40,14 @@ motor capacidad por capacidad, está en
    });
    ```
 
-   Son ocho chequeos. El octavo lee tu fuente para verificar que no tocás
+   Son nueve chequeos. El octavo lee tu fuente para verificar que no tocás
    `process.env`: las credenciales y las opciones llegan por `ctx`, y esa es la
-   única garantía de que no se pueda saltear la inyección en silencio.
+   única garantía de que no se pueda saltear la inyección en silencio. El
+   noveno es `listItems` (el listado del board, spec 003): si la declarás en
+   `true`, pide una página con `limit: 2`, la valida con `validateListPage` y
+   sigue el cursor exigiendo que no repita tickets; si no la declarás —es la
+   única capacidad que se puede omitir, porque llegó después y omitirla vale
+   `false`— exige que `can()` lo diga.
 
    Ese snippet alcanza para un gestor sin red, como `fake`. Si el tuyo habla
    HTTP, el `ctx.fetch` de tus `fixtures` tiene que **negar** la red y el test
@@ -102,3 +107,18 @@ proyecto, que es exactamente el motivo por el que el nivel sale del mapa.
 | `azure-devops` | ✅ completo — las diez capacidades en `true`, así que no ejercita ningún camino degradado: ver [docs/PROVIDERS.md](../docs/PROVIDERS.md) |
 | `github` | ✅ completo — `linkUrl`/`boardFields` en `false`, y con dependencias nativas: ver [docs/PROVIDERS.md](../docs/PROVIDERS.md) |
 | `linear` | ✅ completo — todo en `true` menos `searchMentioned`; los estados se resuelven por equipo: ver [docs/PROVIDERS.md](../docs/PROVIDERS.md) |
+
+### `listItems`: cómo mapea cada gestor
+
+| Gestor | Espacio | `backlog` | Prioridad (board 0 urgente … 4 baja, `null` sin dato) | `total` |
+|---|---|---|---|---|
+| `github` | `owner/repo`; PRs descartados; paginado por `Link` | solo con `stateMap.backlog` = nombre de etiqueta | solo con `options.priorityLabels` (etiqueta → 0..4); gana la más urgente | `null` |
+| `linear` | `teamId` o `teamKey` (obligatorio) | `state.type == "backlog"` | 1→0, 2→1, 3→2, 4→3; **0 (sin prioridad) → `null`** | `null` |
+| `azure-devops` | proyecto, o `areaPath`; o `wiql.list` | `stateMap.backlog`, o estado `todo` en la raíz de iteraciones | `Microsoft.VSTS.Common.Priority` 1→0 … 4→3; sin campo → `null` | ids de la WIQL |
+| `fake` | su `db` | solo con `stateMap.backlog` | la del item, si el test la pone | cuenta exacta |
+
+Los estados que el `stateMap` no nombra salen del enum del gestor —`state.type`
+en Linear, la **categoría** del estado en Azure DevOps (`GET
+_apis/wit/workitemtypes`)—, nunca del nombre de la columna. Cancelados,
+duplicados, `not_planned` y `Removed` no se listan nunca; `done` solo con
+`includeDone`.
