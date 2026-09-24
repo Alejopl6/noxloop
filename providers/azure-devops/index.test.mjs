@@ -480,7 +480,12 @@ test("declara las diez capacidades, todas en true: este gestor no ejercita ningu
   const caps = azdo.capabilities();
   // `listItems` incluida, explicita: la clave es opcional en el contrato, pero
   // este gestor la tiene y la declara.
-  assert.deepEqual(Object.keys(caps).sort(), [...CAPABILITY_KEYS].sort());
+  // `listStates` (spec 005, el editor visual del stateMap) es opcional y este
+  // gestor todavia NO la declara: sus estados son por TIPO de work item
+  // (`workitemtypes/{tipo}/states`), y leerlos bien exige elegir los tipos del
+  // proceso. Ausente es la degradacion declarada; el dia que se implemente,
+  // sale de esta excepcion.
+  assert.deepEqual(Object.keys(caps).sort(), CAPABILITY_KEYS.filter((k) => k !== "listStates").sort());
   const enFalse = Object.entries(caps).filter(([, v]) => v !== true).map(([k]) => k);
   assert.deepEqual(enFalse, [], "la degradacion se prueba con el proveedor falso, no bajando a false algo que el gestor si tiene");
 });

@@ -32,7 +32,7 @@
 
 import { exigirProyecto } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
-import { datosDelProyecto } from "./motor.mjs";
+import { datosDelProyecto, diagnosticar, secretosDelGestor } from "./motor.mjs";
 
 /** Los estados que el `stateMap` de TODO proyecto declara: los que el motor escribe. */
 const CANONICOS = Object.freeze(["todo", "in_progress", "blocked", "in_review", "done"]);
@@ -188,6 +188,167 @@ export async function opcionesDelGestor(p) {
         opciones: ahora?.opciones ?? null,
         stateMap: capacidades.stateMap ?? null,
       },
+    },
+  };
+}
+
+// -----------------------------------------------------------------------------
+// El editor de estados (spec 005, FR-002)
+// -----------------------------------------------------------------------------
+
+/** Un logger que no escribe: el proveedor recibe uno, y una lectura no deja rastro. */
+const SILENCIO = Object.freeze({ info() {}, warn() {}, error() {}, debug() {} });
+
+/**
+ * El `ctx` con que el SERVICIO llama a un proveedor: opciones del proyecto,
+ * `stateMap` de la conexion, credencial de la boveda (con su evento de
+ * auditoria, principio IX) y red. Es el mismo que arma el board para listar;
+ * vive aqui para que el editor de estados y la consulta de las «movidas» no lo
+ * copien.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} proyecto
+ * @param {any} diag lo que devolvio `diagnosticar`
+ */
+export async function contextoDelGestor(p, proyecto, diag) {
+  const gestor = diag.gestor;
+  const mod = diag.modulo;
+  const env = await secretosDelGestor(p.dep, proyecto, gestor, mod?.requiredEnv ?? [], "llamar_api");
+  return {
+    options: { ...(diag.opciones ?? gestor.opciones ?? {}), ...(gestor.stateMap ? { stateMap: gestor.stateMap } : {}) },
+    identity: { assignee: null, mention: null },
+    env,
+    log: SILENCIO,
+    fetch: globalThis.fetch,
+  };
+}
+
+/**
+ * Lo que un proveedor devolvio en `listStates`, sin confiar en su forma: el
+ * validador del contrato vive en `providers/` y este paquete viaja solo al
+ * escritorio. Lo que no trae nombre no se puede mapear (el mapa es por NOMBRE)
+ * y se descarta; un nombre repetido, tambien —el selector de uno escribiria el
+ * del otro—.
+ *
+ * @param {any} crudos
+ */
+function estadosLimpios(crudos) {
+  const LEIBLES = ["backlog", ...CANONICOS];
+  const vistos = new Set();
+  /** @type {Array<{id: string, name: string, category: string|null, suggested: string|null}>} */
+  const estados = [];
+  for (const e of Array.isArray(crudos) ? crudos : []) {
+    const nombre = typeof e?.name === "string" ? e.name.trim() : "";
+    if (!nombre || vistos.has(nombre)) continue;
+    vistos.add(nombre);
+    estados.push({
+      id: String(e.id ?? nombre),
+      name: nombre,
+      category: typeof e.category === "string" ? e.category : null,
+      suggested: LEIBLES.includes(e.suggested) ? e.suggested : null,
+    });
+  }
+  return estados;
+}
+
+/**
+ * `GET /v1/projects/:id/tracker/estados` — los estados REALES del gestor y el
+ * `stateMap` vigente, para el editor visual (contracts/gestor-api.md §3).
+ *
+ * NO GUARDA NADA: el editor guarda por el `PATCH` de arriba, que es el que
+ * valida. Esta ruta solo junta lo que hace falta para no escribir JSON: la fila
+ * de cada estado, el canonico que el mapa le da hoy (`asignado`), los que
+ * ningun canonico nombra (`sinAsignar`, que la spec pide NOMBRAR) y los nombres
+ * del mapa que el gestor no tiene (`desconocidos`: `setState` fallaria con ellos
+ * en el primer run, y es mejor decirlo aqui).
+ *
+ * NUNCA 500 POR EL GESTOR: una caida o una capacidad que falta vuelven como
+ * `nota` con la causa textual, y el editor sigue pudiendo guardar a mano.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function estadosDelGestor(p) {
+  const proyecto = exigirProyecto(p.dep, p.parametros.id);
+  const motor = p.estado.motor;
+  const diag = await diagnosticar(
+    p.dep,
+    proyecto,
+    motor ? { raizDeProveedores: motor.raizDeProveedores, cargarGestor: motor.cargarGestor } : {},
+  );
+  const gestor = diag.gestor;
+  if (!gestor || gestor.origen === "local") {
+    throw new ErrorDeServicio("sin_gestor", {
+      nombre: proyecto.nombre,
+      hallado: gestor
+        ? "el proyecto usa sus tareas propias (el gestor local), cuyos estados SON los canonicos: no hay nada que mapear"
+        : diag.datos?.gestorHallado ?? "el proyecto no tiene gestor",
+    });
+  }
+
+  const conexion = gestor.conexion
+    ? p.dep.almacen.base.consultarUno("SELECT * FROM connection WHERE id = ?", [gestor.conexion])
+    : null;
+  const editable = Boolean(conexion?.project_id);
+  const mod = diag.modulo;
+  const nombre = gestor.nombre;
+  /** @type {Record<string, string|null>|null} */
+  const stateMap = gestor.stateMap ?? null;
+
+  const caps = mod && typeof mod.capabilities === "function" ? mod.capabilities() ?? {} : {};
+  const sabeListar = caps.listStates === true && typeof mod?.listStates === "function";
+
+  /** @type {ReturnType<typeof estadosLimpios>} */
+  let estados = [];
+  /** @type {string|null} */
+  let nota = null;
+  if (!mod) {
+    nota = `El proveedor \`${nombre}\` no esta disponible en esta instalacion: no se pueden leer sus estados.`;
+  } else if (!sabeListar) {
+    // LA DEGRADACION DECLARADA (contracts/gestor-api.md §2). No se inventa la
+    // lista: el editor ofrece los nombres que el mapa ya declara y deja
+    // escribir uno a mano.
+    nota =
+      `El gestor \`${nombre}\` no declara la capacidad \`listStates\`: no sabe listar sus estados, asi que el ` +
+      "editor muestra los nombres que el mapa ya declara y puedes escribir otros a mano, tal como se llaman en el gestor.";
+  } else {
+    try {
+      estados = estadosLimpios(await mod.listStates(await contextoDelGestor(p, proyecto, diag)));
+    } catch (e) {
+      const causa = e && e.causa ? e.causa : String(e?.message ?? e);
+      nota = `El gestor \`${nombre}\` no contesto al pedir sus estados: ${causa}`;
+    }
+  }
+
+  const asignadoA = (/** @type {string} */ nombreDeEstado) =>
+    CANONICOS.find((c) => stateMap?.[c] === nombreDeEstado) ?? null;
+  const conAsignado = estados.map((e) => ({ ...e, asignado: asignadoA(e.name) }));
+  const nombres = new Set(estados.map((e) => e.name));
+  // Solo se afirma «el gestor no tiene ese estado» cuando se tiene la lista:
+  // sin ella, cualquier nombre del mapa podria existir.
+  const desconocidos =
+    estados.length > 0
+      ? CANONICOS.filter((c) => typeof stateMap?.[c] === "string" && !nombres.has(/** @type {string} */ (stateMap?.[c]))).map(
+          (c) => ({ canonico: c, nombre: /** @type {string} */ (stateMap?.[c]) }),
+        )
+      : [];
+
+  return {
+    cuerpo: {
+      gestor: { nombre, conexion: gestor.conexion ?? null, opciones: gestor.opciones ?? null },
+      // El esquema viaja para que la interfaz pinte los campos que el
+      // proveedor DECLARA (equipo, reglas...) sin saber que gestor es.
+      esquema: mod?.optionsSchema ?? null,
+      editable,
+      motivo: editable
+        ? null
+        : `La conexion \`${gestor.slug}\` es del espacio de trabajo y la comparten otros proyectos: sus opciones y su ` +
+          "mapa de estados no se cambian desde aqui. Conecta el gestor como conexion del proyecto para editarlos.",
+      listStates: sabeListar,
+      estados: conAsignado,
+      stateMap,
+      sinAsignar: conAsignado.filter((e) => e.asignado === null).map((e) => e.name),
+      desconocidos,
+      nota,
     },
   };
 }

@@ -93,6 +93,8 @@ test("capabilities dice la verdad de este gestor", () => {
     identityAssignee: false,
     // `issues(filter: { team, state.type })`: el listado del board.
     listItems: true,
+    // `workflowStates(filter: { team })`: el editor de estados (spec 005).
+    listStates: true,
   });
 });
 
@@ -666,4 +668,101 @@ test("listItems saltea un nodo null o sin id y lo anota, en vez de reventar", as
   const r = await linear.listItems({}, ctx);
   assert.deepEqual(r.items, []);
   assert.equal(avisos.length, 2);
+});
+
+// ---------------------------------------- reglas de ruteo (spec 005, FR-001)
+//
+// Un equipo de Linear suele tener varios proyectos, y noxloop puede tener un
+// board por cada uno. Sin reglas, los dos boards listan el equipo entero y la
+// misma issue se ofrece para correr desde los dos. Las reglas van EN EL FILTRO
+// de GraphQL —no se filtra despues—: filtrar del lado de aca con `first: N`
+// perderia en silencio las issues que caen fuera de la primera pagina.
+
+test("optionsSchema declara las reglas de ruteo, cerradas: proyecto y etiquetas, nada mas", () => {
+  const reglas = linear.optionsSchema.properties.reglas;
+  assert.ok(reglas, "el esquema no declara `reglas`: el PATCH del tracker las rechazaria");
+  assert.equal(reglas.type, "object");
+  assert.equal(reglas.additionalProperties, false, "una regla mal escrita tiene que fallar al guardar");
+  assert.equal(reglas.properties.proyecto.type, "string");
+  assert.equal(reglas.properties.etiquetas.type, "array");
+  assert.equal(reglas.properties.etiquetas.items.type, "string");
+});
+
+test("reglas.proyecto por NOMBRE va al filtro de GraphQL como project.name.eq", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamKey: "ENG", reglas: { proyecto: "Pagos" } } });
+  const { items } = await linear.listItems({}, ctx);
+  assert.deepEqual(llamadas[0].variables.listado.project, { name: { eq: "Pagos" } });
+  assert.deepEqual(items.map((i) => i.key).sort(), ["ENG-124", "ENG-500"]);
+});
+
+test("reglas.proyecto por UUID filtra por project.id.eq, que sobrevive a un renombre", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamKey: "ENG", reglas: { proyecto: IDS.proyecto } } });
+  const { items } = await linear.listItems({}, ctx);
+  assert.deepEqual(llamadas[0].variables.listado.project, { id: { eq: IDS.proyecto } });
+  assert.deepEqual(items.map((i) => i.key).sort(), ["ENG-100", "ENG-123"]);
+});
+
+test("SC-001: dos proyectos de noxloop sobre el mismo equipo, con reglas distintas, ven conjuntos disjuntos", async () => {
+  const a = nuevoCtx({ options: { teamKey: "ENG", reglas: { proyecto: "Pagos" } } });
+  const b = nuevoCtx({ options: { teamKey: "ENG", reglas: { proyecto: "Plataforma" } } });
+  const ia = (await linear.listItems({}, a.ctx)).items.map((i) => i.key);
+  const ib = (await linear.listItems({}, b.ctx)).items.map((i) => i.key);
+  assert.ok(ia.length > 0 && ib.length > 0, "el test no vale si uno de los dos queda vacio");
+  assert.deepEqual(ia.filter((k) => ib.includes(k)), [], "la misma issue salio en los dos boards");
+});
+
+test("reglas.etiquetas: basta UNA de las etiquetas (labels.some.name.in), y se combina con el proyecto", async () => {
+  const soloEtiqueta = nuevoCtx({ options: { teamKey: "ENG", reglas: { etiquetas: ["Epic"] } } });
+  const { items } = await linear.listItems({}, soloEtiqueta.ctx);
+  assert.deepEqual(soloEtiqueta.llamadas[0].variables.listado.labels, { some: { name: { in: ["Epic"] } } });
+  assert.deepEqual(items.map((i) => i.key).sort(), ["ENG-100", "ENG-900"]);
+
+  const ambas = nuevoCtx({ options: { teamKey: "ENG", reglas: { proyecto: "Pagos", etiquetas: ["Story", "Task"] } } });
+  const r = await linear.listItems({}, ambas.ctx);
+  assert.deepEqual(r.items.map((i) => i.key), ["ENG-124"], "proyecto Y alguna etiqueta: Pagos con Story");
+});
+
+test("reglas vacias (sin proyecto ni etiquetas) no filtran: es el equipo entero, como sin reglas", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamKey: "ENG", reglas: { etiquetas: [] } } });
+  const { items } = await linear.listItems({}, ctx);
+  assert.equal("project" in llamadas[0].variables.listado, false);
+  assert.equal("labels" in llamadas[0].variables.listado, false, "`in: []` no dejaria pasar nada, en silencio");
+  assert.equal(items.length, 7);
+});
+
+test("una regla que no deja pasar nada devuelve una pagina vacia, no un error: el board lo dice en la columna", async () => {
+  const { ctx } = nuevoCtx({ options: { teamKey: "ENG", reglas: { proyecto: "No existe" } } });
+  const r = await linear.listItems({}, ctx);
+  assert.deepEqual(r, { items: [], nextCursor: null, total: null });
+});
+
+test("el Item dice en que proyecto de Linear vive: es el destino de una issue «movida» (FR-004)", async () => {
+  const { ctx } = nuevoCtx();
+  assert.deepEqual((await linear.getItem("ENG-124", ctx)).project, { id: IDS.proyectoPagos, name: "Pagos" });
+  assert.equal((await linear.getItem("ENG-777", ctx)).project, null);
+});
+
+// ---------------------------------------- estados del equipo (spec 005, FR-002)
+
+test("listStates devuelve los estados REALES del equipo, en su orden, con su tipo y el canonico sugerido", async () => {
+  const { ctx, llamadas } = nuevoCtx({ options: { teamKey: "ENG" } });
+  const estados = await linear.listStates(ctx);
+  assert.equal(llamadas.length, 1);
+  assert.deepEqual(llamadas[0].variables.equipoDeEstados, { key: { eq: "ENG" } });
+  assert.deepEqual(estados.map((e) => e.name), ["Backlog", "Todo", "In Progress", "Listo para QA", "Done", "Canceled"]);
+  const porNombre = Object.fromEntries(estados.map((e) => [e.name, e]));
+  assert.deepEqual(porNombre.Todo, { id: "st-todo", name: "Todo", category: "unstarted", suggested: "todo" });
+  assert.equal(porNombre.Backlog.suggested, "backlog", "backlog sale del tipo, como en el listado");
+  assert.equal(porNombre.Canceled.suggested, null, "cancelado no tiene canonico: no se inventa");
+  assert.equal(porNombre.Done.suggested, "done");
+});
+
+test("listStates prefiere teamId, y sin equipo lo dice en vez de listar los estados de todo el workspace", async () => {
+  const conId = nuevoCtx({ options: { teamId: IDS.equipo, teamKey: "ENG" } });
+  await linear.listStates(conId.ctx);
+  assert.deepEqual(conId.llamadas[0].variables.equipoDeEstados, { id: { eq: IDS.equipo } });
+
+  const sin = nuevoCtx();
+  await assert.rejects(() => linear.listStates(sin.ctx), /teamId|teamKey/);
+  assert.equal(sin.llamadas.length, 0);
 });
