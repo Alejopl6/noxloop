@@ -44,6 +44,10 @@
         "properties": {
           "id": { "type": "string" },
           "repo": { "type": "string" },
+          "repoPath": {
+            "type": ["string", "null"],
+            "description": "Ruta absoluta del checkout del repositorio, copiada de la config al planificar. Es lo que usa el servicio para atribuir el run a un proyecto cuando no trae projectId."
+          },
           "title": { "type": "string" },
           "acceptance": { "type": "string" },
           "targetFiles": { "type": "array", "items": { "type": "string" } },
