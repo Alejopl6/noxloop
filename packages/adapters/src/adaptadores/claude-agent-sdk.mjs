@@ -24,6 +24,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ejecutorDeProceso, entornoDeclarado, estadoDeAutenticacion } from "../autenticacion.mjs";
 import { normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
 import { lanzar, leerLanzamiento } from "../proceso.mjs";
 import { esCorteDePresupuesto, leerResultadoJson } from "../salida.mjs";
@@ -67,6 +68,40 @@ export const VARIABLES_DEL_RUNTIME = [
   "CLAUDE_CODE_USE_VERTEX",
 ];
 
+/**
+ * Las variables NO secretas sin las que la sesion local de Claude Code no se
+ * encuentra.
+ *
+ * EL RIESGO QUE CIERRA. El entorno de una fase se construye por nombre y lo que
+ * no esta declarado no viaja (principio IX). Si de esa lista falta lo que el
+ * runtime necesita para encontrar SU sesion, la fase arranca y muere con "no
+ * autenticado" aunque el operador tenga `claude` logueado en la misma maquina.
+ * Medido en macOS: `env -i HOME=... PATH=... claude auth status` contesta
+ * `loggedIn: false`; con `USER` añadido, `loggedIn: true`. La sesion vive en el
+ * llavero ("Claude Code-credentials") y se busca POR USUARIO.
+ *
+ * POR QUE LAS DECLARA EL RUNTIME Y NO SOLO EL MOTOR. El motor ya pasa `HOME`,
+ * `USER`, `PATH`... como variables de la maquina, pero esa lista es del motor y
+ * puede cambiar por motivos que no tienen nada que ver con Claude. Lo que este
+ * runtime necesita para autenticarse lo dice el, igual que sus credenciales
+ * (principio VI): `CLAUDE_CONFIG_DIR` no lo sabria nombrar nadie mas.
+ *
+ * NO SON SECRETOS, y por eso van aparte de `requiredEnv`: la guarda de argv mira
+ * las secretas, y `HOME` es prefijo de casi cualquier ruta absoluta — tratarla
+ * como secreta dejaria la guarda dando positivo siempre. Ninguna de estas
+ * contiene una credencial: dicen DONDE esta la sesion, no cual es.
+ *
+ * @type {readonly string[]}
+ */
+export const VARIABLES_DE_SESION = Object.freeze([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "PATH",
+  "TMPDIR",
+  "CLAUDE_CONFIG_DIR",
+]);
+
 /** @returns {{disponible: boolean, motivo: string|null}} */
 export function sdkDisponible() {
   try {
@@ -90,6 +125,8 @@ export function sdkDisponible() {
  *   timeoutMs?: number,
  *   alLanzar?: (l: any) => void,
  *   alProgreso?: (e: {tipo: string, detalle?: any}, peticion: any) => void,
+ *   ejecutarAutenticacion?: import("../autenticacion.mjs").Ejecutor,
+ *   entornoDisponible?: Record<string, string|undefined>,
  * }} [opts]
  * @returns {import("../contrato.mjs").AgentAdapter}
  */
@@ -105,7 +142,16 @@ export function crearAdaptadorClaude(opts = {}) {
     timeoutMs = 30 * 60_000,
     alLanzar,
     alProgreso,
+    ejecutarAutenticacion,
+    // DE DONDE se toman los valores de lo que este runtime declara, para el
+    // preflight. Nunca se pasa entero: se filtra por nombre. Sin el, el
+    // preflight corre con un entorno vacio, sin PATH, y no encuentra el binario.
+    entornoDisponible = {},
   } = opts;
+
+  /** El ejecutor del preflight, apuntado al binario que este adaptador usa de verdad. */
+  const ejecutar = ejecutarAutenticacion
+    ?? ((/** @type {string[]} */ argv, /** @type {any} */ o) => ejecutorDeProceso([comando, ...argsPrefijo, ...argv.slice(1)], o));
 
   /** El camino que se va a usar. Se resuelve una vez: no cambia a mitad de un run. */
   const conSdk = Boolean(sdk) || resolverSdk().disponible;
@@ -145,6 +191,8 @@ export function crearAdaptadorClaude(opts = {}) {
 
     requiredEnv: [...VARIABLES_DEL_RUNTIME],
 
+    sessionEnv: [...VARIABLES_DE_SESION],
+
     capabilities() {
       return {
         resume: true,
@@ -164,29 +212,56 @@ export function crearAdaptadorClaude(opts = {}) {
     },
 
     async preflight() {
-      if (conSdk) return { ok: true, via };
-      const motivo = resolverSdk().motivo;
-      // El CLI puede no estar tampoco. Se comprueba AQUI, en el doctor, y no a
-      // mitad de un run: un ENOENT en la fase GREEN llega con la tarea
-      // repartida, el worktree creado y el operador mirando otra cosa.
-      const r = await probarBinario(comando, argsPrefijo);
-      if (!r.ok) {
+      // EL MISMO ENTORNO QUE TENDRA LA FASE, no uno inventado para el doctor:
+      // si aqui se preguntara con mas variables de las que la fase recibe, el
+      // preflight diria "hay sesion" y la fase no la encontraria.
+      const env = entornoDeclarado(entornoDisponible, [...VARIABLES_DE_SESION, ...VARIABLES_DEL_RUNTIME]);
+      const autenticacion = await estadoDeAutenticacion("claude-agent-sdk", { ejecutar, env });
+
+      if (!autenticacion.binarioPresente) {
+        if (!conSdk) {
+          // Ni SDK ni CLI. Se comprueba AQUI, en el doctor, y no a mitad de un
+          // run: un ENOENT en la fase GREEN llega con la tarea repartida, el
+          // worktree creado y el operador mirando otra cosa.
+          const motivo = resolverSdk().motivo;
+          return {
+            ok: false,
+            causa:
+              `ni el SDK \`${PAQUETE}\` esta instalado (${motivo}) ni el binario \`${comando}\` responde. ` +
+              "Sin ninguno de los dos, este runtime no puede invocar nada.",
+            accion:
+              `Instala \`${PAQUETE}\` en la maquina del servicio, o deja \`${comando}\` en el PATH del entorno ` +
+              "que la boveda entrega a las fases. Si lo que quieres es probar el recorrido sin modelo, apunta el " +
+              "agente al runtime `fake`.",
+            autenticacion,
+          };
+        }
+        // Con el SDK y sin el CLI, las fases corren igual (el SDK trae el suyo),
+        // pero no hay binario al que preguntarle por la sesion. Con key, la hay;
+        // sin key NO SE AFIRMA nada: se deja pasar y se dice que no se verifico.
+        if (autenticacion.metodo === "api_key" || tieneKey(env)) return { ok: true, via, autenticacion };
         return {
-          ok: false,
-          causa:
-            `ni el SDK \`${PAQUETE}\` esta instalado (${motivo}) ni el binario \`${comando}\` responde ` +
-            `(${r.motivo}). Sin ninguno de los dos, este runtime no puede invocar nada.`,
-          accion:
-            `Instala \`${PAQUETE}\` en la maquina del servicio, o deja \`${comando}\` en el PATH del entorno ` +
-            "que la boveda entrega a las fases. Si lo que quieres es probar el recorrido sin modelo, apunta el " +
-            "agente al runtime `fake`.",
+          ok: true,
+          via,
+          autenticacion,
+          advertencia:
+            `no se pudo verificar la sesion de Claude: el SDK esta, pero \`${comando}\` no, y es el que contesta ` +
+            "`auth status`. Si la primera fase falla con \"no autenticado\", corre `claude auth login` o pega la " +
+            "API key en Settings → Modelos.",
         };
       }
+
+      if (!autenticacion.conectado) {
+        return { ok: false, causa: autenticacion.causa, accion: autenticacion.accion, autenticacion };
+      }
+
+      if (conSdk) return { ok: true, via, autenticacion };
       return {
         ok: true,
         via,
+        autenticacion,
         degradacion:
-          `el SDK \`${PAQUETE}\` no esta instalado (${motivo}), asi que las fases van por el CLI: cada una ` +
+          `el SDK \`${PAQUETE}\` no esta instalado (${resolverSdk().motivo}), asi que las fases van por el CLI: cada una ` +
           "arranca un proceso y un contexto frios, y el nivel de esfuerzo no viaja. Funciona, pero no es " +
           "equivalente — y se dice aqui para que nadie lo descubra por el coste.",
       };
@@ -387,29 +462,9 @@ async function porSdk(p) {
   });
 }
 
-/**
- * Si el binario responde. Se le pide la version, que es la pregunta mas barata
- * que existe y no arranca ninguna sesion.
- *
- * @param {string} comando
- * @param {string[]} argsPrefijo
- */
-async function probarBinario(comando, argsPrefijo) {
-  try {
-    const l = await lanzar({
-      comando,
-      args: [...argsPrefijo, "--version"],
-      // El preflight corre en el doctor, no dentro de una fase: no hay grant
-      // que respetar porque no hay nada que el binario pueda alcanzar con un
-      // entorno vacio salvo decir su version.
-      env: {},
-      cwd: ".",
-      timeoutMs: 10_000,
-    });
-    return l.code === 0 ? { ok: true, motivo: null } : { ok: false, motivo: `salio con ${l.code}` };
-  } catch (e) {
-    return { ok: false, motivo: e?.message || String(e) };
-  }
+/** Si en el entorno declarado viaja una credencial del modelo. El valor no se mira, solo que este. */
+function tieneKey(/** @type {Record<string, string>} */ env) {
+  return ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].some((n) => typeof env[n] === "string" && env[n] !== "");
 }
 
 /**
@@ -467,9 +522,14 @@ export function fixturesDeContrato({ dir }) {
     alLanzar: (/** @type {any} */ l) => { ultimo = l; },
   };
 
+  // La sesion se guiona como iniciada: la suite no mide el login del operador,
+  // mide el contrato. `sinRuntime` NO la lleva: pregunta de verdad a un binario
+  // que no existe, que es el caso que `preflight-diagnostica` tiene que ver.
+  const conSesion = async () => ({ code: 0, stdout: JSON.stringify({ loggedIn: true, authMethod: "claude.ai" }), stderr: "" });
+
   return {
     id: "claude-agent-sdk",
-    adaptador: crearAdaptadorClaude(comun),
+    adaptador: crearAdaptadorClaude({ ...comun, ejecutarAutenticacion: conSesion }),
     sinRuntime: crearAdaptadorClaude({ ...comun, comando: join(dir, "no-existe-el-binario"), argsPrefijo: [] }),
     home,
     cwd,

@@ -232,8 +232,15 @@ export const VARIABLES_DE_LA_MAQUINA = Object.freeze([
  * que cada valor es texto. Un valor que no sea texto no falla al construirlo,
  * falla al spawnear, con el modelo ya pagado.
  *
+ * LO QUE LA SESION LOCAL DEL RUNTIME NECESITA viaja tambien, por nombre:
+ * `deSesion` es la lista `sessionEnv` que declara el adaptador (`CODEX_HOME`,
+ * `CLAUDE_CONFIG_DIR`, `USER`...). Sin ella, un operador logueado con su
+ * suscripcion o su cuenta de ChatGPT veia la fase morir con "no autenticado":
+ * el runtime buscaba su sesion donde el entorno construido no le decia. No se
+ * resuelve heredando `process.env` (principio IX): se resuelve declarando.
+ *
  * @param {any} config
- * @param {{env?: Record<string, string|undefined>, requeridas?: readonly string[]}} [opts]
+ * @param {{env?: Record<string, string|undefined>, requeridas?: readonly string[], deSesion?: readonly string[]}} [opts]
  * @returns {Record<string, string>}
  */
 export function entornoDeFase(config, opts = {}) {
@@ -241,7 +248,7 @@ export function entornoDeFase(config, opts = {}) {
   /** @type {Record<string, string>} */
   const variables = {};
 
-  for (const nombre of [...VARIABLES_DE_LA_MAQUINA, ...(opts.requeridas || [])]) {
+  for (const nombre of [...VARIABLES_DE_LA_MAQUINA, ...(opts.deSesion || []), ...(opts.requeridas || [])]) {
     const valor = disponibles[nombre];
     // Una variable declarada y ausente NO se rellena con "": el subproceso
     // distingue "no esta" de "esta vacia", y un PATH vacio es peor que ninguno.
@@ -301,6 +308,11 @@ function montarRuntime(config, opts) {
       // escribe el plan AHI, fuera del worktree: sin esto la planificacion no
       // puede dejar su resultado y el motor lo lee como "no se pudo planificar".
       directoriosExtra: [opts.home],
+      // De donde el PREFLIGHT toma los valores de lo que el runtime declara. El
+      // adaptador filtra por nombre: nunca recibe el entorno entero para
+      // pasarlo a nadie. Sin esto su preflight pregunta sin PATH y no encuentra
+      // el binario.
+      entornoDisponible: opts.env || process.env,
       alProgreso: (e, peticion) => {
         if (e.tipo === "tool_use") opts.log.info(`${peticion.phase} ${peticion.taskId || ""}: ${e.detalle.nombre}`);
       },
@@ -346,12 +358,13 @@ export async function buildDeps(item, config, opts = {}) {
   const overrides = opts.inject || {};
 
   const { registro, adaptador } = montarRuntime(config, {
-    home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, runtime: opts.runtime,
+    home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, runtime: opts.runtime, env: opts.env,
   });
 
   // EL ENTORNO VIAJA COMO FUNCION, no como objeto ya hecho. Es lo que hace que
   // se construya por fase: ver `entornoDeFase`.
-  const entorno = () => entornoDeFase(config, { env: opts.env, requeridas: adaptador.requiredEnv });
+  const entorno = () =>
+    entornoDeFase(config, { env: opts.env, requeridas: adaptador.requiredEnv, deSesion: adaptador.sessionEnv });
 
   // CUALES DE ESAS VARIABLES SON SECRETAS, y viaja con la peticion porque el
   // mapa plano de `env` no lo dice. Son exactamente las que el runtime declaro

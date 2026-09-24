@@ -60,6 +60,8 @@
  * @typedef {object} AgentAdapter
  * @property {string} id identificador estable; es lo que guarda `Agent.runtime`
  * @property {string[]} [requiredEnv] las variables que este runtime necesita recibir en `env`
+ * @property {string[]} [sessionEnv] variables NO secretas sin las que su sesion local no se encuentra
+ *   (`HOME`, `USER`, `CODEX_HOME`...); viajan en `env` pero no cuentan como secretos
  * @property {() => AdapterCapabilities} capabilities
  * @property {() => Promise<{ok: boolean, causa?: string, accion?: string}>} preflight
  * @property {(req: PhaseRequest, opts?: {signal?: AbortSignal}) => Promise<PhaseResult>} runPhase
@@ -105,6 +107,26 @@ export function validarAdaptador(adaptador) {
     const bien = Array.isArray(adaptador.requiredEnv)
       && adaptador.requiredEnv.every((/** @type {any} */ x) => typeof x === "string" && x);
     if (!bien) problems.push("requiredEnv: tiene que ser una lista de nombres de variable (strings no vacios)");
+  }
+
+  // `sessionEnv`, lo mismo para lo que NO es secreto: donde vive la sesion
+  // local del runtime. Va aparte porque las de `requiredEnv` entran en la
+  // guarda de argv y estas no pueden: `HOME` es prefijo de casi cualquier ruta.
+  // Por eso ningun nombre puede estar en las dos listas — seria declarar a la
+  // vez que una variable es secreta y que no lo es, y la guarda elegiria una.
+  if (adaptador.sessionEnv != null) {
+    const bien = Array.isArray(adaptador.sessionEnv)
+      && adaptador.sessionEnv.every((/** @type {any} */ x) => typeof x === "string" && x);
+    if (!bien) {
+      problems.push("sessionEnv: tiene que ser una lista de nombres de variable (strings no vacios)");
+    } else if (Array.isArray(adaptador.requiredEnv)) {
+      const cruce = adaptador.sessionEnv.filter((/** @type {string} */ n) => adaptador.requiredEnv.includes(n));
+      if (cruce.length) {
+        problems.push(
+          `sessionEnv y requiredEnv comparten ${cruce.join(", ")}: una variable es secreta o no lo es, no las dos cosas`,
+        );
+      }
+    }
   }
 
   for (const fn of ["capabilities", "preflight", "runPhase"]) {
