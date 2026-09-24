@@ -47,6 +47,7 @@ import { anchoDelLienzo } from '@/components/marco/lienzo'
 import { etiquetaDePestana } from '@/components/marco/secciones'
 import { AjustesDelProyecto, AjustesGenerales } from '@/components/ajustes/marco-de-ajustes'
 import { VistaDeAjustesDeProyecto } from '@/components/ajustes/vista-ajustes-de-proyecto'
+import { VistaDelGestor } from '@/components/ajustes/vista-gestor'
 import { VistaDeModelos } from '@/components/ajustes/vista-modelos'
 import { VistaDeDiagnostico } from '@/components/ajustes/vista-diagnostico'
 import { VistaDeFlotaPorDefecto } from '@/components/ajustes/vista-flota-por-defecto'
@@ -174,6 +175,8 @@ function PestanaDeProyecto({
       return <VistaDeBootstrap proyectoId={proyectoId} navegar={navegar} />
     case 'conexiones':
       return <VistaDeConexiones proyectoId={proyectoId} navegar={navegar} />
+    case 'gestor':
+      return <VistaDelGestor proyectoId={proyectoId} />
     case 'flota':
       return <VistaDeFlota proyectoId={proyectoId} navegar={navegar} />
     case 'ciclos':

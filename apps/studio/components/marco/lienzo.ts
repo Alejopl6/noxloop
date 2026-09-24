@@ -159,6 +159,8 @@ export const CLASE_DE_VISTA: Record<Seccion, ClaseDeVista> = {
   bootstrap: 'detalle',
 
   conexiones: 'inventario',
+  // Equipo y reglas (un punado de campos) y la tabla de estados del gestor.
+  gestor: 'inventario',
   flota: 'inventario',
 
   // Tabla de tareas del ciclo: estado, intentos por lazo, rama, ultimo fallo.
@@ -220,6 +222,7 @@ export const ALINEACION_DE_VISTA: Record<Seccion, AlineacionDeVista> = {
 
   bootstrap: 'izquierda',
   conexiones: 'izquierda',
+  gestor: 'izquierda',
   flota: 'izquierda',
   ciclos: 'izquierda',
   credenciales: 'izquierda',

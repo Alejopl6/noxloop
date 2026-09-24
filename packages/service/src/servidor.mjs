@@ -30,6 +30,7 @@ import { emparejar } from "./rutas.mjs";
 import { abrirDependencias, VARIABLE_DE_FRASE } from "./dependencias.mjs";
 import { vigilarAlPadre } from "./watchdog.mjs";
 import { BIN_DEL_MOTOR, crearLanzador } from "./lanzador.mjs";
+import { runsSimultaneos } from "./ajustes.mjs";
 import { MAX_PARALELO_POR_DEFECTO, RAIZ_DE_PROVEEDORES, cargarGestor } from "./motor.mjs";
 
 /** Version de la forma de las respuestas. Un cambio incompatible la sube. */
@@ -340,6 +341,9 @@ export async function arrancar(opts) {
       entornoBase: m.entornoBase,
       intervaloMs: m.intervaloMs,
       emitir: canal.emitir,
+      // La cola es GLOBAL (spec 005, FR-006) y su limite lo guarda el operador
+      // en Settings; se lee en cada decision para que cambiarlo valga ya.
+      limite: () => runsSimultaneos(dep),
     }),
     binDelMotor: m.binDelMotor ?? BIN_DEL_MOTOR,
     raizDeProveedores,

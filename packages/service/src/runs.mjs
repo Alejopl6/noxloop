@@ -32,10 +32,13 @@ import { join } from "node:path";
 import { coleccion, exigir, exigirProyecto, noEsta } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
 import { datosDelProyecto, prepararMotor, secretosDelGestor } from "./motor.mjs";
-import { ejecutorDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ejecutor.mjs";
-import { claveDelModelo } from "./runtimes.mjs";
+import {
+  MONTABLE_POR_EL_MOTOR, choqueConElRevisor, ejecutorDelProyecto, flotaDelProyecto, problemaDeEjecucion, resolverEjecutor,
+} from "./ejecutor.mjs";
+import { claveDelModelo, estadosDeRuntimes } from "./runtimes.mjs";
 import { lockVivo } from "./lanzador.mjs";
-import { ESTADOS_DEL_RUN, accionDelEstado, avanceDe, estadoDelRun, gastoDe } from "./estado-del-run.mjs";
+import { ESTADOS_DEL_RUN, EN_VUELO, accionDelEstado, avanceDe, estadoDelRun, gastoDe } from "./estado-del-run.mjs";
+import { bloqueoPara, bloqueosParaElBoard } from "./diagnostico.mjs";
 import { vigilarTranscripts } from "./transcript.mjs";
 
 /** Donde el motor escribe el estado de cada run, dentro del home. */
@@ -199,6 +202,10 @@ async function lanzar(p, proyecto) {
   // el boton deshabilitado.
   const preparar = preparador(p, proyecto.id, itemId);
   const preparado = await preparar();
+  // Y LO BLOQUEANTE DEL DIAGNOSTICO (spec 005, FR-008), que el board ya pone
+  // en el boton deshabilitado: sin esto la tarjeta decia «falta git» y la ruta
+  // lanzaba igual un motor que moria en su primer `git worktree`.
+  await exigirSinBloqueo(p, proyecto, preparado.runtime);
   const r = await motor.lanzador.lanzar({
     projectId: proyecto.id,
     itemId,
@@ -244,7 +251,11 @@ export function ejecucionDe(dep, proyecto, gestor, itemId) {
   const tarea = gestor?.origen === "local" ? dep.almacen.tareas.porId(itemId) : null;
   const ejecutor = resolverEjecutor(tarea?.ejecutor ?? null, ejecutorDelProyecto(dep, proyecto.id));
   const termino = tarea ? String(tarea.termino) : "pr";
-  const problema = problemaDeEjecucion({ ejecutor, termino, clave: tarea ? String(tarea.clave) : itemId });
+  // Con el revisor de la flota: la misma comprobacion de FR-034 que hace el
+  // board (`choqueConElRevisor`), dicha antes de componer nada.
+  const problema = problemaDeEjecucion({
+    ejecutor, termino, clave: tarea ? String(tarea.clave) : itemId, revisor: flotaDelProyecto(dep, proyecto.id).revisor,
+  });
   return { ejecutor, termino, problema, tarea };
 }
 
@@ -269,11 +280,22 @@ export function ejecucionDe(dep, proyecto, gestor, itemId) {
  * en cada paso, igual que la del gestor. Sin key, el runtime usa la sesion
  * local del operador (`claude auth login`, `codex login`).
  *
+ * LAS KEYS DE TODOS LOS RUNTIMES DEL RUN, no solo la del implementador (spec
+ * 005, FR-008). El motor corre cada fase en el runtime de su ROL —la revision en
+ * el revisor, la planificacion en el planificador— y cada fase recibe del
+ * entorno del motor la variable que SU runtime declara. Si aqui solo se sacaba
+ * la del implementador, un revisor sobre otro runtime corria sin modelo aunque
+ * el operador hubiera guardado su key. Lo mismo para el implementador de una
+ * tarea pasada a otro por un hand-off: su key tiene que estar en el entorno del
+ * `resume` que la retoma. Solo por el entorno, y cada una con su grant (principio IX).
+ *
  * @param {import("./rutas.mjs").Peticion} p
  * @param {string} projectId
  * @param {string} itemId
+ * @param {{runtimes?: string[], argumentos?: string[]}} [extra] runtimes de mas (el del hand-off) y
+ *   argumentos del paso (`--task`, `--runtime` del hand-off) — ninguno es secreto
  */
-function preparador(p, projectId, itemId) {
+function preparador(p, projectId, itemId, extra = {}) {
   const motor = motorDe(p);
   const dep = p.dep;
   const home = p.estado.home;
@@ -317,9 +339,71 @@ function preparador(p, projectId, itemId) {
       variables.NOXLOOP_SERVICE_URL = String(motor.url);
       secretos.NOXLOOP_SERVICE_TOKEN = String(p.estado.token);
     }
-    Object.assign(secretos, await claveDelModelo(dep, proyecto, ejecutor.runtime));
-    return { rutaConfig: ruta, secretos, variables, maxParalelo: config.limits.maxParallelItems };
+    for (const runtime of runtimesDelRun(dep, proyecto, home, itemId, ejecutor.runtime, extra.runtimes)) {
+      Object.assign(secretos, await claveDelModelo(dep, proyecto, runtime));
+    }
+    return {
+      rutaConfig: ruta,
+      secretos,
+      variables,
+      maxParalelo: config.limits.maxParallelItems,
+      // El runtime resuelto, para mirar el diagnostico contra el mismo que corre.
+      runtime: ejecutor.runtime,
+      ...(extra.argumentos?.length ? { argumentos: [...extra.argumentos] } : {}),
+    };
   };
+}
+
+/**
+ * Los runtimes que pueden correr alguna fase de este run: el implementador
+ * resuelto, el revisor y el planificador de la flota, el implementador propio
+ * de cada tarea que un hand-off ya paso a otro (leido del archivo del run, que
+ * lo escribe el motor), y los que pida quien llama. Sin repetidos.
+ *
+ * @param {any} dep
+ * @param {any} proyecto
+ * @param {string} home
+ * @param {string} itemId
+ * @param {string} implementador
+ * @param {string[]} [mas]
+ */
+function runtimesDelRun(dep, proyecto, home, itemId, implementador, mas = []) {
+  const flota = flotaDelProyecto(dep, proyecto.id);
+  const run = leerRuns(home).runs.find((r) => String(r?.item?.id) === String(itemId));
+  const deTareas = (Array.isArray(run?.tasks) ? run.tasks : [])
+    .map((/** @type {any} */ t) => t?.implementador?.runtime)
+    .filter((/** @type {any} */ r) => typeof r === "string");
+  return [...new Set([implementador, flota.revisor?.runtime, flota.planificador?.runtime, ...deTareas, ...mas].filter(Boolean))];
+}
+
+/**
+ * Lo BLOQUEANTE del diagnostico que afecta a este runtime, como el error de la
+ * peticion (spec 005, FR-008). Es la misma pregunta que hace el board
+ * (`bloqueosParaElBoard` + `bloqueoPara`) y sale con el MISMO codigo del
+ * problema —`binario_ausente`, `no_es_repositorio`...— y el motivo de la
+ * tarjeta en `objeto.motivo`, para que la ruta y el boton digan lo mismo.
+ *
+ * Va DESPUES de preparar: lo que ya rechaza la composicion (sin repo, sin
+ * gate...) sale con su propio codigo, igual que en la tarjeta, donde el motivo
+ * del proyecto va antes que el del diagnostico.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} proyecto
+ * @param {string} runtime
+ */
+async function exigirSinBloqueo(p, proyecto, runtime) {
+  const bloqueos = await bloqueosParaElBoard(p, [proyecto]);
+  const b = bloqueoPara(bloqueos.get(String(proyecto.id)), runtime);
+  if (!b) return;
+  // Un error de dominio con la forma del contrato (codigo, causa, accion): el
+  // codigo es el del problema del diagnostico, que es el catalogo de ESE modulo.
+  throw Object.assign(new Error(b.causa), {
+    codigo: b.codigo,
+    causa: b.causa,
+    accion: b.accion,
+    estado: 409,
+    objeto: { motivo: b.motivo, afecta: b.afecta, nivel: b.nivel },
+  });
 }
 
 /**
@@ -449,6 +533,7 @@ async function actuar(p, accion) {
 
   const preparar = preparador(p, proyecto.id, itemId);
   const preparado = await preparar();
+  await exigirSinBloqueo(p, proyecto, preparado.runtime);
   const pedido = {
     projectId: proyecto.id,
     itemId,
@@ -470,6 +555,139 @@ export async function aprobarRun(/** @type {import("./rutas.mjs").Peticion} */ p
 /** `POST /v1/runs/:id/retry` — retoma desde el disco (principio III). */
 export async function reintentarRun(/** @type {import("./rutas.mjs").Peticion} */ p) {
   return actuar(p, "retry");
+}
+
+// ---------------------------------------------------------------------------
+// El hand-off: pasar una tarea a otro agente (spec 005, US3, FR-007)
+// ---------------------------------------------------------------------------
+
+/**
+ * Los estados de tarea que todavia tienen implementacion que pasar. Es la
+ * lista de `TRASPASABLES` del motor (`packages/engine/src/state.mjs`), repetida
+ * aqui porque este archivo no importa el motor (ver la cabecera). No es una
+ * segunda regla: el motor la vuelve a comprobar al escribir y es el que manda;
+ * esta solo evita lanzar un subproceso para que diga que no.
+ */
+const TAREA_CON_IMPLEMENTACION = Object.freeze(["pending", "in_progress", "red", "green", "blocked"]);
+
+/**
+ * `POST /v1/runs/:id/tasks/:taskId/handoff {runtime, agente?, nota?}`
+ *
+ * Valida TODO antes de lanzar —con causa y accion— y despues lanza `resume`
+ * con la tarea y el runtime nuevo: el motor escribe el override (el servicio no
+ * escribe estado del run, principio VIII), la reabre en la misma rama, y sigue.
+ *
+ * EL ORDEN DE LAS GUARDAS es el de «que tiene que cambiar para que se pueda»:
+ * primero lo que no depende del runtime pedido (el run en vuelo, la tarea sin
+ * implementacion pendiente), despues el runtime (registrado, el revisor, el
+ * mismo de ahora) y al final lo que cuesta preguntar (si tiene sesion).
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ */
+export async function pasarAOtroAgente(p) {
+  const itemId = p.parametros.id;
+  const taskId = p.parametros.taskId;
+  const home = p.estado.home;
+  const motor = motorDe(p);
+  const { run, vivo } = estadoCompleto(p, itemId);
+  if (!run) throw noEsta("run", itemId, "`GET /v1/runs`");
+  const tarea = (Array.isArray(run.tasks) ? run.tasks : []).find((/** @type {any} */ t) => t && String(t.id) === taskId);
+  if (!tarea) throw noEsta("tarea", taskId, `\`GET /v1/runs/${itemId}\``, `el run ${itemId}`);
+
+  const cuerpo = await p.cuerpo();
+  exigir(cuerpo, ["runtime"], "`runtime` es el id del runtime que recibe la tarea (`GET /v1/runtimes`).");
+  const runtime = String(cuerpo.runtime);
+  const agente = typeof cuerpo.agente === "string" && cuerpo.agente.trim() ? cuerpo.agente.trim() : null;
+  const nota = typeof cuerpo.nota === "string" && cuerpo.nota.trim() ? cuerpo.nota.trim() : null;
+
+  const rechazo = (/** @type {string} */ razon, /** @type {string} */ porque, /** @type {string} */ comoSeguir) =>
+    new ErrorDeServicio("handoff_rechazado", { itemId, taskId, runtime, porque, comoSeguir, objeto: { razon } });
+
+  // Una fase en vuelo no se toca por atras: la tarea terminaria con la fase de
+  // un agente y el estado del otro. Lo mismo un run en cola: va a arrancar.
+  if (lockVivo(home, itemId) || (vivo && (EN_VUELO.includes(vivo.estado) || vivo.estado === "en_cola"))) {
+    throw rechazo(
+      "fase_en_vuelo",
+      `el run esta ${vivo?.estado ?? "corriendo en otro proceso"}, y cambiarle el implementador a mitad de una fase la dejaria a medias entre dos agentes`,
+      "Espera a que el run termine o se bloquee (o detenlo) y vuelve a pedir el hand-off.",
+    );
+  }
+  if (!TAREA_CON_IMPLEMENTACION.includes(String(tarea.status))) {
+    throw rechazo(
+      "sin_implementacion",
+      `la tarea esta en \`${tarea.status}\`: ya paso su GREEN con el gate verde (o esta integrada), y no le queda implementacion que pasar`,
+      `Mira el detalle del run (\`GET /v1/runs/${itemId}\`): si lo que falla es la revision o la cola, un hand-off no lo cambia.`,
+    );
+  }
+
+  const proyecto = proyectoDelRun(p, run, vivo);
+  if (!proyecto) throw noEsta("proyecto del run", itemId, "`GET /v1/projects`", "ningun proyecto de este espacio de trabajo");
+  exigirActivo(p.dep, proyecto);
+
+  if (!Object.hasOwn(MONTABLE_POR_EL_MOTOR, runtime) || MONTABLE_POR_EL_MOTOR[runtime] !== null) {
+    const soportados = Object.keys(MONTABLE_POR_EL_MOTOR).filter((k) => MONTABLE_POR_EL_MOTOR[k] === null);
+    throw rechazo(
+      "runtime_no_registrado",
+      `el motor no tiene registrado ningun adaptador \`${runtime}\` que pueda implementar (los que hay: ${soportados.join(", ")})`,
+      `Elige uno de ${soportados.map((s) => `\`${s}\``).join(" o ")}.`,
+    );
+  }
+  // FR-034, con la MISMA regla que el lanzamiento y el board.
+  const choque = choqueConElRevisor({ runtime, de: "el hand-off de la tarea" }, flotaDelProyecto(p.dep, proyecto.id).revisor);
+  if (choque) throw choque;
+
+  const actual = typeof tarea.implementador?.runtime === "string"
+    ? tarea.implementador.runtime
+    : ejecucionDe(p.dep, proyecto, datosDelProyecto(p.dep, proyecto, { raizDeProveedores: motor.raizDeProveedores }).gestor, itemId).ejecutor.runtime;
+  if (runtime === actual) {
+    throw rechazo(
+      "mismo_runtime",
+      `\`${runtime}\` ya es quien implementa la tarea: pasarsela a si mismo seria otro intento del mismo agente sin decir por que`,
+      "Para que lo intente de nuevo el mismo agente usa Retry (o destrabala con nota); para cambiarlo, elige otro runtime.",
+    );
+  }
+  const sesion = (await estadosDeRuntimes(p, [runtime])).get(runtime);
+  if (sesion?.conectado === false) {
+    throw rechazo(
+      "runtime_desconectado",
+      `\`${runtime}\` no tiene con que invocar al modelo: ${sesion.causa ?? sesion.detalle ?? "sin sesion ni API key"}`,
+      sesion.accion ?? "Conecta el runtime en Settings → Modelos y vuelve a pedir el hand-off.",
+    );
+  }
+
+  // El paso: `resume <item> --task <t> --runtime <r>`. La key del runtime nuevo
+  // se saca de la boveda como la de los demas roles (ver `preparador`).
+  const argumentos = ["--task", taskId, "--runtime", runtime, ...(agente ? ["--agente", agente] : []), ...(nota ? ["--nota", nota] : [])];
+  const preparar = preparador(p, proyecto.id, itemId, { runtimes: [runtime], argumentos });
+  const preparado = await preparar();
+  await exigirSinBloqueo(p, proyecto, runtime);
+  const r = await motor.lanzador.reintentar({
+    projectId: proyecto.id,
+    itemId,
+    autonomia: String(proyecto.autonomia),
+    maxParalelo: preparado.maxParalelo,
+    preparado,
+    preparar,
+  });
+  vigilarTranscripts(p.estado);
+  return {
+    codigo: r.codigo,
+    cuerpo: {
+      run: r.run,
+      handoff: {
+        taskId,
+        de: actual,
+        a: runtime,
+        agente,
+        // Con el rojo verificado el motor la retoma en GREEN y no repite RED;
+        // sin el, no hay rojo que conservar y empieza por RED.
+        retomaEn: tarea.redVerified === true ? "GREEN" : "RED",
+        // Los intentos NO se reponen (principio III): un bucle agotado deja un
+        // intento, que el motor declara en el run (`tasks[].handoffs`).
+        attempts: tarea.attempts ?? null,
+      },
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

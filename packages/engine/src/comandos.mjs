@@ -14,7 +14,7 @@ import { createLogger } from "./log.mjs";
 import { revisarBandeja } from "./inbox.mjs";
 import { correrDaemon, unaVuelta } from "./daemon.mjs";
 import { prepararHito, correrHito, reporteDeHito } from "./milestone.mjs";
-import { diagnosticar, prepararReanudacion, destrabar, limpiarHuerfanos } from "./recovery.mjs";
+import { diagnosticar, prepararReanudacion, destrabar, limpiarHuerfanos, pasarAOtroAgente } from "./recovery.mjs";
 
 /** Que hace falta correr para cada nivel de ticket. */
 const POR_NIVEL = {
@@ -379,7 +379,40 @@ async function ejecutar(itemId, config, opts) {
     }
   }
 
-  const deps = await buildDeps(run.item, config, { ...opts, inject: opts.inject });
+  // `runtime` en opts es el del HAND-OFF, no el del recorrido: `buildDeps` lo
+  // leeria como el implementador de todo el item. Se separa antes de cablear.
+  const { runtime: runtimeDelHandoff, ...resto } = opts;
+  const deps = await buildDeps(run.item, config, { ...resto, inject: opts.inject });
+
+  // EL HAND-OFF (spec 005, FR-007): `resume <item> --task <t> --runtime <r>`.
+  // Va DESPUES de cablear porque las guardas necesitan saber que runtimes hay
+  // registrados y cual es el revisor, y ANTES de recorrer para que la primera
+  // vuelta del driver ya lea el override. Un rechazo no escribe nada y no
+  // recorre: el lanzador del servicio lo explica con `reason`.
+  if (opts.comando === "resume" && runtimeDelHandoff) {
+    if (!opts.task) {
+      return { ok: false, reason: "un hand-off necesita la tarea: `--task <t>`", humano: ["uso: noxloop resume <item> --task <t> --runtime <r>"] };
+    }
+    const tarea = run.tasks.find((t) => t.id === opts.task);
+    const h = /** @type {any} */ (pasarAOtroAgente(itemId, opts.task, {
+      home: config.home,
+      runtime: String(runtimeDelHandoff),
+      agente: opts.agente ?? null,
+      nota: opts.nota ?? null,
+      de: tarea?.implementador?.runtime ?? deps.runtimes?.implementador ?? null,
+      revisor: config.runtimes?.revisor ?? null,
+      registrados: deps.registroDeRuntimes?.ids?.() ?? [],
+      budgets: config.budgets,
+    }));
+    if (!h.ok) {
+      return { ...h, reason: `${h.causa} ${h.accion}`, humano: [`no se paso ${opts.task} a otro agente: ${h.causa}`, h.accion] };
+    }
+    opts.log.info(
+      `${opts.task} pasa de ${h.de ?? "?"} a ${h.a}${h.retomarEn === "red" ? " y sigue en GREEN, sin repetir RED" : ""}` +
+        `${h.presupuesto.agotados.length ? ` — con ${h.presupuesto.agotados.join(", ")} agotado: ${h.presupuesto.concede}` : ""}`,
+    );
+  }
+
   const r = /** @type {any} */ (await runItem(itemId, { ...deps, dryRun: opts.dryRun }));
 
   const humano = [];

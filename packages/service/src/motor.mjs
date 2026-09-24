@@ -49,7 +49,7 @@ import { pathToFileURL } from "node:url";
 
 import { slugDe } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
-import { flotaDelProyecto } from "./ejecutor.mjs";
+import { choqueConElRevisor, flotaDelProyecto } from "./ejecutor.mjs";
 
 /**
  * Donde viven los proveedores del motor, por defecto: `providers/` en la raiz
@@ -479,13 +479,10 @@ export function componerConfig(e) {
   // tarea puede elegir el runtime que el proyecto usa para revisar, y entonces
   // se revisaria a si misma. El motor tambien lo rechaza al cargar; aqui se
   // dice antes, al pulsar Run, con el nombre del agente que choca.
-  if (e.ejecutor?.runtime && e.flota?.revisor && e.flota.revisor.runtime === e.ejecutor.runtime) {
-    throw new ErrorDeServicio("revisor_comparte_runtime", {
-      revisor: e.flota.revisor.nombre,
-      implementador: `el ejecutor de la tarea (resuelto desde ${e.ejecutor.de ?? "la cascada"})`,
-      runtime: e.ejecutor.runtime,
-    });
-  }
+  // La regla vive en `choqueConElRevisor`: el board la usa para deshabilitar
+  // Run con el mismo motivo.
+  const choque = choqueConElRevisor(e.ejecutor, e.flota?.revisor);
+  if (choque) throw choque;
   if (!e.remoto) {
     throw new ErrorDeServicio("sin_repo", { nombre: proyecto.nombre, ruta: proyecto.ruta_local, id: proyecto.id });
   }

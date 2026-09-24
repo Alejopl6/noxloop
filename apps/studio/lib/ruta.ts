@@ -68,6 +68,7 @@ export type Seccion =
   | 'diseno'
   | 'bootstrap'
   | 'conexiones'
+  | 'gestor'
   | 'flota'
   | 'ciclos'
   | 'credenciales'
@@ -116,6 +117,9 @@ export const SECCIONES_DE_AJUSTES_DE_PROYECTO = [
   'diseno',
   'bootstrap',
   'conexiones',
+  // Spec 005: el equipo, las reglas de ruteo y el mapa de estados del gestor,
+  // sin JSON. Junto a Conexiones, que es donde se conecta ese gestor.
+  'gestor',
   'flota',
   'snapshot',
   'ciclos',
@@ -214,6 +218,7 @@ const SECCIONES: readonly Seccion[] = [
   'diseno',
   'bootstrap',
   'conexiones',
+  'gestor',
   'flota',
   'ciclos',
   'credenciales',

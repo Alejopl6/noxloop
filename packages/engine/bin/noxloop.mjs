@@ -42,6 +42,9 @@ const AYUDA = `noxloop ${VERSION} — un ticket entra, un pull request sale.
   noxloop status [<item>]           el estado de los recorridos, sin interpretacion
   noxloop diagnose <item>           que quedo a medias, y que decision hace falta
   noxloop resume <item>             retoma un recorrido interrumpido
+  noxloop resume <item> --task <t> --runtime <r> [--agente <a>] [--nota "<por que>"]
+                                    pasa la tarea a OTRO implementador (hand-off) y sigue:
+                                    misma rama, mismo rojo, mismos intentos
   noxloop unstick <item> --task <t> --nota "<que se decidio>"
                                     devuelve una tarea bloqueada al bucle
   noxloop prune [--force]           limpia worktrees huerfanos (sin --force no descarta trabajo)
@@ -240,6 +243,10 @@ async function main() {
       port: args.flags.port ? Number(args.flags.port) : undefined,
       open: Boolean(args.flags.open),
       volverA: args.flags["volver-a"] ? String(args.flags["volver-a"]) : undefined,
+      // El hand-off: `resume <item> --task <t> --runtime <r> [--agente <a>]`.
+      // Solo lo lee `resume`; en los demas comandos no significa nada.
+      runtime: comando === "resume" && args.flags.runtime ? String(args.flags.runtime) : undefined,
+      agente: args.flags.agente ? String(args.flags.agente) : undefined,
       // De que proyecto es el run. Lo sabe quien lanza —el servicio de control—
       // y no el motor: por eso viaja como opcion y no se deduce de la config.
       projectId: args.flags.project ? String(args.flags.project) : undefined,

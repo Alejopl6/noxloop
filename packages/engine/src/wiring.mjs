@@ -35,6 +35,8 @@ import { buildHookSettings, validateHookSettings } from "./session-settings.mjs"
 import { validate } from "./schema.mjs";
 // El transcript de cada fase, redactado antes de tocar disco (spec 004).
 import { abrirTranscript } from "./transcript.mjs";
+// Solo para LEER los hand-offs ya escritos y comprobarlos al cargar.
+import { loadRun } from "./state.mjs";
 
 /**
  * Carga el proveedor declarado y lo valida ANTES de usarlo.
@@ -456,59 +458,85 @@ export async function buildDeps(item, config, opts = {}) {
     home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, env: opts.env,
   });
   const runtimes = runtimesPorRol(config, registro, { runtime: opts.runtime, log });
+  // LOS HAND-OFFS QUE YA ESTAN EN EL ESTADO, comprobados al cargar como el
+  // resto de los roles (spec 005, FR-007): un override que no esta registrado,
+  // o que es el revisor, se descubre aqui y no en la fase que lo invoca.
+  comprobarOverrides(home, item, registro, config.runtimes?.revisor ?? null);
+  /** @param {string} id */
+  const adaptadorPorId = (id) =>
+    /** @type {import("../../adapters/src/contrato.mjs").AgentAdapter} */ (registro.obtener(id));
   // Nunca null: `runtimesPorRol` ya comprobo que cada id esta registrado.
-  const adaptadorDe = (/** @type {string} */ rol) =>
-    /** @type {import("../../adapters/src/contrato.mjs").AgentAdapter} */ (registro.obtener(/** @type {any} */ (runtimes)[rol]));
+  const adaptadorDe = (/** @type {string} */ rol) => adaptadorPorId(/** @type {any} */ (runtimes)[rol]);
   const adaptador = adaptadorDe("implementador");
+
+  /**
+   * El runtime que corre UNA fase: el del rol, salvo que la fase sea del
+   * implementador y SU tarea tenga otro por un hand-off. La tarea viaja en la
+   * peticion (`fase.task`) porque el driver la relee del disco en cada vuelta:
+   * un hand-off escrito antes de este `resume` ya esta ahi.
+   *
+   * @param {any} fase
+   */
+  const runtimeDeFase = (fase) => {
+    const rol = rolDeFase(fase?.phase);
+    const propio = rol === "implementador" ? fase?.task?.implementador?.runtime : null;
+    return typeof propio === "string" && registro.tiene(propio) ? propio : /** @type {any} */ (runtimes)[rol];
+  };
 
   // EL ENTORNO VIAJA COMO FUNCION, no como objeto ya hecho. Es lo que hace que
   // se construya por fase: ver `entornoDeFase`. Y es el del runtime de ESA
   // fase: la credencial del revisor no viaja a la fase del implementador ni al
-  // reves. Cada runtime recibe lo que el declaro, y nada del otro.
-  const entornoDelRol = (/** @type {string} */ rol) => {
-    const a = adaptadorDe(rol);
+  // reves, ni la del implementador de antes a la del de despues de un hand-off.
+  // Cada runtime recibe lo que el declaro, y nada del otro.
+  const entornoDelRuntime = (/** @type {string} */ id) => {
+    const a = adaptadorPorId(id);
     return entornoDeFase(config, { env: opts.env, requeridas: a.requiredEnv, deSesion: a.sessionEnv });
   };
-  const entorno = (/** @type {any} */ fase) => entornoDelRol(rolDeFase(fase?.phase));
+  const entornoDelRol = (/** @type {string} */ rol) => entornoDelRuntime(/** @type {any} */ (runtimes)[rol]);
+  const entorno = (/** @type {any} */ fase) => entornoDelRuntime(runtimeDeFase(fase));
 
   // CUALES DE ESAS VARIABLES SON SECRETAS, y viaja con la peticion porque el
   // mapa plano de `env` no lo dice. Son exactamente las que el runtime de la
   // fase declaro necesitar y estan: las de la maquina no lo son —ver
   // `VARIABLES_DE_LA_MAQUINA`— y tratarlas como tales dejaba la guarda de argv
   // dando positivo siempre, que es la forma mas rapida de que alguien la apague.
-  const secretosDe = (/** @type {string} */ rol, /** @type {Record<string,string>} */ env) =>
-    [...(adaptadorDe(rol).requiredEnv || [])].filter((n) => Object.hasOwn(env || {}, n));
+  const secretosDe = (/** @type {string} */ id, /** @type {Record<string,string>} */ env) =>
+    [...(adaptadorPorId(id).requiredEnv || [])].filter((n) => Object.hasOwn(env || {}, n));
 
-  // LA COSTURA, una por rol. `adaptarADriver` convierte un `AgentAdapter` en la
-  // funcion que el driver ya inyectaba: el motor sigue llamando
-  // `deps.runPhase(...)` y no sabe —ni tiene por que— cual runtime hay detras.
+  // LA COSTURA, una por RUNTIME (antes una por rol: con hand-offs, dos tareas del
+  // mismo rol pueden correr en runtimes distintos). `adaptarADriver` convierte
+  // un `AgentAdapter` en la funcion que el driver ya inyectaba: el motor sigue
+  // llamando `deps.runPhase(...)` y no sabe —ni tiene por que— cual runtime hay
+  // detras.
   //
   // Y ENCIMA, EL ENCARGO. Si el runtime DE ESA FASE no declara `comandos:
   // true`, el `/noxloop-task ...` que construye el driver se le entrega
   // expandido al texto del comando: se decide por la capacidad, no por el nombre.
-  /** @type {Record<string, (fase: any, llamada?: any) => Promise<any>>} */
-  const costuras = {};
-  for (const rol of ["implementador", "revisor", "planificador"]) {
-    const a = adaptadorDe(rol);
-    costuras[rol] = conComandosExpandidos(
-      adaptarADriver(a, { entorno: () => entornoDelRol(rol) }),
-      () => a.capabilities(),
-    );
-  }
+  /** @type {Map<string, (fase: any, llamada?: any) => Promise<any>>} */
+  const costuras = new Map();
+  const costuraDe = (/** @type {string} */ id) => {
+    if (!costuras.has(id)) {
+      const a = adaptadorPorId(id);
+      costuras.set(id, conComandosExpandidos(adaptarADriver(a, { entorno: () => entornoDelRuntime(id) }), () => a.capabilities()));
+    }
+    return /** @type {(fase: any, llamada?: any) => Promise<any>} */ (costuras.get(id));
+  };
   const runPhase = async (/** @type {any} */ fase) => {
-    const rol = rolDeFase(fase?.phase);
-    const env = fase?.env ?? entornoDelRol(rol);
+    const id = runtimeDeFase(fase);
+    const env = fase?.env ?? entornoDelRuntime(id);
     // Los secretos se recalculan con el runtime que de verdad corre la fase:
     // los de otro rol dejarian sin mirar en argv la credencial de este.
-    const secretos = secretosDe(rol, env);
+    const secretos = secretosDe(id, env);
 
     // EL TRANSCRIPT DE LA FASE (spec 004, FR-004). Se abre AQUI, en la costura,
     // y no en el driver: es el unico punto por el que pasan las cuatro llamadas
     // del driver y la del planificador, y aqui ya se sabe el entorno y cuales
     // de sus variables son secretas —que es contra lo que se redacta—. El
-    // driver no se entera: sigue llamando `deps.runPhase(fase)`.
-    const transcript = await transcriptDeFase(home, fase, env, secretos);
-    const r = await costuras[rol](
+    // driver no se entera: sigue llamando `deps.runPhase(fase)`. Y aqui se sabe
+    // QUE RUNTIME corre la fase, que es lo que el transcript estampa en cada
+    // evento: despues de un hand-off, la fase GREEN la hicieron dos.
+    const transcript = await transcriptDeFase(home, fase, env, secretos, id);
+    const r = await costuraDe(id)(
       { ...fase, env, secretos },
       transcript ? { alEvento: transcript.alEvento } : {},
     );
@@ -541,7 +569,7 @@ export async function buildDeps(item, config, opts = {}) {
     adaptador,
     registroDeRuntimes: registro,
     entorno,
-    secretos: secretosDe("implementador", entornoDelRol("implementador")),
+    secretos: secretosDe(runtimes.implementador, entornoDelRol("implementador")),
     runPhase,
     // EL ORDEN DEL TDD SIN HOOKS. Un implementador que no puede correr el hook
     // del paso RED dentro de su subproceso recibe la guarda del motor DESPUES
@@ -550,6 +578,11 @@ export async function buildDeps(item, config, opts = {}) {
     // fases con guarda de alcance son RED y GREEN; que el revisor tenga hooks o
     // no, no cambia nada de lo que se escribe.
     alcancePorElMotor: adaptador.capabilities().hooks !== true,
+    // Y POR TAREA, porque tras un hand-off el implementador de una tarea puede
+    // no ser el del recorrido: la guarda la decide quien escribe ESA tarea. El
+    // driver pregunta esto antes que `alcancePorElMotor`.
+    alcancePorElMotorDe: (/** @type {any} */ tarea) =>
+      adaptadorPorId(runtimeDeFase({ phase: "GREEN", task: tarea })).capabilities().hooks !== true,
     ...overrides,
   };
 }
@@ -566,16 +599,49 @@ export async function buildDeps(item, config, opts = {}) {
  * @param {Record<string, string>} env
  * @param {string[]} secretos
  */
-async function transcriptDeFase(home, fase, env, secretos) {
+async function transcriptDeFase(home, fase, env, secretos, runtime) {
   const itemId = fase?.item?.id ?? /^plan:(.+)$/.exec(String(fase?.taskId ?? ""))?.[1];
   if (!home || itemId == null || !fase?.taskId || !fase?.phase) return null;
   try {
     return await abrirTranscript({
       home, itemId: String(itemId), taskId: String(fase.taskId), fase: String(fase.phase),
-      lente: fase.lens ?? null, env, secretos,
+      lente: fase.lens ?? null, env, secretos, runtime,
     });
   } catch {
     return null;
+  }
+}
+
+/**
+ * Los implementadores por tarea que el estado del run ya trae (hand-offs),
+ * comprobados como los de rol: registrados, y ninguno igual al revisor
+ * DECLARADO (FR-034). Sin run todavia (planificar) no hay nada que mirar.
+ *
+ * @param {string} home
+ * @param {any} item
+ * @param {any} registro
+ * @param {string|null} revisor
+ */
+function comprobarOverrides(home, item, registro, revisor) {
+  if (!home || item?.id == null) return;
+  let run = null;
+  try {
+    run = loadRun(String(item.id), { home });
+  } catch {
+    return; // un estado corrupto lo reporta quien lo lee para recorrerlo
+  }
+  for (const t of run?.tasks || []) {
+    const id = t?.implementador?.runtime;
+    if (typeof id !== "string") continue;
+    if (!registro.tiene(id)) {
+      throw new Error(
+        `la tarea ${t.id} fue pasada al runtime "${id}", que no esta registrado. Los que hay: ${registro.ids().join(", ") || "ninguno"}. ` +
+          "Pasala a otro con un hand-off, o registra ese runtime.",
+      );
+    }
+    if (revisor && id === revisor) {
+      throw revisorComparteRuntime(id, `revisor (${revisor})`, `implementador de ${t.id} (${id})`);
+    }
   }
 }
 
