@@ -5,6 +5,9 @@ description = "La ventana de escritorio de noxloop: empaqueta la interfaz estati
 edition = "2021"
 rust-version = "1.82"
 publish = false
+# Hay dos binarios —la app y `noxloop-llavero`— y `tauri dev` corre `cargo run`
+# sin `--bin`: sin esta linea no sabe cual arrancar y `tauri dev` no arrancaba.
+default-run = "noxloop-desktop"
 
 # El binario es una cascara de tres lineas y toda la logica vive en la
 # biblioteca. No es estetica: `cargo test` no puede enlazar contra un crate
