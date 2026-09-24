@@ -420,8 +420,10 @@ export function sugerirFlota({
       rol: "implementador",
       porque:
         `ninguno de los runtimes registrados (${ids.map((/** @type {string} */ i) => `\`${i}\``).join(", ") || "ninguno"}) ` +
-        "declara `hooks: true`. Sin hooks no se puede correr la guarda del paso RED dentro del subproceso, y el " +
-        "modelo de flota rechaza al implementador al guardarlo. Registra un runtime con hooks antes de montar la flota.",
+        "declara `hooks: true`, y la sugerencia solo propone implementadores cuyo paso RED lo BLOQUEA un hook " +
+        "dentro del subproceso. Sin hooks el motor lo fuerza DESPUES de cada fase —revierte lo escrito fuera de " +
+        "alcance— y el agente se guarda como `tdd: por_motor`: es valido, pero es una garantia menor y la elige " +
+        "una persona, no la sugerencia. Declaralo a mano en Flota -> Agentes, o registra un runtime con hooks.",
     });
   }
 

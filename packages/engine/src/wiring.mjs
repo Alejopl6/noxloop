@@ -8,13 +8,22 @@
 // de cableado adentro no se puede probar.
 
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { validateProvider } from "../../../providers/contract.mjs";
 // La capa de runtimes. El motor NO la conocia: `grep -rn adapters` sobre
 // `packages/engine` devolvia una sola linea, y era la guarda de la
 // constitucion. El registro existia y no lo consultaba nadie.
-import { adaptarADriver, crearAdaptadorClaude, registroDeAdaptadores } from "../../adapters/src/index.mjs";
+import {
+  adaptarADriver,
+  crearAdaptadorClaude,
+  crearAdaptadorCodex,
+  esRevision,
+  registroDeAdaptadores,
+  revisorComparteRuntime,
+} from "../../adapters/src/index.mjs";
+// Un runtime sin plugin recibe el texto del encargo, no el nombre del comando.
+import { conComandosExpandidos } from "./comandos-sin-plugin.mjs";
 // El entorno de un subproceso se CONSTRUYE. Ver `entornoDeFase` mas abajo.
 import { construirEntorno } from "../../vault/src/entorno.mjs";
 import { repoRoot } from "./repos.mjs";
@@ -24,6 +33,8 @@ import * as worktree from "./worktree.mjs";
 import { createLogger } from "./log.mjs";
 import { buildHookSettings, validateHookSettings } from "./session-settings.mjs";
 import { validate } from "./schema.mjs";
+// El transcript de cada fase, redactado antes de tocar disco (spec 004).
+import { abrirTranscript } from "./transcript.mjs";
 
 /**
  * Carga el proveedor declarado y lo valida ANTES de usarlo.
@@ -232,8 +243,15 @@ export const VARIABLES_DE_LA_MAQUINA = Object.freeze([
  * que cada valor es texto. Un valor que no sea texto no falla al construirlo,
  * falla al spawnear, con el modelo ya pagado.
  *
+ * LO QUE LA SESION LOCAL DEL RUNTIME NECESITA viaja tambien, por nombre:
+ * `deSesion` es la lista `sessionEnv` que declara el adaptador (`CODEX_HOME`,
+ * `CLAUDE_CONFIG_DIR`, `USER`...). Sin ella, un operador logueado con su
+ * suscripcion o su cuenta de ChatGPT veia la fase morir con "no autenticado":
+ * el runtime buscaba su sesion donde el entorno construido no le decia. No se
+ * resuelve heredando `process.env` (principio IX): se resuelve declarando.
+ *
  * @param {any} config
- * @param {{env?: Record<string, string|undefined>, requeridas?: readonly string[]}} [opts]
+ * @param {{env?: Record<string, string|undefined>, requeridas?: readonly string[], deSesion?: readonly string[]}} [opts]
  * @returns {Record<string, string>}
  */
 export function entornoDeFase(config, opts = {}) {
@@ -241,7 +259,7 @@ export function entornoDeFase(config, opts = {}) {
   /** @type {Record<string, string>} */
   const variables = {};
 
-  for (const nombre of [...VARIABLES_DE_LA_MAQUINA, ...(opts.requeridas || [])]) {
+  for (const nombre of [...VARIABLES_DE_LA_MAQUINA, ...(opts.deSesion || []), ...(opts.requeridas || [])]) {
     const valor = disponibles[nombre];
     // Una variable declarada y ausente NO se rellena con "": el subproceso
     // distingue "no esta" de "esta vacia", y un PATH vacio es peor que ninguno.
@@ -261,7 +279,7 @@ export function entornoDeFase(config, opts = {}) {
 }
 
 /**
- * El runtime que va a correr las fases, montado desde el registro.
+ * El registro de runtimes que pueden correr las fases.
  *
  * POR QUE SE MONTA AQUI Y NO EN EL DRIVER. Porque el binario, los hooks, el
  * home y el techo de tiempo son cosas del cableado, y porque el driver tiene
@@ -275,9 +293,9 @@ export function entornoDeFase(config, opts = {}) {
  * es varias horas antes que a mitad de una fase.
  *
  * @param {any} config
- * @param {{home: string, log: any, engineRoot?: string, adaptadores?: any[], runtime?: string, env?: any}} opts
+ * @param {{home: string, log: any, engineRoot?: string, adaptadores?: any[], env?: any}} opts
  */
-function montarRuntime(config, opts) {
+function montarRegistro(config, opts) {
   const guardas = buildHookSettings(opts.engineRoot);
   const v = validateHookSettings(guardas);
   if (!v.ok) {
@@ -288,6 +306,12 @@ function montarRuntime(config, opts) {
       "Una sesion sin guardas se saltea el paso RED y el limite del principio IV, y no avisa.",
     );
   }
+
+  // DONDE ESCRIBE EL PLAN, fuera del worktree (`planFile`). Se crea aqui porque
+  // un runtime en sandbox recibe este directorio como escribible por nombre, y
+  // pedir como escribible uno que no existe no deja nada que escribir.
+  const directorioDePlanes = join(opts.home, "plans");
+  if (!opts.adaptadores) mkdirSync(directorioDePlanes, { recursive: true });
 
   const adaptadores = opts.adaptadores || [
     // El adaptador de referencia. Es el que `wiring.mjs` ya elegia a su manera
@@ -300,24 +324,103 @@ function montarRuntime(config, opts) {
       // El home entra como directorio extra porque la fase de planificacion
       // escribe el plan AHI, fuera del worktree: sin esto la planificacion no
       // puede dejar su resultado y el motor lo lee como "no se pudo planificar".
+      // Aqui es el home entero porque los hooks de este runtime acotan lo que
+      // cada fase escribe dentro de el.
       directoriosExtra: [opts.home],
+      // De donde el PREFLIGHT toma los valores de lo que el runtime declara. El
+      // adaptador filtra por nombre: nunca recibe el entorno entero para
+      // pasarlo a nadie. Sin esto su preflight pregunta sin PATH y no encuentra
+      // el binario.
+      entornoDisponible: opts.env || process.env,
       alProgreso: (e, peticion) => {
         if (e.tipo === "tool_use") opts.log.info(`${peticion.phase} ${peticion.taskId || ""}: ${e.detalle.nombre}`);
       },
     }),
+    // EL SEGUNDO RUNTIME, registrado para que la flota pueda nombrarlo en
+    // cualquier rol. Sin hooks y sin plugin: lo primero lo cubre la guarda
+    // posterior del driver (`alcancePorElMotor`), lo segundo la expansion del
+    // encargo. Va SEGUNDO: sin eleccion explicita se sigue montando el de
+    // referencia.
+    crearAdaptadorCodex({
+      home: opts.home,
+      timeoutMs: (config.limits?.phaseTimeoutMin ?? 30) * 60_000,
+      entornoDisponible: opts.env || process.env,
+      // SOLO el directorio de planes, y SOLO en PLAN. Este runtime no tiene
+      // hooks que acoten lo que escribe dentro del home, y el home tiene los
+      // worktrees de las demas tareas: darselo entero como escribible dejaria
+      // a una fase GREEN tocar el arbol de otra sin que la guarda posterior
+      // —que mira SU worktree— lo viera.
+      directoriosDelPlan: [directorioDePlanes],
+    }),
   ];
 
-  const registro = registroDeAdaptadores(adaptadores);
-  const id = opts.runtime || adaptadores[0]?.id;
-  const adaptador = registro.obtener(id);
-  if (!adaptador) {
-    throw new Error(
-      `el runtime "${id}" no esta registrado. Los que hay: ${registro.ids().join(", ") || "ninguno"}. ` +
-      "El id es lo que guarda `Agent.runtime`: si no resuelve, no hay nada que invoque al modelo.",
-    );
+  return registroDeAdaptadores(adaptadores);
+}
+
+/**
+ * Los roles que corren fases, y que fases corre cada uno.
+ *
+ * PLAN lo corre el planificador; RED y GREEN, el implementador; toda REVIEW
+ * —cada lente y la sintesis— el revisor. Se decide por la FASE que pide el
+ * driver, no por el runtime que haya detras (principio VI).
+ *
+ * @param {string} fase
+ * @returns {"planificador"|"revisor"|"implementador"}
+ */
+export function rolDeFase(fase) {
+  if (fase === "PLAN") return "planificador";
+  if (esRevision(fase)) return "revisor";
+  return "implementador";
+}
+
+/**
+ * El runtime de cada rol, resuelto y comprobado AL CARGAR.
+ *
+ * DE DONDE SALE CADA UNO. El implementador: el que pide quien llama
+ * (`opts.runtime`), si no `runtimes.implementador`, si no `runtime` —lo que el
+ * servicio resuelve en cascada tarea -> proyecto -> general—, si no el primero
+ * del registro. El revisor y el planificador, de `runtimes`, que el servicio
+ * deriva de la flota del proyecto; sin planificador planifica el implementador.
+ *
+ * FR-034 SE COMPRUEBA AQUI y no a mitad del recorrido: un revisor igual al
+ * implementador se descubre cuando la revision ya salio confirmando lo que el
+ * mismo runtime escribio, con el modelo pagado dos veces. Solo cuando no hay
+ * revisor declarado —una configuracion de un solo runtime, o una flota sin
+ * revisor— la revision corre en el implementador, y se AVISA: es un hueco
+ * declarado, no una independencia fingida.
+ *
+ * @param {any} config
+ * @param {any} registro
+ * @param {{runtime?: string, log: any}} opts
+ */
+function runtimesPorRol(config, registro, opts) {
+  const declarados = config.runtimes || {};
+  const implementador = opts.runtime ?? declarados.implementador ?? config.runtime ?? registro.ids()[0];
+  const revisor = declarados.revisor ?? null;
+  const planificador = declarados.planificador ?? implementador;
+
+  /** @type {Record<string, string>} */
+  const porRol = { implementador, revisor: revisor ?? implementador, planificador };
+  for (const [rol, id] of Object.entries(porRol)) {
+    if (!registro.tiene(id)) {
+      throw new Error(
+        `el runtime "${id}" del ${rol} no esta registrado. Los que hay: ${registro.ids().join(", ") || "ninguno"}. ` +
+        "El id es lo que guarda `Agent.runtime`: si no resuelve, no hay nada que invoque al modelo en las fases de ese rol.",
+      );
+    }
   }
 
-  return { registro, adaptador };
+  if (revisor !== null && revisor === implementador) {
+    throw revisorComparteRuntime(implementador, `revisor (${revisor})`, `implementador (${implementador})`);
+  }
+  if (revisor === null) {
+    opts.log.warn(
+      `la revision corre en \`${implementador}\`, el mismo runtime que implementa: no hay revisor declarado en ` +
+        "`runtimes.revisor`, asi que la revision NO es independiente (FR-034). Declara un revisor sobre otro " +
+        "runtime en la flota del proyecto.",
+    );
+  }
+  return /** @type {{implementador: string, revisor: string, planificador: string}} */ (porRol);
 }
 
 /**
@@ -345,20 +448,77 @@ export async function buildDeps(item, config, opts = {}) {
   // test dejaria de probar el cableado.
   const overrides = opts.inject || {};
 
-  const { registro, adaptador } = montarRuntime(config, {
-    home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, runtime: opts.runtime,
+  // LOS RUNTIMES, UNO POR ROL (spec 003, FR-031 y FR-034). El servicio resuelve
+  // el implementador en cascada y el resto de la flota del proyecto, y los
+  // escribe en la configuracion; sin esto el motor montaba UN runtime para todo
+  // el recorrido, y el implementador se revisaba a si mismo.
+  const registro = montarRegistro(config, {
+    home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, env: opts.env,
   });
+  const runtimes = runtimesPorRol(config, registro, { runtime: opts.runtime, log });
+  // Nunca null: `runtimesPorRol` ya comprobo que cada id esta registrado.
+  const adaptadorDe = (/** @type {string} */ rol) =>
+    /** @type {import("../../adapters/src/contrato.mjs").AgentAdapter} */ (registro.obtener(/** @type {any} */ (runtimes)[rol]));
+  const adaptador = adaptadorDe("implementador");
 
   // EL ENTORNO VIAJA COMO FUNCION, no como objeto ya hecho. Es lo que hace que
-  // se construya por fase: ver `entornoDeFase`.
-  const entorno = () => entornoDeFase(config, { env: opts.env, requeridas: adaptador.requiredEnv });
+  // se construya por fase: ver `entornoDeFase`. Y es el del runtime de ESA
+  // fase: la credencial del revisor no viaja a la fase del implementador ni al
+  // reves. Cada runtime recibe lo que el declaro, y nada del otro.
+  const entornoDelRol = (/** @type {string} */ rol) => {
+    const a = adaptadorDe(rol);
+    return entornoDeFase(config, { env: opts.env, requeridas: a.requiredEnv, deSesion: a.sessionEnv });
+  };
+  const entorno = (/** @type {any} */ fase) => entornoDelRol(rolDeFase(fase?.phase));
 
   // CUALES DE ESAS VARIABLES SON SECRETAS, y viaja con la peticion porque el
-  // mapa plano de `env` no lo dice. Son exactamente las que el runtime declaro
-  // necesitar: las de la maquina no lo son —ver `VARIABLES_DE_LA_MAQUINA`— y
-  // tratarlas como tales dejaba la guarda de argv dando positivo siempre, que
-  // es la forma mas rapida de que alguien la apague.
-  const secretos = [...(adaptador.requiredEnv || [])].filter((n) => Object.hasOwn(entorno(), n));
+  // mapa plano de `env` no lo dice. Son exactamente las que el runtime de la
+  // fase declaro necesitar y estan: las de la maquina no lo son —ver
+  // `VARIABLES_DE_LA_MAQUINA`— y tratarlas como tales dejaba la guarda de argv
+  // dando positivo siempre, que es la forma mas rapida de que alguien la apague.
+  const secretosDe = (/** @type {string} */ rol, /** @type {Record<string,string>} */ env) =>
+    [...(adaptadorDe(rol).requiredEnv || [])].filter((n) => Object.hasOwn(env || {}, n));
+
+  // LA COSTURA, una por rol. `adaptarADriver` convierte un `AgentAdapter` en la
+  // funcion que el driver ya inyectaba: el motor sigue llamando
+  // `deps.runPhase(...)` y no sabe —ni tiene por que— cual runtime hay detras.
+  //
+  // Y ENCIMA, EL ENCARGO. Si el runtime DE ESA FASE no declara `comandos:
+  // true`, el `/noxloop-task ...` que construye el driver se le entrega
+  // expandido al texto del comando: se decide por la capacidad, no por el nombre.
+  /** @type {Record<string, (fase: any, llamada?: any) => Promise<any>>} */
+  const costuras = {};
+  for (const rol of ["implementador", "revisor", "planificador"]) {
+    const a = adaptadorDe(rol);
+    costuras[rol] = conComandosExpandidos(
+      adaptarADriver(a, { entorno: () => entornoDelRol(rol) }),
+      () => a.capabilities(),
+    );
+  }
+  const runPhase = async (/** @type {any} */ fase) => {
+    const rol = rolDeFase(fase?.phase);
+    const env = fase?.env ?? entornoDelRol(rol);
+    // Los secretos se recalculan con el runtime que de verdad corre la fase:
+    // los de otro rol dejarian sin mirar en argv la credencial de este.
+    const secretos = secretosDe(rol, env);
+
+    // EL TRANSCRIPT DE LA FASE (spec 004, FR-004). Se abre AQUI, en la costura,
+    // y no en el driver: es el unico punto por el que pasan las cuatro llamadas
+    // del driver y la del planificador, y aqui ya se sabe el entorno y cuales
+    // de sus variables son secretas —que es contra lo que se redacta—. El
+    // driver no se entera: sigue llamando `deps.runPhase(fase)`.
+    const transcript = await transcriptDeFase(home, fase, env, secretos);
+    const r = await costuras[rol](
+      { ...fase, env, secretos },
+      transcript ? { alEvento: transcript.alEvento } : {},
+    );
+    try {
+      transcript?.cerrar(r);
+    } catch {
+      /* el transcript es registro, no veredicto: la fase ya termino */
+    }
+    return r;
+  };
 
   return {
     home,
@@ -373,20 +533,50 @@ export async function buildDeps(item, config, opts = {}) {
     dryRun: Boolean(opts.dryRun),
     maxParallelTasks: config.limits?.maxParallelTasks ?? 4,
     // Por que via corrio ya no se deduce de si un paquete esta instalado: lo
-    // dice el runtime que se monto.
+    // dice el runtime que se monto. `runtime` y `adaptador` son los del
+    // IMPLEMENTADOR, que es quien escribe; `runtimes`, los tres.
     via: adaptador.id,
     runtime: adaptador.id,
+    runtimes,
     adaptador,
     registroDeRuntimes: registro,
     entorno,
-    secretos,
-    // LA COSTURA, y es una linea. `adaptarADriver` convierte un `AgentAdapter`
-    // en la funcion que el driver ya inyectaba: el motor sigue llamando
-    // `deps.runPhase(...)` y no sabe —ni tiene por que— cual runtime hay
-    // detras.
-    runPhase: adaptarADriver(adaptador, { entorno }),
+    secretos: secretosDe("implementador", entornoDelRol("implementador")),
+    runPhase,
+    // EL ORDEN DEL TDD SIN HOOKS. Un implementador que no puede correr el hook
+    // del paso RED dentro de su subproceso recibe la guarda del motor DESPUES
+    // de cada fase: lo escrito fuera de alcance se revierte y la fase falla.
+    // Ver `alcance-de-fase.mjs`. Lo decide el IMPLEMENTADOR porque las unicas
+    // fases con guarda de alcance son RED y GREEN; que el revisor tenga hooks o
+    // no, no cambia nada de lo que se escribe.
+    alcancePorElMotor: adaptador.capabilities().hooks !== true,
     ...overrides,
   };
+}
+
+/**
+ * El transcript de una invocacion, o `null` si no hay donde ponerlo.
+ *
+ * El item sale de la fase (`fase.item.id`); la planificacion lo lleva en el
+ * taskId (`plan:<item>`). Sin home o sin item no se escribe nada: un
+ * transcript sin run al que pertenecer no lo encuentra nadie.
+ *
+ * @param {string} home
+ * @param {any} fase
+ * @param {Record<string, string>} env
+ * @param {string[]} secretos
+ */
+async function transcriptDeFase(home, fase, env, secretos) {
+  const itemId = fase?.item?.id ?? /^plan:(.+)$/.exec(String(fase?.taskId ?? ""))?.[1];
+  if (!home || itemId == null || !fase?.taskId || !fase?.phase) return null;
+  try {
+    return await abrirTranscript({
+      home, itemId: String(itemId), taskId: String(fase.taskId), fase: String(fase.phase),
+      lente: fase.lens ?? null, env, secretos,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** El worktree donde corre la planificacion: la spec vive donde el trabajo que describe. */

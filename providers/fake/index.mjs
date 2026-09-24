@@ -10,7 +10,7 @@
 // produce un recorrido que funciona: empezar declarando poco es la forma
 // recomendada de escribir un proveedor.
 
-import { NotSupportedError } from "../contract.mjs";
+import { NotSupportedError, CANONICAL_STATES, listQuery } from "../contract.mjs";
 
 export const meta = { name: "fake", version: "1.0.0" };
 
@@ -32,6 +32,7 @@ export function capabilities() {
     searchMentioned: true,
     boardFields: false,
     identityAssignee: true,  // el falso honra lo declarado: es lo que permite probar el camino bueno
+    listItems: true,         // lista su `db`: es contra lo que corren los tests del board
   };
 }
 
@@ -76,9 +77,20 @@ export function reset() {
   db.inbox = { assigned: [], mentioned: [] };
 }
 
-function canonico(nativo, ctx) {
+/**
+ * El estado canonico de un nativo, por busqueda inversa en el `stateMap`.
+ *
+ * `backlog` se reconoce SOLO al listar (`listItems`): es un estado de lectura
+ * del board, no uno que `setState` sepa escribir, asi que `getItem` lo devuelve
+ * como `todo` —el `Item` solo conoce los cinco canonicos—. Un nativo que el
+ * mapa no nombra cae en `todo`, que en el falso es el estado de todo ticket
+ * nuevo.
+ *
+ * @param {boolean} [paraListar] si se admite `backlog`
+ */
+function canonico(nativo, ctx, paraListar = false) {
   const mapa = ctx.options?.stateMap || {};
-  const entrada = Object.entries(mapa).find(([, v]) => v === nativo);
+  const entrada = Object.entries(mapa).find(([k, v]) => v != null && v === nativo && (paraListar || CANONICAL_STATES.includes(k)));
   return entrada ? entrada[0] : "todo";
 }
 
@@ -164,6 +176,49 @@ export async function searchInbox(ctx) {
   return {
     assigned: await resolver(db.inbox.assigned),
     mentioned: await resolver(db.inbox.mentioned),
+  };
+}
+
+/**
+ * Los tickets abiertos del gestor, como el board los pinta.
+ *
+ * El falso no tiene prioridad, equipo ni fecha propios: salen del item crudo
+ * SOLO si el test los puso (`db.items[id].priority = 1`). Sin dato, `null`: el
+ * falso es el ejemplo minimo que se copia, y un ejemplo que inventa una
+ * prioridad enseña a inventarla.
+ *
+ * El cursor es el indice del siguiente ticket, en string: el orden de `db.items`
+ * es estable, y un cursor opaco que el llamador no interpreta es todo lo que el
+ * contrato pide.
+ *
+ * @param {{limit?: number, cursor?: string|null, includeDone?: boolean}} query
+ */
+export async function listItems(query, ctx) {
+  const { limit, cursor, includeDone } = listQuery(query);
+  const todos = [];
+  for (const [id, crudo] of Object.entries(db.items)) {
+    const item = aItem(id, crudo, ctx);
+    const estado = canonico(item.state, ctx, true);
+    if (estado === "done" && !includeDone) continue;
+    const quien = crudo.assignee;
+    todos.push({
+      ...item,
+      canonicalState: estado,
+      priority: Number.isInteger(crudo.priority) ? crudo.priority : null,
+      assignee: !quien ? null : typeof quien === "string" ? { id: quien, name: quien } : quien,
+      team: crudo.team ?? null,
+      // El falso no tiene reloj: una fecha FIJA hace que los tests del board
+      // sean deterministas. Un test que necesite ordenar por fecha la pone.
+      updatedAt: crudo.updatedAt || "2026-09-01T00:00:00.000Z",
+    });
+  }
+  const desde = cursor ? Number(cursor) : 0;
+  if (!Number.isInteger(desde) || desde < 0) throw new Error(`cursor invalido para el proveedor falso: ${JSON.stringify(cursor)}`);
+  const hasta = desde + limit;
+  return {
+    items: todos.slice(desde, hasta),
+    nextCursor: hasta < todos.length ? String(hasta) : null,
+    total: todos.length,
   };
 }
 

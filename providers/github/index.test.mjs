@@ -231,6 +231,114 @@ const ISSUE_77_CREADO = {
   sub_issues_summary: { total: 0, completed: 0, percent_completed: 0 },
 };
 
+// Los issues del listado del board. Traen `updated_at`, `assignee.avatar_url`
+// y etiquetas de prioridad y de backlog, que son lo que la tarjeta pinta.
+const LISTA_60 = {
+  id: 1060,
+  node_id: "I_kwDOABCD60",
+  number: 60,
+  title: "El checkout no respeta el cupon",
+  body: "- [ ] dado un cupon valido, cuando se paga, entonces se descuenta",
+  state: "open",
+  state_reason: null,
+  html_url: "https://github.com/acme/tienda/issues/60",
+  repository_url: "https://api.github.com/repos/acme/tienda",
+  labels: [{ id: 6001, name: "P1", color: "b60205" }, { id: 6002, name: "checkout", color: "0e8a16" }],
+  assignee: { login: "ana", id: 91, avatar_url: "https://avatars.githubusercontent.com/u/91?v=4" },
+  assignees: [{ login: "ana", id: 91, avatar_url: "https://avatars.githubusercontent.com/u/91?v=4" }],
+  milestone: null,
+  type: { id: 301, node_id: "IT_1", name: "User Story", description: "", color: "BLUE" },
+  parent_issue_url: null,
+  created_at: "2026-09-01T12:00:00Z",
+  updated_at: "2026-09-20T09:15:00Z",
+};
+
+const LISTA_61 = {
+  id: 1061,
+  node_id: "I_kwDOABCD61",
+  number: 61,
+  title: "Idea: pagar en cuotas",
+  body: "",
+  state: "open",
+  state_reason: null,
+  html_url: "https://github.com/acme/tienda/issues/61",
+  repository_url: "https://api.github.com/repos/acme/tienda",
+  // Dos etiquetas de prioridad a la vez: gana la mas urgente, y la etiqueta de
+  // backlog se escribe con otra capitalizacion que la del mapa.
+  labels: [{ id: 6003, name: "backlog", color: "cccccc" }, { id: 6004, name: "P3", color: "fbca04" }, { id: 6005, name: "p2", color: "d93f0b" }],
+  assignee: null,
+  assignees: [],
+  milestone: null,
+  type: null,
+  parent_issue_url: null,
+  created_at: "2026-09-02T12:00:00Z",
+  updated_at: "2026-09-19T18:00:00Z",
+};
+
+const LISTA_62 = {
+  id: 1062,
+  node_id: "I_kwDOABCD62",
+  number: 62,
+  title: "Sin etiquetas: sin prioridad, y en todo",
+  body: "",
+  state: "open",
+  state_reason: null,
+  html_url: "https://github.com/acme/tienda/issues/62",
+  repository_url: "https://api.github.com/repos/acme/tienda",
+  labels: [],
+  assignee: null,
+  assignees: [],
+  milestone: null,
+  type: { id: 302, node_id: "IT_2", name: "Task", description: "", color: "GRAY" },
+  parent_issue_url: null,
+  created_at: "2026-09-03T12:00:00Z",
+  updated_at: "2026-09-18T08:00:00Z",
+};
+
+const LISTA_63 = {
+  id: 1063,
+  node_id: "I_kwDOABCD63",
+  number: 63,
+  title: "El de la segunda pagina",
+  body: "",
+  state: "open",
+  state_reason: null,
+  html_url: "https://github.com/acme/tienda/issues/63",
+  repository_url: "https://api.github.com/repos/acme/tienda",
+  labels: [{ id: 6006, name: "prioridad: urgente", color: "b60205" }],
+  assignee: null,
+  assignees: [],
+  milestone: null,
+  type: null,
+  parent_issue_url: null,
+  created_at: "2026-08-01T12:00:00Z",
+  updated_at: "2026-09-10T08:00:00Z",
+};
+
+const LISTA_64_CERRADO = {
+  ...LISTA_62,
+  id: 1064,
+  node_id: "I_kwDOABCD64",
+  number: 64,
+  title: "Cerrado y completado",
+  state: "closed",
+  state_reason: "completed",
+  html_url: "https://github.com/acme/tienda/issues/64",
+  updated_at: "2026-09-17T08:00:00Z",
+};
+
+const LISTA_65_DESCARTADO = {
+  ...LISTA_62,
+  id: 1065,
+  node_id: "I_kwDOABCD65",
+  number: 65,
+  title: "Cerrado como no planificado",
+  state: "closed",
+  state_reason: "not_planned",
+  html_url: "https://github.com/acme/tienda/issues/65",
+  updated_at: "2026-09-16T08:00:00Z",
+};
+
 /** `METODO ruta` -> respuesta grabada. La ruta incluye la query, tal cual sale. */
 const GRABADAS = {
   "GET /repos/acme/tienda/issues/42": [200, ISSUE_42],
@@ -275,13 +383,33 @@ const GRABADAS = {
 
   "GET /issues?filter=assigned&state=open&per_page=100&page=1": [200, [ISSUE_42, PR_88, ISSUE_OTRO_REPO]],
   "GET /issues?filter=mentioned&state=open&per_page=100&page=1": [200, [ISSUE_43]],
+
+  // El listado del board. DOS paginas, unidas por el header Link como las
+  // devuelve la API (la URL del `next` usa /repositories/{id}, no
+  // /repos/{owner}/{repo}: por eso el proveedor lee solo el `page`). El PR 88
+  // viene MEZCLADO en la primera, que es como lo devuelve este endpoint.
+  "GET /repos/acme/tienda/issues?state=open&per_page=100&page=1": [200, [LISTA_60, PR_88, LISTA_61, LISTA_62], {
+    Link:
+      '<https://api.github.com/repositories/555001/issues?state=open&per_page=100&page=2>; rel="next", ' +
+      '<https://api.github.com/repositories/555001/issues?state=open&per_page=100&page=2>; rel="last"',
+  }],
+  "GET /repos/acme/tienda/issues?state=open&per_page=100&page=2": [200, [LISTA_63], {
+    Link:
+      '<https://api.github.com/repositories/555001/issues?state=open&per_page=100&page=1>; rel="prev", ' +
+      '<https://api.github.com/repositories/555001/issues?state=open&per_page=100&page=1>; rel="first"',
+  }],
+  // Con includeDone: `state=all`, y aparecen un cerrado completado y uno
+  // descartado. Una sola pagina, sin Link.
+  "GET /repos/acme/tienda/issues?state=all&per_page=100&page=1": [200, [LISTA_60, LISTA_64_CERRADO, LISTA_65_DESCARTADO]],
 };
 
-function respuesta(status, body) {
+function respuesta(status, body, cabeceras = {}) {
+  /** @type {Record<string, string>} */
+  const minusculas = Object.fromEntries(Object.entries(cabeceras).map(([k, v]) => [k.toLowerCase(), v]));
   return {
     status,
     ok: status >= 200 && status < 300,
-    headers: { get: () => null },
+    headers: { get: (/** @type {string} */ k) => minusculas[String(k).toLowerCase()] ?? null },
     async json() {
       return body;
     },
@@ -335,7 +463,7 @@ function hacerCtx(opciones = {}, extra = {}) {
       if (!grabada) {
         throw new Error(`no hay respuesta grabada para ${metodo} ${ruta}`);
       }
-      return respuesta(grabada[0], grabada[1]);
+      return respuesta(grabada[0], grabada[1], grabada[2]);
     },
   };
   return { ctx, pedidos };
@@ -365,6 +493,8 @@ test("pasa la suite de contrato entera", async (t) => {
 
 test("declara las diez capacidades, con linkUrl y boardFields en false", () => {
   const caps = github.capabilities();
+  // Explicita y en true: el listado del board sale de GET /repos/{o}/{r}/issues.
+  assert.equal(caps.listItems, true);
   assert.equal(caps.children, true);
   assert.equal(caps.createChild, true);
   assert.equal(caps.comment, true);
@@ -946,4 +1076,111 @@ test("perPage 0 no pide paginas de cero elementos", async () => {
   const hijos = await github.children("7", ctx);
   assert.deepEqual(hijos.map((h) => h.id), ["42"]);
   assert.equal(pedidos.length, 2);
+});
+
+// --------------------------------------------------------------------------
+// listItems (spec 003, contracts/board-api.md §1)
+// --------------------------------------------------------------------------
+
+const PRIORIDADES = { P0: 0, P1: 1, P2: 2, P3: 3, "prioridad: urgente": 0 };
+
+test("listItems lista los issues abiertos del repositorio y descarta los pull requests", async () => {
+  const { ctx, pedidos } = hacerCtx();
+  const r = await github.listItems({}, ctx);
+  assert.deepEqual(r.items.map((i) => i.id), ["60", "61", "62", "63"], "el PR 88 viene mezclado en el endpoint y no es un ticket");
+  assert.equal(r.nextCursor, null);
+  assert.equal(r.total, null, "este endpoint no dice cuantos hay: null antes que un numero inventado");
+  assert.deepEqual(pedidos.map((p) => p.ruta), [
+    "/repos/acme/tienda/issues?state=open&per_page=100&page=1",
+    "/repos/acme/tienda/issues?state=open&per_page=100&page=2",
+  ], "la segunda pagina se pide porque el header Link la anuncia");
+});
+
+test("listItems traduce la tarjeta: equipo owner/repo, asignado con avatar, etiquetas y fecha", async () => {
+  const { ctx } = hacerCtx();
+  const { items } = await github.listItems({}, ctx);
+  const i60 = items.find((i) => i.id === "60");
+  assert.ok(i60);
+  assert.equal(i60.key, "acme/tienda#60");
+  assert.equal(i60.team, "acme/tienda");
+  assert.deepEqual(i60.assignee, { id: "91", name: "ana", avatarUrl: "https://avatars.githubusercontent.com/u/91?v=4" });
+  assert.deepEqual(i60.labels, ["P1", "checkout"]);
+  assert.equal(i60.updatedAt, "2026-09-20T09:15:00Z");
+  assert.equal(i60.level, "story");
+  assert.equal(items.find((i) => i.id === "62").assignee, null);
+});
+
+test("listItems: sin priorityLabels no hay prioridad, aunque haya etiquetas que parezcan una", async () => {
+  const { ctx } = hacerCtx();
+  const { items } = await github.listItems({}, ctx);
+  for (const i of items) assert.equal(i.priority, null, `${i.id}: GitHub Issues no tiene prioridad nativa y no se inventa`);
+});
+
+test("listItems: con priorityLabels, la prioridad sale de la etiqueta mapeada, y gana la mas urgente", async () => {
+  const { ctx } = hacerCtx({ priorityLabels: PRIORIDADES });
+  const { items } = await github.listItems({}, ctx);
+  const p = Object.fromEntries(items.map((i) => [i.id, i.priority]));
+  assert.equal(p["60"], 1);
+  assert.equal(p["61"], 2, "P3 y p2 a la vez: gana 2, y la etiqueta se compara sin mayusculas como la compara GitHub");
+  assert.equal(p["62"], null);
+  assert.equal(p["63"], 0);
+});
+
+test("listItems: nunca backlog en GitHub, salvo que stateMap.backlog nombre una etiqueta", async () => {
+  const sinMapa = await github.listItems({}, hacerCtx().ctx);
+  assert.ok(sinMapa.items.every((i) => i.canonicalState === "todo"), "sin mapeo, todo lo abierto es todo");
+
+  const { ctx } = hacerCtx({
+    stateMap: { todo: "open", in_progress: null, blocked: null, in_review: null, done: "closed", backlog: "Backlog" },
+  });
+  const { items } = await github.listItems({}, ctx);
+  const e = Object.fromEntries(items.map((i) => [i.id, i.canonicalState]));
+  assert.equal(e["61"], "backlog");
+  assert.equal(e["60"], "todo");
+});
+
+test("listItems pagina con cursor: limit corta a mitad de pagina y el cursor retoma sin repetir ni perder", async () => {
+  const { ctx } = hacerCtx();
+  const p1 = await github.listItems({ limit: 2 }, ctx);
+  assert.deepEqual(p1.items.map((i) => i.id), ["60", "61"]);
+  assert.equal(typeof p1.nextCursor, "string");
+  const p2 = await github.listItems({ limit: 2, cursor: p1.nextCursor }, ctx);
+  assert.deepEqual(p2.items.map((i) => i.id), ["62", "63"]);
+  assert.equal(p2.nextCursor, null);
+});
+
+test("listItems: un cursor que cae justo al final de una pagina apunta a la siguiente", async () => {
+  const { ctx, pedidos } = hacerCtx();
+  const p1 = await github.listItems({ limit: 3 }, ctx);
+  assert.deepEqual(p1.items.map((i) => i.id), ["60", "61", "62"]);
+  assert.equal(pedidos.length, 1, "no pide la pagina 2 si ya junto el limite");
+  const p2 = await github.listItems({ limit: 3, cursor: p1.nextCursor }, ctx);
+  assert.deepEqual(p2.items.map((i) => i.id), ["63"]);
+});
+
+test("listItems con includeDone: el cerrado completado sale en done y el descartado no sale", async () => {
+  const { ctx, pedidos } = hacerCtx();
+  const r = await github.listItems({ includeDone: true }, ctx);
+  assert.equal(pedidos[0].ruta, "/repos/acme/tienda/issues?state=all&per_page=100&page=1");
+  const e = Object.fromEntries(r.items.map((i) => [i.id, i.canonicalState]));
+  assert.equal(e["64"], "done");
+  assert.ok(!("65" in e), "no_planned no es terminado: es descartado, y el board no lo muestra como hecho");
+});
+
+test("listItems sin owner/repo lo dice, en vez de listar todo lo que el token ve", async () => {
+  const { ctx, pedidos } = hacerCtx({ owner: undefined, repo: undefined });
+  await assert.rejects(() => github.listItems({}, ctx), /owner.*repo|repo.*owner/);
+  assert.equal(pedidos.length, 0);
+});
+
+test("listItems: un cursor que no salio de este proveedor se rechaza con su valor", async () => {
+  const { ctx } = hacerCtx();
+  await assert.rejects(() => github.listItems({ cursor: "../../etc" }, ctx), /cursor/);
+});
+
+test("priorityLabels esta descrita en el esquema de opciones, con el rango del contrato", () => {
+  const p = github.optionsSchema.properties.priorityLabels;
+  assert.ok(p, "una opcion que el codigo lee y el esquema no describe no se puede usar con additionalProperties:false");
+  assert.equal(p.additionalProperties.minimum, 0);
+  assert.equal(p.additionalProperties.maximum, 4);
 });

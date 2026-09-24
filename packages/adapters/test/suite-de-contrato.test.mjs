@@ -36,7 +36,7 @@ for (const [nombre, hacerFixtures] of ADAPTADORES) {
     assert.deepEqual(
       pruebas.map((p) => p.nombre),
       [...PRUEBAS_DEL_CONTRATO],
-      "la suite dejo de tener las 11 pruebas que el contrato enumera",
+      "la suite dejo de tener las 12 pruebas que el contrato enumera",
     );
 
     for (const prueba of pruebas) {
@@ -47,7 +47,7 @@ for (const [nombre, hacerFixtures] of ADAPTADORES) {
   });
 }
 
-test("la suite enumera exactamente las 11 pruebas del contrato, con sus nombres", () => {
+test("la suite enumera exactamente las 12 pruebas del contrato, con sus nombres", () => {
   // Los nombres son los de la tabla "Suite de contrato" del contrato. Si alguien
   // renombra una prueba, el contrato y el codigo dejan de hablar del mismo
   // mecanismo y la tabla se vuelve documentacion muerta.
@@ -63,6 +63,8 @@ test("la suite enumera exactamente las 11 pruebas del contrato, con sus nombres"
     "coste-o-declarado",
     "cancelable",
     "sin-secreto-en-argv",
+    // Spec 004 (FR-004): el transcript de la fase, en los cinco tipos del contrato.
+    "eventos-normalizados",
   ]);
-  assert.equal(PRUEBAS_DEL_CONTRATO.length, 11);
+  assert.equal(PRUEBAS_DEL_CONTRATO.length, 12);
 });

@@ -1,6 +1,6 @@
 ---
 description: "Ejecuta UNA fase de UNA tarea de un recorrido de noxloop. Lo invoca el motor; no se usa a mano."
-argument-hint: "<item> <tarea> --phase RED|GREEN|REVIEW"
+argument-hint: "<item> <tarea> --phase RED|GREEN|REVIEW [--lens correccion|seguridad|estilo|alcance | --sintesis]"
 ---
 
 # /noxloop-task — una fase, una tarea
@@ -65,6 +65,23 @@ que está limpio.
 
 No implementes nada en esta fase. Si el hallazgo exige código, el motor va a
 abrir una fase GREEN con tu hallazgo como contexto.
+
+### Con `--lens <lente>` (tier `large`)
+
+Mirás **solo** esa lente, en una sesión que no ve a las otras:
+
+- `correccion`: que el test pruebe el criterio y fallaría contra el código viejo, casos de borde y manejo de error.
+- `seguridad`: input externo sin validar, secretos, autorización y superficie nueva.
+- `estilo`: convenciones y límites de módulo del repo; sus reglas ganan sobre tu gusto.
+- `alcance`: que el diff haga lo que la tarea dice y nada más.
+
+Reportá cada hallazgo con archivo, línea, motivo y si es bloqueante. **No escribas
+`HALLAZGO BLOQUEANTE:`**: con cuatro lentes, el único veredicto lo da la síntesis.
+
+### Con `--sintesis`
+
+Recibís los cuatro informes. Decidís vos, una vez: si algo bloquea, empezá con
+`HALLAZGO BLOQUEANTE:`; si no, decí qué cubrió cada lente y qué quedó sin mirar.
 
 ## No negociables
 

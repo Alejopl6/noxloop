@@ -233,7 +233,12 @@ function CamposDelProveedor({
 /* -------------------------------------------------------------------------- */
 
 export interface PropsDePanelDeConexiones {
-  proyectoId: string
+  /**
+   * `null` es Settings general: las conexiones DEL ESPACIO DE TRABAJO, el
+   * «portal de tools» de la spec 003. Con proyecto, las de ese proyecto y las
+   * compartidas, como en la 002.
+   */
+  proyectoId: string | null
   conexiones: Conexion[]
   /** Lo que se puede conectar, tal como lo publica el servicio. */
   catalogo: EntradaDeCatalogoDeConexiones[]
@@ -351,7 +356,12 @@ export function PanelDeConexiones({
    */
   const alcancePorDefecto: AlcanceDeConexion =
     elegido?.clase === 'scm' ? 'espacio_de_trabajo' : 'proyecto'
-  const alcanceElegido: AlcanceDeConexion = alcance ?? alcancePorDefecto
+  // Sin proyecto no hay alcance que elegir: desde Settings general solo se
+  // conecta lo que comparten todos. Un gestor de tickets de UN proyecto se
+  // conecta desde las conexiones de ese proyecto.
+  const alcanceElegido: AlcanceDeConexion = proyectoId
+    ? (alcance ?? alcancePorDefecto)
+    : 'espacio_de_trabajo'
 
   /**
    * Se puede conectar AQUI Y AHORA si el catalogo trae sus campos y el
@@ -422,9 +432,13 @@ export function PanelDeConexiones({
   return (
     <div className="flex flex-col gap-8">
       <Encabezado
-        titulo="Conexiones"
-        identificador={proyectoId}
-        descripcion="Con que habla este proyecto. Cada conexion queda registrada con su proveedor, su estado y la credencial que la habilita; el valor de esa credencial no pasa por esta interfaz."
+        titulo={proyectoId ? 'Conexiones' : 'Herramientas y conexiones'}
+        identificador={proyectoId ?? undefined}
+        descripcion={
+          proyectoId
+            ? 'Con que habla este proyecto. Cada conexion queda registrada con su proveedor, su estado y la credencial que la habilita; el valor de esa credencial no pasa por esta interfaz.'
+            : 'Los gestores de tickets, de repositorios y de infraestructura con los que trabaja noxloop, y su estado. Lo que se conecta aqui lo comparten todos los proyectos; el gestor de tickets de un proyecto concreto se conecta desde su Settings.'
+        }
         volver={{ ruta: { seccion: 'proyectos', id: null }, etiqueta: 'Proyectos' }}
         navegar={navegar}
         acciones={
@@ -738,16 +752,18 @@ export function PanelDeConexiones({
                     una del espacio de trabajo entra a la boveda con ambito
                     `global` y la comparten todos los proyectos. Cambiarlo
                     despues seria volver a pegar el valor. */}
-                <Segmentado
-                  etiqueta="A que pertenece esta conexion"
-                  opciones={ALCANCES.map((a) => ({
-                    valor: a.valor,
-                    etiqueta: a.titulo,
-                    descripcion: a.descripcion,
-                  }))}
-                  valor={alcanceElegido}
-                  alCambiar={setAlcance}
-                />
+                {proyectoId ? (
+                  <Segmentado
+                    etiqueta="A que pertenece esta conexion"
+                    opciones={ALCANCES.map((a) => ({
+                      valor: a.valor,
+                      etiqueta: a.titulo,
+                      descripcion: a.descripcion,
+                    }))}
+                    valor={alcanceElegido}
+                    alCambiar={setAlcance}
+                  />
+                ) : null}
 
                 <p className="text-label-13 text-ds-gray-1000">
                   Lo que {elegido.nombre} necesita
@@ -898,12 +914,15 @@ export function VistaDeConexiones({
   proyectoId,
   navegar,
 }: {
-  proyectoId: string
+  /** `null` es el espacio de trabajo: ver `PropsDePanelDeConexiones`. */
+  proyectoId: string | null
   navegar: Navegar
 }) {
   const [busqueda, setBusqueda] = useState('')
 
-  const lectura = useLectura<Conexion[]>(`/v1/projects/${proyectoId}/connections`, {
+  const lectura = useLectura<Conexion[]>(
+    proyectoId ? `/v1/projects/${proyectoId}/connections` : '/v1/connections',
+    {
     relerEn: EVENTOS_DE_CONEXIONES,
   })
 
@@ -991,7 +1010,7 @@ export function VistaDeConexiones({
     // a si misma.
     const respuesta = await mutacion.enviar<AutorizacionDeConexion>(
       'POST',
-      alcance === 'espacio_de_trabajo'
+      alcance === 'espacio_de_trabajo' || !proyectoId
         ? '/v1/connections/authorize'
         : `/v1/projects/${proyectoId}/connections/authorize`,
       { proveedor, ...(Object.keys(valores).length > 0 ? { valores } : {}) },

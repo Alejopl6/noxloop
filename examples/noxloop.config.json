@@ -63,7 +63,7 @@
   "budgets": { "red": 2, "green": 3, "gate": 3, "review": 2 },
 
   "tiers": {
-    "trivial": { "model": "claude-haiku-4-5", "effort": "low",    "gate": "fast", "review": false, "fanout": false },
+    "trivial": { "model": "claude-sonnet-5",  "effort": "low",    "gate": "fast", "review": false, "fanout": false },
     "small":   { "model": "claude-sonnet-5",  "effort": "medium", "gate": "fast", "review": true,  "fanout": false },
     "medium":  { "model": "claude-sonnet-5",  "effort": "high",   "gate": "full", "review": true,  "fanout": false },
     "large":   { "model": "claude-opus-5",    "effort": "xhigh",  "gate": "full", "review": true,  "fanout": true }

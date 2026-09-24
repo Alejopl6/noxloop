@@ -122,6 +122,7 @@ Igual que la suite de proveedores de v1 (`providers/contract.test.mjs`), un adap
 | `coste-o-declarado` | O reporta `usd`, o declara `cost: false`. No devuelve `usd: 0` fingiendo |
 | `cancelable` | Una fase abortada termina el subproceso y no deja huérfanos |
 | `sin-secreto-en-argv` | Ningún valor del `env` aparece en los argumentos del proceso |
+| `eventos-normalizados` | Con `alEvento` (opcional para quien llama), lo que el runtime dice y hace llega como los cinco tipos del transcript —`texto`, `herramienta`, `resultado_herramienta`, `resultado`, `error`—, en orden; un callback que falla no tumba la fase (spec 004, FR-004) |
 
 ## Añadir un adapter
 

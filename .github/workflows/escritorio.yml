@@ -23,9 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Las dos arquitecturas de macOS por separado y no un binario
-          # universal: el sidecar es un runtime de Node distinto para cada una,
-          # y un universal tendria que empaquetar los dos.
+          # Las dos arquitecturas de macOS por separado: son artefactos de
+          # comprobacion. El `.dmg` que se PUBLICA es el universal de
+          # `release.yml`, que une los dos runtimes de Node con `lipo`.
           - plataforma: macos-14
             objetivo: aarch64-apple-darwin
           - plataforma: macos-13
@@ -88,6 +88,28 @@ jobs:
       - name: empaquetar
         working-directory: apps/desktop
         run: npx tauri build --target ${{ matrix.objetivo }}
+
+      # El `.app` tiene que funcionar SIN el repositorio al lado. Los recursos
+      # replican la estructura del repo bajo `Resources/app/` (asi las rutas
+      # relativas del codigo significan lo mismo), y el llavero viaja junto al
+      # ejecutable porque el bundler copia todos los binarios del crate. Si
+      # cualquiera de las dos cosas se rompe, el build sale verde y la app
+      # instalada no monta la boveda o devuelve `pieza_ausente` en Run: se
+      # comprueba aca, con el Node empaquetado, fuera del arbol de fuentes.
+      - name: el .app funciona sin el repositorio
+        if: startsWith(matrix.plataforma, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="apps/desktop/src-tauri/target/${{ matrix.objetivo }}/release/bundle/macos/noxloop.app"
+          AISLADA="$RUNNER_TEMP/instalada"
+          mkdir -p "$AISLADA" && cp -R "$APP" "$AISLADA/"
+          C="$AISLADA/noxloop.app/Contents"
+          test -x "$C/MacOS/noxloop-llavero"
+          test -f "$C/Resources/app/packages/service/bin/noxloop-service.mjs"
+          test -f "$C/Resources/app/providers/contract.mjs"
+          cd "$RUNNER_TEMP"
+          "$C/MacOS/noxloop-service" "$C/Resources/app/packages/engine/bin/noxloop.mjs" help > /dev/null
 
       - uses: actions/upload-artifact@v4
         with:

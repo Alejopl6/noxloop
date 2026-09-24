@@ -31,7 +31,7 @@
 // Sin red, sin credenciales y sin `process.env`: todo llega por `ctx`. El
 // chequeo 8 de la suite lee este archivo para verificarlo.
 
-import { NotSupportedError } from "./contract.mjs";
+import { NotSupportedError, listQuery } from "./contract.mjs";
 
 const NOMBRE = "falso-degradado";
 
@@ -107,6 +107,7 @@ const TODAS_EN_TRUE = {
   searchMentioned: true,
   boardFields: true,
   identityAssignee: true,
+  listItems: true,
 };
 
 /**
@@ -147,6 +148,7 @@ export function gestorFalso(overrides = {}) {
     addLabel: 0,
     createChild: 0,
     searchInbox: 0,
+    listItems: 0,
   };
 
   /** El estado canonico que corresponde a un nativo, segun el mapa del `ctx`. */
@@ -261,6 +263,26 @@ export function gestorFalso(overrides = {}) {
     };
   }
 
+  /**
+   * Los tickets abiertos, como el board los pinta. Sin prioridad ni equipo: el
+   * tablero de este gestor no los tiene, y el contrato dice null antes que un
+   * dato inventado.
+   */
+  async function listItems(query, ctx) {
+    llamadas.listItems++;
+    const { limit, cursor } = listQuery(query);
+    const todos = Object.entries(tablero.items).map(([id, crudo]) => ({
+      ...aItem(id, crudo, ctx),
+      priority: null,
+      assignee: null,
+      team: null,
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    }));
+    const desde = cursor ? Number(cursor) : 0;
+    const hasta = desde + limit;
+    return { items: todos.slice(desde, hasta), nextCursor: hasta < todos.length ? String(hasta) : null, total: todos.length };
+  }
+
   /** La funcion de una capacidad apagada: lanza, y nombra la capacidad. */
   function negar(capacidad) {
     return async () => {
@@ -281,6 +303,7 @@ export function gestorFalso(overrides = {}) {
     comment: caps.comment ? comment : negar("comment"),
     linkUrl: caps.linkUrl ? linkUrl : negar("linkUrl"),
     addLabel: caps.labels ? addLabel : negar("labels"),
+    listItems: caps.listItems ? listItems : negar("listItems"),
     // Apagadas las dos busquedas, la funcion no se exporta: el daemon no puede
     // ni intentarlo, y el validador lo dice al arrancar.
     ...(caps.searchAssigned || caps.searchMentioned ? { searchInbox } : {}),

@@ -76,9 +76,13 @@ function registroDeRuntimes(home) {
     );
     return null;
   }
+  // `entornoDisponible` es DE DONDE el adaptador toma los valores de lo que el
+  // mismo declara necesitar, filtrado por nombre: no se le pasa el entorno
+  // entero a la fase. Sin el, el preflight corre sin PATH y dice «binario no
+  // encontrado» con el binario instalado, y no ve la sesion iniciada.
   return registroDeAdaptadores([
-    crearAdaptadorClaude({ home, hooks: guardas, directoriosExtra: [home] }),
-    crearAdaptadorCodex(),
+    crearAdaptadorClaude({ home, hooks: guardas, directoriosExtra: [home], entornoDisponible: process.env }),
+    crearAdaptadorCodex({ entornoDisponible: process.env }),
   ]);
 }
 

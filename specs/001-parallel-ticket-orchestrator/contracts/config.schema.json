@@ -67,6 +67,21 @@
         "mention": { "type": "string" }
       }
     },
+    "runtime": {
+      "type": "string",
+      "minLength": 1,
+      "description": "El id del runtime del IMPLEMENTADOR (`claude-agent-sdk`, `codex`...), resuelto en cascada (tarea -> proyecto -> general). Sin `runtimes`, corre TODAS las fases —y el motor avisa que la revision no es independiente (FR-034)—. Sin el, el motor monta el runtime de referencia. Un id que el registro no conoce falla al cargar."
+    },
+    "runtimes": {
+      "type": "object",
+      "description": "El runtime por ROL: PLAN lo corre el planificador, RED/GREEN el implementador, REVIEW (lentes y sintesis) el revisor. Lo escribe el servicio desde la flota del proyecto. `implementador` gana sobre `runtime`; sin `planificador` planifica el implementador; un `revisor` igual al implementador se rechaza al cargar (FR-034).",
+      "additionalProperties": false,
+      "properties": {
+        "implementador": { "type": "string", "minLength": 1 },
+        "revisor": { "type": "string", "minLength": 1 },
+        "planificador": { "type": "string", "minLength": 1 }
+      }
+    },
     "repos": {
       "type": "object",
       "description": "Un repositorio de trabajo por clave. La clave es como lo nombran las tareas del plan.",

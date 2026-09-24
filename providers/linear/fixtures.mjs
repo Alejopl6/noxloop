@@ -27,6 +27,7 @@ export const IDS = {
   sinEtiquetas: "c9a4f7d2-0b1e-4a3c-9f52-1a2b3c4d5e05",
   epicaHija: "c9a4f7d2-0b1e-4a3c-9f52-1a2b3c4d5e06",
   cancelada: "c9a4f7d2-0b1e-4a3c-9f52-1a2b3c4d5e07",
+  hecha: "c9a4f7d2-0b1e-4a3c-9f52-1a2b3c4d5e09",
   inexistente: "00000000-0000-4000-8000-0000000000ff",
   equipo: "7a1e0000-0000-4000-8000-00000000eeee",
   proyecto: "7a1e0000-0000-4000-8000-00000000dddd",
@@ -35,7 +36,7 @@ export const IDS = {
   persona: "7a1e0000-0000-4000-8000-00000000bbbb",
 };
 
-const EQUIPO = { id: IDS.equipo, key: "ENG" };
+const EQUIPO = { id: IDS.equipo, key: "ENG", name: "Ingeniería" };
 
 /**
  * Los estados de workflow del equipo ENG, tal como los devuelve
@@ -111,7 +112,12 @@ const ISSUES = {
     estimate: 3,
     state: estado("Todo"),
     parent: { id: IDS.epica, identifier: "ENG-100" },
-    assignee: { id: IDS.persona, name: "noxloop", displayName: "noxloop[bot]" },
+    assignee: {
+      id: IDS.persona,
+      name: "noxloop",
+      displayName: "noxloop[bot]",
+      avatarUrl: "https://public.linear.app/avatars/7a1e0000-bbbb.png",
+    },
     labels: { nodes: [etiqueta("Story")] },
     team: EQUIPO,
     project: { id: IDS.proyecto, name: "Plataforma" },
@@ -225,6 +231,47 @@ const ISSUES = {
 };
 
 /**
+ * Un ticket TERMINADO: solo aparece en el listado con includeDone. Los demás
+ * caminos no lo tocan.
+ */
+ISSUES[IDS.hecha] = {
+  id: IDS.hecha,
+  identifier: "ENG-50",
+  title: "Ya está hecho",
+  description: "",
+  url: "https://linear.app/acme/issue/ENG-50/ya-esta-hecho",
+  estimate: null,
+  state: estado("Done"),
+  parent: null,
+  assignee: null,
+  labels: { nodes: [etiqueta("Task")] },
+  team: EQUIPO,
+  project: null,
+  projectMilestone: null,
+  cycle: null,
+};
+
+/**
+ * `priority` y `updatedAt` de cada issue, tal como los devuelve Linear:
+ * `priority` es 0 sin prioridad, 1 urgente, 2 alta, 3 media, 4 baja. Van aparte
+ * para no repetir el bloque en cada issue; el valor 0 está a propósito en
+ * varios, porque es el que un proveedor descuidado traduce a "urgente".
+ * @type {Record<string, {priority: number, updatedAt: string}>}
+ */
+const LISTADO = {
+  [IDS.epica]: { priority: 1, updatedAt: "2026-09-21T10:00:00.000Z" },
+  [IDS.historia]: { priority: 2, updatedAt: "2026-09-20T10:00:00.000Z" },
+  [IDS.historia2]: { priority: 0, updatedAt: "2026-09-19T10:00:00.000Z" },
+  [IDS.tipoRaro]: { priority: 4, updatedAt: "2026-09-18T10:00:00.000Z" },
+  [IDS.etiquetaProto]: { priority: 3, updatedAt: "2026-09-17T10:00:00.000Z" },
+  [IDS.sinEtiquetas]: { priority: 0, updatedAt: "2026-09-16T10:00:00.000Z" },
+  [IDS.epicaHija]: { priority: 0, updatedAt: "2026-09-15T10:00:00.000Z" },
+  [IDS.cancelada]: { priority: 0, updatedAt: "2026-09-14T10:00:00.000Z" },
+  [IDS.hecha]: { priority: 3, updatedAt: "2026-09-13T10:00:00.000Z" },
+};
+for (const [id, extra] of Object.entries(LISTADO)) Object.assign(ISSUES[id], extra);
+
+/**
  * Los hijos de la épica, en DOS páginas. `children(first: 50)` pagina, y un
  * hito con más hijos que la página perdería los últimos en silencio: el fixture
  * fuerza el segundo viaje.
@@ -323,6 +370,32 @@ let creados = 0;
  * servidor de verdad.
  */
 function responder(query, variables) {
+  // --- el listado del board. Va ANTES que el de getItem, que también es
+  // `issues(filter:`: lo distingue la variable `$listado`.
+  if (query.includes("$listado")) {
+    const f = variables.listado || {};
+    const porEquipo = (i) =>
+      (f.team?.id?.eq && i.team.id === f.team.id.eq) || (f.team?.key?.eq && i.team.key === f.team.key.eq);
+    const fuera = f.state?.type?.nin || [];
+    const todos = Object.values(ISSUES)
+      .filter(porEquipo)
+      .filter((i) => !fuera.includes(i.state.type))
+      // orderBy: updatedAt, del más reciente al más viejo, como Linear.
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    const desde = variables.after ? Number(String(variables.after).replace("cursor-listado-", "")) : 0;
+    const hasta = desde + Number(variables.first);
+    const nodes = todos.slice(desde, hasta);
+    const hasNextPage = hasta < todos.length;
+    return respuesta({
+      data: {
+        issues: {
+          nodes,
+          pageInfo: { hasNextPage, endCursor: nodes.length ? `cursor-listado-${desde + nodes.length}` : null },
+        },
+      },
+    });
+  }
+
   // --- lecturas
   if (query.includes("issues(filter:")) {
     const f = variables.filtro || {};
@@ -504,7 +577,9 @@ export function nuevoCtx(overrides = {}) {
 
 /** Lo que la suite de contrato necesita para ejercitar este proveedor. */
 export const fixtures = {
-  ...nuevoCtx(),
+  // `teamKey` porque `listItems` lista el espacio de UN equipo y sin él se
+  // niega: el chequeo 9 de la suite necesita un equipo que listar.
+  ...nuevoCtx({ options: { teamKey: "ENG" } }),
   defaultLevel: "story",
   // A propósito un identificador humano y no un UUID: prueba que el camino de
   // `team.key + number` también devuelve un Item válido.

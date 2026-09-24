@@ -15,7 +15,7 @@
 // `apps/desktop` (asi lo invoca la CLI de Tauri), pero todas las rutas se
 // resuelven desde `import.meta.url`, no desde el cwd.
 
-import { chmodSync, copyFileSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -95,6 +95,10 @@ function dependenciasAjenas(binario) {
     return salida
       .split("\n")
       .slice(1)
+      // Sobre un binario universal `otool -L` repite la lista por arquitectura
+      // con una cabecera `binario (architecture arm64):` que no es una
+      // dependencia.
+      .filter((l) => !l.trim().endsWith(":"))
       .map((l) => l.trim().split(" ")[0])
       .filter(Boolean)
       // `/usr/lib` y `/System` los provee macOS en toda instalacion.
@@ -162,10 +166,24 @@ function comprobarAutocontenido(binario) {
   throw new Error(mensaje);
 }
 
-function preparar() {
-  const triple = targetTriple();
+// EL TRIPLE UNIVERSAL (`--target universal-apple-darwin`, el del `.dmg` que
+// publica `release.yml`) necesita TRES archivos y no uno:
+//
+// - `-aarch64-apple-darwin` y `-x86_64-apple-darwin`, porque `tauri build`
+//   compila el crate una vez por arquitectura y `tauri-build` (build.rs) exige,
+//   en cada una, el `externalBin` con el sufijo de ESA arquitectura;
+// - `-universal-apple-darwin`, que es el que el bundler mete en el `.app`.
+//
+// Las dos fuentes son dos Node oficiales de la MISMA version, uno por
+// arquitectura (`NOXLOOP_SIDECAR_NODE_AARCH64` y `NOXLOOP_SIDECAR_NODE_X86_64`;
+// `scripts/node-universal.sh` los baja de nodejs.org verificando su SHA-256), y
+// el universal se une aqui con `lipo -create`. No se acepta el Node que corre
+// este script: tiene una sola arquitectura, y un `.app` "universal" con un
+// sidecar arm64 arranca la ventana en Intel y se queda sin servicio.
+const UNIVERSAL = "universal-apple-darwin";
+
+function instalar(origen, triple) {
   const destino = join(DESTINO, `${NOMBRE}-${triple}`);
-  const origen = ORIGEN;
 
   comprobarAutocontenido(origen);
 
@@ -177,33 +195,111 @@ function preparar() {
   rmSync(destino, { force: true });
   copyFileSync(origen, destino);
   chmodSync(destino, 0o755);
+  firmar(destino);
 
-  // En macOS con Apple Silicon, el cargador del sistema **exige** una firma valida
-  // en todo ejecutable: uno sin firmar se mata con SIGKILL al arrancar, no da
-  // error. Y aunque la copia conserve los bytes de la firma del Node de origen,
-  // el bundler de Tauri vuelve a firmar el `.app` entero y una firma anidada que
-  // no cuadra invalida el conjunto: Gatekeeper mata la aplicacion sin mensaje.
-  // Refirmar ad-hoc (`--sign -`) aca deja el binario en un estado que la firma
-  // posterior del bundle puede reemplazar limpiamente.
-  if (process.platform === "darwin") {
-    try {
-      execFileSync("codesign", ["--force", "--sign", "-", destino], { stdio: "pipe" });
-    } catch (e) {
-      const detalle = e?.stderr?.toString().trim() || e?.message || String(e);
-      throw new Error(
-        `No se pudo firmar el sidecar (${destino}).\n` +
-          `Causa: ${detalle}\n` +
-          "Accion: instala las Command Line Tools de Xcode (`xcode-select --install`), " +
-          "que es lo que provee `codesign`. Sin firma, Gatekeeper mata la aplicacion al " +
-          "arrancar y no queda rastro de por que."
-      );
-    }
+  const tamano = statSync(destino).size;
+  console.log(
+    `sidecar listo: ${destino} (${(tamano / 1024 / 1024).toFixed(1)} MB, copiado de ${origen})`
+  );
+  return destino;
 }
 
-const tamano = statSync(destino).size;
-console.log(
-  `sidecar listo: ${destino} (${(tamano / 1024 / 1024).toFixed(1)} MB, copiado de ${origen})`
-);
+// En macOS con Apple Silicon, el cargador del sistema **exige** una firma valida
+// en todo ejecutable: uno sin firmar se mata con SIGKILL al arrancar, no da
+// error. Y aunque la copia conserve los bytes de la firma del Node de origen,
+// el bundler de Tauri vuelve a firmar el `.app` entero y una firma anidada que
+// no cuadra invalida el conjunto: Gatekeeper mata la aplicacion sin mensaje.
+// Refirmar ad-hoc (`--sign -`) aca deja el binario en un estado que la firma
+// posterior del bundle puede reemplazar limpiamente. Sobre un binario universal
+// firma cada arquitectura.
+function firmar(destino) {
+  if (process.platform !== "darwin") return;
+  try {
+    execFileSync("codesign", ["--force", "--sign", "-", destino], { stdio: "pipe" });
+  } catch (e) {
+    const detalle = e?.stderr?.toString().trim() || e?.message || String(e);
+    throw new Error(
+      `No se pudo firmar el sidecar (${destino}).\n` +
+        `Causa: ${detalle}\n` +
+        "Accion: instala las Command Line Tools de Xcode (`xcode-select --install`), " +
+        "que es lo que provee `codesign`. Sin firma, Gatekeeper mata la aplicacion al " +
+        "arrancar y no queda rastro de por que."
+    );
+  }
+}
+
+function arquitecturas(binario) {
+  return execFileSync("lipo", ["-archs", binario], { encoding: "utf8" }).trim().split(/\s+/);
+}
+
+function prepararUniversal() {
+  const arm = process.env.NOXLOOP_SIDECAR_NODE_AARCH64;
+  const x64 = process.env.NOXLOOP_SIDECAR_NODE_X86_64;
+  if (!arm || !x64) {
+    throw new Error(
+      `El triple ${UNIVERSAL} necesita un Node oficial por arquitectura.\n` +
+        "  Causa:  faltan NOXLOOP_SIDECAR_NODE_AARCH64 y/o NOXLOOP_SIDECAR_NODE_X86_64.\n" +
+        "  Accion: ejecuta `apps/desktop/scripts/node-universal.sh <version> <dir>` y exporta\n" +
+        "          las variables que imprime."
+    );
+  }
+  for (const [binario, esperada] of [
+    [arm, "arm64"],
+    [x64, "x86_64"],
+  ]) {
+    const tiene = arquitecturas(binario);
+    if (tiene.length !== 1 || tiene[0] !== esperada) {
+      throw new Error(`${binario} tiene arquitectura '${tiene.join(" ")}', se esperaba solo '${esperada}'.`);
+    }
+  }
+  instalar(arm, "aarch64-apple-darwin");
+  instalar(x64, "x86_64-apple-darwin");
+
+  mkdirSync(DESTINO, { recursive: true });
+  const unido = join(DESTINO, `.${NOMBRE}-lipo`);
+  rmSync(unido, { force: true });
+  execFileSync("lipo", ["-create", arm, x64, "-output", unido]);
+  try {
+    instalar(unido, UNIVERSAL);
+  } finally {
+    rmSync(unido, { force: true });
+  }
+}
+
+// EL LLAVERO TAMBIEN TIENE QUE SER UNIVERSAL, y la CLI de Tauri no lo hace.
+// Con `--target universal-apple-darwin` compila las dos arquitecturas y une con
+// `lipo` SOLO el binario principal; los demas binarios del crate (el llavero,
+// ver `llavero_junto_a` en `lib.rs`) los busca igual en
+// `target/universal-apple-darwin/release/` y el bundle falla con
+// "Failed to copy binary ... noxloop-llavero does not exist". Comprobado en
+// esta maquina con @tauri-apps/cli 2.11.5.
+//
+// Este script corre como `beforeBundleCommand`, que es justo el hueco entre
+// compilar y empaquetar: los dos llaveros ya existen y el bundle todavia no los
+// busco. Antes de compilar (la llamada a mano del workflow) no existen, y no se
+// hace nada.
+function unirLlaveroUniversal() {
+  const perfil = process.env.TAURI_ENV_DEBUG === "true" ? "debug" : "release";
+  const target = resolve(AQUI, "..", "src-tauri", "target");
+  const por = (triple) => join(target, triple, perfil, "noxloop-llavero");
+  const partes = [por("aarch64-apple-darwin"), por("x86_64-apple-darwin")];
+  if (!partes.every((p) => existsSync(p))) return;
+  const destino = por(UNIVERSAL);
+  mkdirSync(dirname(destino), { recursive: true });
+  rmSync(destino, { force: true });
+  execFileSync("lipo", ["-create", ...partes, "-output", destino]);
+  firmar(destino);
+  console.log(`llavero universal: ${destino} (${arquitecturas(destino).join(" ")})`);
+}
+
+function preparar() {
+  const triple = targetTriple();
+  if (triple === UNIVERSAL) {
+    prepararUniversal();
+    unirLlaveroUniversal();
+    return;
+  }
+  instalar(ORIGEN, triple);
 }
 
 // El fallo de este script se lee en la consola de un `tauri build`, entre cientos

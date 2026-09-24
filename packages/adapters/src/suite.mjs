@@ -1,4 +1,4 @@
-// La suite de contrato: las once pruebas que un adaptador tiene que pasar
+// La suite de contrato: las doce pruebas que un adaptador tiene que pasar
 // entero para declararse listo.
 //
 // POR QUE ES UNA LISTA DE CHEQUEOS Y NO UN ARCHIVO DE TESTS. Por lo mismo que en
@@ -7,7 +7,7 @@
 // corre con el runner que quiera, y correrla es el paso 4 de los cinco. Ninguno
 // de los cinco toca el motor.
 //
-// LAS ONCE MIRAN EL COMPORTAMIENTO, NO LA INTENCION. Casi todas leen lo que el
+// TODAS MIRAN EL COMPORTAMIENTO, NO LA INTENCION. Casi todas leen lo que el
 // SUBPROCESO recibio de verdad, no lo que el adaptador dijo que iba a mandar: un
 // adaptador que arma bien el plan y lo mezcla con el entorno del proceso al
 // lanzar pasa cualquier comprobacion hecha sobre el plan, y la fuga sigue ahi.
@@ -15,7 +15,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { validarAdaptador, validarResultado } from "./contrato.mjs";
+import { validarAdaptador, validarEvento, validarResultado } from "./contrato.mjs";
 
 /**
  * Lo que el SISTEMA OPERATIVO mete en el entorno de todo proceso que lanza, y
@@ -47,6 +47,7 @@ export const PRUEBAS_DEL_CONTRATO = Object.freeze([
   "coste-o-declarado",
   "cancelable",
   "sin-secreto-en-argv",
+  "eventos-normalizados",
 ]);
 
 /**
@@ -151,6 +152,24 @@ export function pruebasDelContrato(fx) {
           fx.guionar({ texto: "hecho", exito: true });
           await a.runPhase(fx.peticion({ phase: "GREEN" }));
           afirmar(fx.evidenciaDeHooks(), "declara hooks:true y no hay evidencia de que hayan corrido en el subproceso");
+        }
+
+        if (typeof caps.comandos === "boolean") {
+          // `comandos` decide QUE manda el motor: el comando, o su texto
+          // expandido. Las dos cosas solo sirven si el adaptador entrega el
+          // prompt INTEGRO, sin reescribirlo ni anteponerle nada: un adaptador
+          // que "arreglara" el comando por su cuenta interpretaria el encargo
+          // distinto que el motor, que es la regla 3 del contrato al reves.
+          const prompt = caps.comandos
+            ? "/noxloop-task IT-1 T-1 --phase GREEN"
+            : "# /noxloop-task — una fase, una tarea\n\nFase: GREEN. El encargo, expandido por el motor.";
+          fx.guionar({ texto: "hecho", exito: true });
+          await a.runPhase(fx.peticion({ phase: "GREEN", prompt }));
+          const l = fx.ultimoLanzamiento();
+          afirmar(
+            Array.isArray(l.argv) && l.argv.includes(prompt),
+            `declara comandos:${caps.comandos} y el prompt no llego integro al runtime`,
+          );
         }
 
         if (Array.isArray(caps.models)) {
@@ -417,6 +436,61 @@ export function pruebasDelContrato(fx) {
           r.ok === false && r.subtype === "secreto_en_argv",
           `con el secreto en el prompt la fase salio con ok=${r.ok} subtype=${JSON.stringify(r.subtype)}`,
         );
+      },
+    },
+
+    {
+      nombre: "eventos-normalizados",
+      // Con `alEvento`, lo que el runtime dice y hace llega como los cinco
+      // tipos del transcript (spec 004, FR-004), en orden, y el ultimo cierra la
+      // fase: `resultado` si fue bien, `error` si no. El callback es OPCIONAL
+      // para quien llama; el adaptador que lo recibe, emite. Y un callback que
+      // revienta no tumba la fase: el transcript es un registro, no parte del
+      // veredicto.
+      correr: async () => {
+        /** @type {any[]} */
+        const eventos = [];
+        fx.guionar({ texto: "hecho, y lo dejo escrito en el transcript", exito: true });
+        const r = await a.runPhase(fx.peticion({ phase: "GREEN" }), { alEvento: (e) => eventos.push(e) });
+        afirmar(r.ok === true, `la fase con \`alEvento\` salio con ok=${r.ok}: pedir el transcript cambio el veredicto`);
+        afirmar(
+          eventos.length > 0,
+          "se paso `alEvento` y no llego ningun evento: el transcript de este runtime quedaria vacio",
+        );
+        for (const e of eventos) {
+          const v = validarEvento(e);
+          afirmar(v.ok, `un evento no cumple el contrato (${JSON.stringify(e)}):\n  - ${v.problems.join("\n  - ")}`);
+        }
+        afirmar(
+          eventos.at(-1).tipo === "resultado",
+          `el ultimo evento de una fase buena es ${JSON.stringify(eventos.at(-1).tipo)} y no \`resultado\``,
+        );
+        afirmar(
+          eventos.some((e) => e.contenido.includes("hecho, y lo dejo escrito en el transcript")),
+          "lo que el runtime dijo no llego al transcript",
+        );
+        const instantes = eventos.map((e) => Date.parse(e.t));
+        afirmar(
+          instantes.every((t, i) => i === 0 || t >= instantes[i - 1]),
+          "los eventos no llegan en el orden en que el runtime los produjo",
+        );
+
+        /** @type {any[]} */
+        const fallidos = [];
+        fx.guionar({ texto: "no pude", exito: false });
+        await a.runPhase(fx.peticion({ phase: "GREEN" }), { alEvento: (e) => fallidos.push(e) });
+        afirmar(
+          fallidos.some((e) => e.tipo === "error"),
+          "una fase que fallo no dejo ningun evento `error`: el transcript la contaria como si nada",
+        );
+
+        fx.guionar({ texto: "hecho", exito: true });
+        const r3 = await a.runPhase(fx.peticion({ phase: "GREEN" }), {
+          alEvento: () => {
+            throw new Error("el disco del transcript se lleno");
+          },
+        });
+        afirmar(r3.ok === true, "un callback de transcript que falla tumbo la fase: un registro decidio el veredicto");
       },
     },
   ];

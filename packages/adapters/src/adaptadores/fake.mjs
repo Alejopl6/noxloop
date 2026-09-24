@@ -17,7 +17,8 @@ import { fileURLToPath } from "node:url";
 
 import { normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
 import { lanzar, leerLanzamiento } from "../proceso.mjs";
-import { esCorteDePresupuesto, leerResultadoJson } from "../salida.mjs";
+import { emisorDeEventos, eventosDeMensajeClaude, jsonDeLinea } from "../eventos.mjs";
+import { esCorteDePresupuesto, leerResultadoStreamJson } from "../salida.mjs";
 
 const GUIONADO = fileURLToPath(new URL("../proceso-guionado.mjs", import.meta.url));
 
@@ -59,6 +60,9 @@ export function crearAdaptadorFake(opts = {}) {
         // eso lo comprueba el modelo de flota AL GUARDAR.
         hooks: conHooks,
         models: ["fake"],
+        // No carga ningun plugin: recibe el encargo expandido, como Codex. Es
+        // lo que permite probar sin modelo el camino de un runtime sin plugin.
+        comandos: false,
       };
     },
 
@@ -103,8 +107,20 @@ export function crearAdaptadorFake(opts = {}) {
       ];
       if (peticion.resume) args.push("--resume", peticion.resume);
 
+      // EL TRANSCRIPT, LINEA A LINEA. El runtime guionado habla `stream-json`
+      // —la forma de Claude—, asi que se traduce con el mismo normalizador que
+      // el adaptador de referencia: el camino sin modelo ejercita la traduccion
+      // de verdad, no una propia.
+      const emitir = emisorDeEventos(opcionesDeFase.alEvento);
+      const herramientas = new Map();
+
       try {
         const l = await lanzar({
+          alLinea: opcionesDeFase.alEvento
+            ? (linea) => {
+                for (const e of eventosDeMensajeClaude(jsonDeLinea(linea), herramientas)) emitir(e);
+              }
+            : undefined,
           comando: nodo,
           args,
           env: peticion.env,
@@ -169,7 +185,7 @@ function traducir(l) {
     });
   }
 
-  const crudo = leerResultadoJson(l.stdout);
+  const crudo = leerResultadoStreamJson(l.stdout);
   if (!crudo) {
     // Sin resultado NO es aprobado: una fase cortada no produce veredicto.
     return resultadoDeFase({
@@ -255,7 +271,9 @@ export function fixturesDeContrato({ dir }) {
         cwd,
         resume: null,
         model: "fake",
-        prompt: "/noxloop-task IT-1 T-1 --phase GREEN",
+        // Expandido: este runtime declara `comandos: false`, y el motor no le
+        // manda el nombre de un comando que no sabe expandir.
+        prompt: "# /noxloop-task — una fase, una tarea\n\nFase: GREEN. El encargo, expandido por el motor.",
         tier: "normal",
         env: { TOKEN_CENTINELA: "valor-centinela-de-la-boveda-9137" },
         ...over,

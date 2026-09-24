@@ -58,6 +58,14 @@ export type ClaseDeVista =
    * lo que cambia es quien la consulta.
    */
   | 'asistente'
+  /**
+   * El board. A SANGRE: sin tope, sin el relleno del lienzo y a la altura de
+   * la ventana. Las columnas se desplazan en horizontal y cada una en
+   * vertical por su cuenta, como en cualquier kanban; con el relleno y el
+   * desplazamiento de la pagina, bajar por una columna larga se lleva la
+   * cabecera de las otras tres y se pierde el contador que se estaba mirando.
+   */
+  | 'tablero'
 
 /**
  * Las clases literales, sin interpolar, para que Tailwind las encuentre al
@@ -97,6 +105,8 @@ export const ANCHO_DE_CLASE: Record<ClaseDeVista, string> = {
 
   // Ver la cabecera de `ClaseDeVista`: el tope lo pone el paso, no la seccion.
   asistente: 'max-w-none',
+
+  tablero: 'max-w-none',
 }
 
 /**
@@ -104,6 +114,27 @@ export const ANCHO_DE_CLASE: Record<ClaseDeVista, string> = {
  * nueva no compila hasta que alguien decida cuanto espacio pide.
  */
 export const CLASE_DE_VISTA: Record<Seccion, ClaseDeVista> = {
+  board: 'tablero',
+
+  // Una fila por run con estado, avance, PR y gasto: se comparan columnas.
+  runs: 'tabla',
+
+  // Tres cifras arriba y dos tablas cortas debajo.
+  costos: 'inventario',
+
+  // Las pestanas de Settings general. Son inventarios: conexiones, runtimes,
+  // proyectos con su flota.
+  settings: 'inventario',
+  modelos: 'inventario',
+  // Binarios de la maquina y un bloque por proyecto con sus problemas.
+  diagnostico: 'inventario',
+  'flota-por-defecto': 'inventario',
+
+  // La pestana General del proyecto: un punado de campos.
+  ajustes: 'formulario',
+  guidelines: 'lectura',
+  diseno: 'lectura',
+
   // Indicadores agregados en rejilla de cinco, y debajo la bandeja. Es un
   // inventario: lo de arriba se compara entre si y lo de abajo son filas.
   inicio: 'inventario',
@@ -131,7 +162,7 @@ export const CLASE_DE_VISTA: Record<Seccion, ClaseDeVista> = {
   flota: 'inventario',
 
   // Tabla de tareas del ciclo: estado, intentos por lazo, rama, ultimo fallo.
-  runs: 'tabla',
+  ciclos: 'tabla',
 
   credenciales: 'inventario',
 
@@ -157,6 +188,16 @@ export type AlineacionDeVista = 'izquierda' | 'centro'
  * constitution es un texto que se redacta entero.
  */
 export const ALINEACION_DE_VISTA: Record<Seccion, AlineacionDeVista> = {
+  board: 'izquierda',
+  runs: 'izquierda',
+  costos: 'izquierda',
+  settings: 'izquierda',
+  modelos: 'izquierda',
+  diagnostico: 'izquierda',
+  'flota-por-defecto': 'izquierda',
+  ajustes: 'izquierda',
+  guidelines: 'izquierda',
+  diseno: 'izquierda',
   inicio: 'izquierda',
 
   // El asistente centra por paso, desde dentro. Ver `ClaseDeVista.asistente`:
@@ -180,7 +221,7 @@ export const ALINEACION_DE_VISTA: Record<Seccion, AlineacionDeVista> = {
   bootstrap: 'izquierda',
   conexiones: 'izquierda',
   flota: 'izquierda',
-  runs: 'izquierda',
+  ciclos: 'izquierda',
   credenciales: 'izquierda',
   auditoria: 'izquierda',
   catalogo: 'izquierda',

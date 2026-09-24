@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { CATALOGO, deExcepcion } from "../src/errores.mjs";
 import { arrancar } from "../src/servidor.mjs";
 import { carpetaDePrueba, homeTemporal, ORIGEN, repoDePrueba, TOKEN } from "./ayuda.mjs";
+import { proyectoActivo, repoConRemoto, runEnDisco } from "./ayuda-motor.mjs";
 
 /**
  * Como se provoca cada error del catalogo, de verdad. No se fabrica el objeto:
@@ -134,6 +135,18 @@ const PROVOCADORES = {
     return (await r.json()).error;
   },
 
+  // Spec 003, US8: una carpeta sin `.git` para el modo rapido en su primera
+  // etapa, antes de escanear nada.
+  modo_rapido_detenido: async (svc) => {
+    const r = await pedirJson(svc, "/v1/projects", "POST", {
+      origen: "nuevo",
+      nombre: "Sin Git",
+      ruta_local: carpetaDePrueba(),
+    });
+    const { proyecto } = await r.json();
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/quickstart`, "POST", {})).json()).error;
+  },
+
   proyecto_no_activo: async (svc) => {
     const proyecto = await proyectoDePrueba(svc, "Sin Activar");
     const r = await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { item: "T-1" });
@@ -172,6 +185,91 @@ const PROVOCADORES = {
   // devolveria los 1012 proveedores con 200 y quien lo mira creeria que filtro.
   parametro_invalido: async (svc) =>
     (await (await pedirJson(svc, "/v1/connections/catalog?clase=trackr", "GET")).json()).error,
+
+  // ---- El puente proyecto-motor (spec 003) --------------------------------
+  // Los cuatro por la ruta de verdad: un proyecto ACTIVE al que le falta UNA
+  // cosa, y `POST /runs`. Ninguno llega a lanzar el motor: la validacion va
+  // antes, que es justo lo que se afirma.
+  sin_repo: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Remoto", ruta: repoConRemoto({ remoto: null }).repo });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  sin_gate: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Runner", runner: null });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  // Desde la spec 003 un proyecto SIN conexiones usa el gestor local (sus
+  // tareas propias), asi que `sin_gestor` es ahora un tracker DECLARADO que el
+  // motor no sabe usar: no se cambia por el local sin avisar.
+  sin_gestor: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Gestor", conexiones: [{ clase: "tracker", proveedor: "jira" }] });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  // Borrar una tarea local que ya tiene run en disco.
+  tarea_con_run: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Tarea Con Run", conexiones: [] });
+    const tarea = (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "con run" })).json()).tarea;
+    runEnDisco(svc.home, tarea.id, { projectId: proyecto.id });
+    return (await (await pedirJson(svc, `/v1/tasks/${tarea.id}`, "DELETE")).json()).error;
+  },
+
+  // Run sobre una tarea local cuyo ejecutor el motor no tiene registrado.
+  // Antes el provocador era `codex`; desde que el motor fuerza el TDD despues
+  // de la fase en los runtimes sin hooks, codex SI se monta como implementador
+  // y el unico camino real al 409 es un runtime que el registro no conoce.
+  ejecutor_sin_soporte: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Con Runtime Inventado", conexiones: [] });
+    const tarea = (
+      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", ejecutor: { runtime: "runtime-inventado" } })).json()
+    ).tarea;
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
+  },
+
+  // Run sobre una tarea local que pide terminar sin PR.
+  termino_sin_soporte: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Solo Commit", conexiones: [] });
+    const tarea = (
+      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", termino: "commit" })).json()
+    ).tarea;
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
+  },
+
+  // Las opciones del gestor sobre una conexion del ESPACIO de trabajo. Va en
+  // un servicio propio: la conexion del espacio alcanzaria a los proyectos de
+  // los demas provocadores y les cambiaria el gestor.
+  gestor_compartido: async () => {
+    const otro = await arrancar({ home: homeTemporal(), token: TOKEN });
+    try {
+      const proyecto = await proyectoActivo(otro, {
+        nombre: "Del Espacio",
+        conexiones: [{ clase: "tracker", proveedor: "linear", delEspacio: true }],
+      });
+      return (await (await pedirJson(otro, `/v1/projects/${proyecto.id}/tracker`, "PATCH", { opciones: {} })).json()).error;
+    } finally {
+      await otro.detener();
+    }
+  },
+
+  // Un gestor que pide token (el de la forja, por la cuenta de codigo) y una
+  // conexion sin credencial en la boveda: el motor NO se lanza a morir en
+  // `loadProvider` con «falta la variable».
+  sin_credencial_del_gestor: async (svc) => {
+    const proyecto = await proyectoActivo(svc, {
+      nombre: "Sin Token",
+      ruta: repoConRemoto({ remoto: "https://forja.test/acme/app.git" }).repo,
+      conexiones: [{ clase: "scm", proveedor: "github" }],
+    });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  // Aprobar un run que ya tiene PR: no hay plan que aprobar.
+  run_sin_esa_accion: async (svc) => {
+    runEnDisco(svc.home, "con-pr", { item: { id: "con-pr", title: "t", pr: "https://forja.test/pr/1" } });
+    return (await (await pedirJson(svc, "/v1/runs/con-pr/approve", "POST")).json()).error;
+  },
 
   fallo_interno: async () => deExcepcion(new Error("una excepcion que nadie previo")).error,
 };

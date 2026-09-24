@@ -31,7 +31,7 @@
 // persona movio el ticket entre la lectura y la escritura, el gestor responde
 // 409 y el proveedor lanza, en vez de pisar el cambio ajeno.
 
-import { NotSupportedError } from "../contract.mjs";
+import { NotSupportedError, listQuery } from "../contract.mjs";
 
 export const meta = { name: "azure-devops", version: "1.0.0" };
 
@@ -86,6 +86,9 @@ export function capabilities() {
     // tablero no cuesta un viaje aparte.
     boardFields: true,
     identityAssignee: true,  // WIQL acepta cualquier valor en [System.AssignedTo]
+    // WIQL del proyecto + `workitemsbatch`, con la columna de cada estado sacada
+    // de su CATEGORIA (`GET _apis/wit/workitemtypes`), no de su nombre.
+    listItems: true,
   };
 }
 
@@ -106,11 +109,19 @@ export const optionsSchema = {
     team: { type: "string", description: "El equipo, para las consultas que lo necesitan." },
     baseUrl: { type: "string", description: "Para instalaciones on-premise. Por omision, dev.azure.com." },
     childType: { type: "string", description: "El tipo de work item que se crea como hija." },
+    areaPath: {
+      type: "string",
+      description: "Acota el listado del board a esta area y sus hijas (WIQL UNDER). Sin ella, el proyecto entero.",
+    },
     wiql: {
       type: "object",
       additionalProperties: false,
       description: "Consultas WIQL propias, que ganan sobre las que arma el proveedor.",
-      properties: { assigned: { type: "string" }, mentioned: { type: "string" } },
+      properties: {
+        assigned: { type: "string" },
+        mentioned: { type: "string" },
+        list: { type: "string", description: "La del listado del board. Lo retirado o cerrado que traiga igual se filtra." },
+      },
     },
   },
 };
@@ -150,6 +161,8 @@ const F = {
   area: "System.AreaPath",
   responsable: "System.AssignedTo",
   criterios: "Microsoft.VSTS.Common.AcceptanceCriteria",
+  prioridad: "Microsoft.VSTS.Common.Priority",
+  cambio: "System.ChangedDate",
 };
 
 /**
@@ -937,6 +950,192 @@ export async function searchInbox(ctx) {
   const resolver = (ids) => ids.map((i) => porId.get(i)).filter(Boolean);
 
   return { assigned: resolver(asignados), mentioned: resolver(mencionados) };
+}
+
+// ------------------------------------------------ el listado del board (003)
+
+/**
+ * La CATEGORIA de un estado -> la columna del board.
+ *
+ * Es el equivalente del `state.type` de Linear: un enum del gestor
+ * (Proposed, InProgress, Resolved, Completed, Removed) que no cambia por
+ * plantilla, mientras que el NOMBRE del estado si (Active en Agile, Committed en
+ * Scrum, Doing en Basic). `Removed` no tiene columna: un retirado no es trabajo
+ * abierto ni hecho, y no se lista nunca.
+ */
+const CATEGORIA_A_ESTADO = {
+  proposed: "todo",
+  inprogress: "in_progress",
+  resolved: "in_review",
+  completed: "done",
+};
+
+/**
+ * Los estados de cada tipo con su categoria, del gestor VIVO.
+ *
+ * Un viaje por listado. Es lo que permite que la WIQL excluya lo cerrado sin
+ * escribir un solo nombre de estado de memoria —`'Closed'` y `'Removed'` en el
+ * codigo andarian en Agile y callarian en un proceso heredado con "Hecho"—, y
+ * que un estado custom que ningun stateMap nombra caiga en su columna en vez de
+ * desaparecer del board.
+ *
+ * PENDIENTE DE CONFIRMAR contra una organizacion real: que la lista de
+ * `workitemtypes` traiga `states` con `category` (la referencia de WorkItemType
+ * lo documenta como `states: WorkItemStateColor[]`, y WorkItemStateColor con
+ * `category`). Si no viniera, ningun estado se excluye en la WIQL y los que el
+ * stateMap no nombre se saltean con un aviso: el board queda incompleto y lo
+ * dice, no inventado.
+ */
+async function categoriasDeEstado(ctx) {
+  const url = urlApi(ctx, "project", "_apis/wit/workitemtypes");
+  const r = await pedir(ctx, { url });
+  /** @type {Map<string, Map<string, string>>} */
+  const porTipo = new Map();
+  const cerrados = new Set();
+  const retirados = new Set();
+  for (const tipo of Array.isArray(r?.value) ? r.value : []) {
+    /** @type {Map<string, string>} */
+    const estados = new Map();
+    for (const e of Array.isArray(tipo?.states) ? tipo.states : []) {
+      if (!e?.name) continue;
+      const categoria = String(e.category || "").toLowerCase();
+      estados.set(String(e.name).toLowerCase(), categoria);
+      if (categoria === "completed") cerrados.add(String(e.name));
+      if (categoria === "removed") retirados.add(String(e.name));
+    }
+    porTipo.set(String(tipo?.name || "").toLowerCase(), estados);
+  }
+  return { porTipo, cerrados, retirados };
+}
+
+/** Sin iteracion = en la RAIZ del arbol de iteraciones (sin `\`): ningun sprint. */
+const sinIteracion = (ruta) => !String(ruta || "").includes("\\");
+
+/**
+ * La columna del board de un work item. En orden:
+ *   1. categoria `Removed` -> fuera (null), aunque el mapa diga otra cosa;
+ *   2. `stateMap.backlog` explicito -> backlog;
+ *   3. el stateMap por nombre, y si no lo nombra, la categoria del estado;
+ *   4. `todo` en la raiz de iteraciones -> backlog: propuesto y sin sprint es
+ *      exactamente lo que un equipo de ADO llama backlog.
+ */
+/** La categoria del estado de un work item, o null si el gestor no la dio. */
+function categoriaDe(crudo, categorias) {
+  const f = crudo.fields || {};
+  return categorias.porTipo.get(String(f[F.tipo] || "").toLowerCase())?.get(String(f[F.estado] || "").toLowerCase()) ?? null;
+}
+
+function estadoDelBoard(crudo, categorias, ctx) {
+  const f = crudo.fields || {};
+  const nativo = String(f[F.estado] || "");
+  const categoria = categoriaDe(crudo, categorias);
+  if (categoria === "removed") return null;
+  const backlog = opciones(ctx).stateMap?.backlog;
+  if (backlog && String(backlog).toLowerCase() === nativo.toLowerCase()) return "backlog";
+  const estado =
+    canonicoDeEstado(nativo, ctx) ??
+    (categoria && Object.hasOwn(CATEGORIA_A_ESTADO, categoria) ? CATEGORIA_A_ESTADO[categoria] : null);
+  if (estado === "todo" && sinIteracion(f[F.iteracion])) return "backlog";
+  return estado;
+}
+
+/**
+ * La prioridad del board: `Microsoft.VSTS.Common.Priority` va de 1 (la mas
+ * alta) a 4, y el board de 0 (urgente) a 4 (baja). Se corre un lugar, igual que
+ * Linear, para que "la mas alta del gestor" sea 0 en los dos; el 4 del board
+ * queda sin usar. Sin el campo —un tipo que no lo tiene, o una plantilla que lo
+ * quito— es null, no el 2 que ADO pone por defecto al crear.
+ */
+function prioridadDelBoard(valor) {
+  const p = Number(valor);
+  if (valor == null || !Number.isInteger(p) || p < 1 || p > 4) return null;
+  return p - 1;
+}
+
+/** IdentityRef -> el asignado de la tarjeta, con avatar si el gestor lo da. */
+function asignadoDelBoard(identidad) {
+  if (!identidad) return null;
+  if (typeof identidad === "string") return { id: identidad, name: identidad };
+  const id = identidad.uniqueName || identidad.id;
+  if (!id) return null;
+  const avatar = identidad._links?.avatar?.href || identidad.imageUrl;
+  return {
+    id: String(id),
+    name: String(identidad.displayName || id),
+    ...(avatar ? { avatarUrl: String(avatar) } : {}),
+  };
+}
+
+/**
+ * Los work items abiertos del proyecto, para el board.
+ *
+ * Tres viajes: los tipos (para las categorias de estado), la WIQL (que devuelve
+ * SOLO ids, todos, ordenados) y el lote de la pagina pedida. El cursor es la
+ * POSICION en la lista de la WIQL; como la WIQL devuelve todos los ids, `total`
+ * aca si se sabe —y es el unico de los tres gestores que lo da—.
+ *
+ * El equipo de la tarjeta es el ultimo tramo del `System.AreaPath`: el area es
+ * como ADO reparte el trabajo entre equipos, y la ruta completa
+ * (`Fabrikam\Pagos\Recibos`) no cabe en una tarjeta.
+ *
+ * @param {{limit?: number, cursor?: string|null, includeDone?: boolean}} query
+ */
+export async function listItems(query, ctx) {
+  const { limit, cursor, includeDone } = listQuery(query);
+  const o = opciones(ctx);
+  if (cursor != null && !/^\d+$/.test(cursor)) {
+    throw new Error(`cursor de Azure DevOps invalido: ${JSON.stringify(cursor)} (tiene que ser el nextCursor de un listItems anterior)`);
+  }
+  const desde = cursor == null ? 0 : Number(cursor);
+
+  const categorias = await categoriasDeEstado(ctx);
+  const excluir = [...new Set(includeDone ? [...categorias.retirados] : [...categorias.cerrados, ...categorias.retirados])];
+  let donde = "[System.TeamProject] = @project";
+  if (excluir.length) donde += ` AND [System.State] NOT IN (${excluir.map(comillar).join(", ")})`;
+  if (o.areaPath) donde += ` AND [System.AreaPath] UNDER ${comillar(o.areaPath)}`;
+  const consulta = o.wiql?.list || `SELECT [System.Id] FROM WorkItems WHERE ${donde} ORDER BY [System.ChangedDate] DESC`;
+
+  const url = urlApi(ctx, "project", "_apis/wit/wiql");
+  const r = await pedir(ctx, { method: "POST", url, contentType: "application/json", body: { query: consulta } });
+  const ids = [...new Set((Array.isArray(r?.workItems) ? r.workItems : []).map((w) => String(w?.id)).filter((id) => id && id !== "undefined"))];
+
+  const pagina = ids.slice(desde, desde + limit);
+  // El lote no promete el orden: se rearma con el de la WIQL, que es el que se
+  // pidio (lo mas reciente primero).
+  const hidratados = new Map((await hidratar(pagina, ctx)).map((i) => [i.id, i]));
+
+  const items = [];
+  for (const id of pagina) {
+    const item = hidratados.get(id);
+    if (!item) continue; // borrado entre la WIQL y el lote: errorPolicy omit
+    const crudo = item.raw || {};
+    const estado = estadoDelBoard(crudo, categorias, ctx);
+    if (!estado) {
+      // Un retirado se saltea callado: es lo esperado. Un estado sin columna
+      // NO: es un ticket que el board no muestra, y hay que decir por que.
+      if (categoriaDe(crudo, categorias) !== "removed") {
+        ctx.log?.warn?.(
+          `azure-devops: #${id} esta en "${crudo.fields?.[F.estado]}", que ni el stateMap ni la categoria del ` +
+            `estado ubican en una columna, y se saltea`,
+        );
+      }
+      continue;
+    }
+    if (estado === "done" && !includeDone) continue;
+    const f = crudo.fields || {};
+    const area = String(f[F.area] || "").split("\\").filter(Boolean);
+    items.push({
+      ...item,
+      canonicalState: estado,
+      priority: prioridadDelBoard(f[F.prioridad]),
+      assignee: asignadoDelBoard(f[F.responsable]),
+      team: area.length ? area[area.length - 1] : null,
+      updatedAt: f[F.cambio] ?? null,
+    });
+  }
+
+  const hasta = desde + limit;
+  return { items, nextCursor: hasta < ids.length ? String(hasta) : null, total: ids.length };
 }
 
 /**

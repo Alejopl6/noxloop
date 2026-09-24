@@ -107,6 +107,8 @@ export type TipoEvento =
   | 'run.estado'
   | 'servicio.parando'
   | 'sincronizar_completo'
+  | 'run.cambio'
+  | 'board.invalidado'
 
 export const TIPOS_DE_EVENTO: readonly TipoEvento[] = [
   'scan.progreso',
@@ -122,6 +124,11 @@ export const TIPOS_DE_EVENTO: readonly TipoEvento[] = [
   'run.estado',
   'servicio.parando',
   'sincronizar_completo',
+  // Los dos de la spec 003 (`contracts/board-api.md` §2). Sin ellos en esta
+  // lista el canal los recibe y nadie los escucha: `EventSource` solo entrega
+  // los tipos por los que alguien se suscribio con nombre.
+  'run.cambio',
+  'board.invalidado',
 ] as const
 
 export interface EventoServicio<D = unknown> {
@@ -170,6 +177,12 @@ export interface Proyecto {
   estado: EstadoProyecto
   creado: string
   actualizado?: string | null
+  /**
+   * `L0`, `L1` o `L2`. Opcional porque la lista de proyectos no siempre la
+   * trae; el detalle si. Decide que hace `Run` en el board: en L2 planifica y
+   * ejecuta, en L0 y L1 planifica y para a esperar la aprobacion del plan.
+   */
+  autonomia?: string | null
   /** Lo que el contrato llama "contadores". Todo opcional: son agregados. */
   contadores?: {
     entradas_bandeja?: number
@@ -419,6 +432,25 @@ export interface AltaDeProyecto {
    * valor por defecto: es una funcion escondida.
    */
   autonomia?: string
+  /**
+   * Spec 003, US8: `true` da de alta Y activa en la misma peticion por el modo
+   * rapido. La respuesta es entonces un `ResultadoDelModoRapido`.
+   */
+  rapido?: boolean
+}
+
+/**
+ * `POST /v1/projects/:id/quickstart` (y `POST /v1/projects` con `rapido`).
+ *
+ * `pasos` dice que decidio el modo rapido en cada etapa; `huecos`, lo que dejo
+ * sin hacer a proposito —la constitution que no escribio en el repositorio, el
+ * revisor que falta— con su accion. Se pintan: un activado sin huecos a la
+ * vista se leeria como «esta todo configurado», y no lo esta.
+ */
+export interface ResultadoDelModoRapido {
+  proyecto: Proyecto
+  pasos: Array<{ etapa: string; hecho: string }>
+  huecos: Array<{ etapa: string; causa: string; accion: string }>
 }
 
 /**
@@ -1305,4 +1337,532 @@ export interface EstadoDeAplicacionesOauth {
     porque: string
     evidencia: { comprobacion: string; resultado: string }[]
   }
+}
+
+/* ==========================================================================
+   Spec 003 · El board de control.
+   --------------------------------------------------------------------------
+   Transcrito de `specs/003-board-de-control/contracts/board-api.md` §2, que es
+   lo unico que comparten los tres frentes. Si el servicio manda otra cosa, la
+   diferencia esta entre estos tipos y el contrato, no repartida por el board.
+
+   Una TARJETA no se guarda en ningun sitio: el servicio la deriva cada vez de
+   un ticket del gestor y, si existe, del run del motor sobre ese ticket. Esta
+   interfaz la pinta tal cual; la columna, el chip y la accion vienen
+   decididos. Lo unico que se calcula aqui es lo que depende de los filtros del
+   operador (contadores y resumen de lo filtrado), y eso vive en
+   `components/board/derivar.ts`.
+   ========================================================================== */
+
+/**
+ * Las columnas de FR-001, revisado el 2026-09-24 sobre el referente Nodal:
+ * Todo, En curso, En revision, Bloqueado y Hecho, mas Backlog plegable a la
+ * izquierda. Los identificadores son los del `canonicalState` del contrato de
+ * proveedor, que ya tenia `blocked` y `done`: una columna nueva no inventa un
+ * nombre que el resto del sistema no conoce.
+ */
+export type IdDeColumna = 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'blocked' | 'done'
+
+/** El orden en pantalla. Backlog va primero porque se pinta plegado a la izquierda. */
+export const ORDEN_DE_COLUMNAS: readonly IdDeColumna[] = [
+  'backlog',
+  'todo',
+  'in_progress',
+  'in_review',
+  'blocked',
+  'done',
+] as const
+
+export interface ColumnaDelBoard {
+  id: IdDeColumna
+  titulo: string
+  /** Lo que el servicio conoce de la columna, sin los filtros del operador. */
+  total: number
+  /**
+   * Texto cuando la columna esta INCOMPLETA: proveedor sin `listItems`, gestor
+   * caido, mas tickets de los mostrados. Se pinta siempre: una columna corta
+   * sin explicacion se lee como «no hay mas».
+   */
+  nota: string | null
+}
+
+/**
+ * Los estados que son chip y nunca columna (FR-004).
+ *
+ * `fase` es el run en marcha; `pr_listo` es el final feliz. Los demas son el
+ * run parado por algo, y cuatro de ellos piden al operador (ver
+ * `CHIPS_QUE_TE_NECESITAN` en `derivar.ts`).
+ */
+export type TipoDeChip =
+  | 'en_cola'
+  | 'necesita_permiso'
+  | 'necesita_criterios'
+  | 'plan_listo'
+  | 'fase'
+  | 'bloqueado'
+  | 'fallido'
+  | 'interrumpido'
+  | 'pr_listo'
+  | 'sin_repo'
+
+export interface ChipDeTarjeta {
+  tipo: TipoDeChip
+  /** Lo que se lee en el chip. Lo redacta el servicio. */
+  texto: string
+  /** La causa textual COMPLETA, o `null`. Nunca un resumen (FR-062 de la 002). */
+  detalle: string | null
+  /** Solo en `en_cola`: la posicion en la cola del proyecto. */
+  posicion?: number | null
+}
+
+export interface AvanceDeTarjeta {
+  /** Tareas integradas. */
+  hechas: number
+  /** Tareas del plan. */
+  total: number
+  /** La fase de la tarea en curso: Leer, Test, Implementar, Gate, Revision. */
+  fase: string | null
+}
+
+export type TipoDeAccionDeTarjeta = 'run' | 'open_run' | 'retry' | 'approve' | 'ninguna'
+
+export interface AccionDeTarjeta {
+  tipo: TipoDeAccionDeTarjeta
+  habilitada: boolean
+  /**
+   * Por que no se puede, escrito entero. Lo manda el servicio —«Sin repo»,
+   * «Conecta un modelo en Settings → Modelos»— y aqui se pinta tal cual: un
+   * boton apagado sin motivo es un boton roto.
+   */
+  motivo: string | null
+}
+
+/**
+ * El gasto de un run. `medido: false` NO es cero: es un runtime que no
+ * reporta gasto, y pintarlo como 0 diria que fue gratis (US5, escenario 2).
+ */
+export interface GastoDeRun {
+  usd: number | null
+  calls: number | null
+  medido: boolean
+}
+
+export interface RunDeTarjeta {
+  itemId: string
+  estado: string
+  /** URL del pull request abierto por el motor, o `null`. */
+  pr: string | null
+  gasto?: GastoDeRun | null
+}
+
+/** Como viaja un proyecto dentro de otra cosa: tarjeta, run, fila de costos. */
+export interface ReferenciaDeProyecto {
+  id: string
+  nombre: string
+  color?: string | null
+}
+
+export interface AsignadoDeTicket {
+  nombre: string
+  iniciales?: string | null
+  /**
+   * Se acepta y NO se pinta. Cargar una imagen de un host del gestor es una
+   * peticion de red por tarjeta, y esta aplicacion funciona sin internet
+   * (FR-003 de la 002). Las iniciales dicen lo mismo sin salir de la maquina.
+   */
+  avatarUrl?: string | null
+}
+
+export interface TicketDeTarjeta {
+  id: string
+  key: string | null
+  titulo: string
+  url?: string | null
+  /** 0 urgente … 4 baja. `null` cuando el gestor no la da: no se inventa. */
+  prioridad?: number | null
+  equipo?: string | null
+  etiquetas?: string[]
+  asignado?: AsignadoDeTicket | null
+}
+
+/**
+ * Quien ejecuta la tarea: un runtime conectado y, si se eligio, un agente.
+ * Agnostico a proposito (FR-031): `claude-agent-sdk`, `codex` o el que el
+ * servicio registre manana. Sin ejecutor propio, la tarea hereda en cascada
+ * del repo, del proyecto y del general; el servicio manda el ya resuelto.
+ */
+export interface EjecutorDeTarea {
+  runtime: string
+  agente?: string | null
+}
+
+export interface Tarjeta {
+  /** `<projectId>:<itemId>`. Un ticket de dos proyectos son dos tarjetas. */
+  id: string
+  proyecto: ReferenciaDeProyecto
+  /**
+   * `local` es una tarea creada en noxloop (FR-030), no un ticket de un gestor
+   * externo. Se pinta con el chip «Local». Opcional: un servicio anterior a
+   * las tareas propias no lo manda, y entonces el chip sale del gestor.
+   */
+  origen?: 'local' | 'gestor' | null
+  ticket: TicketDeTarjeta
+  /** El ejecutor resuelto, si el servicio lo sabe. */
+  ejecutor?: EjecutorDeTarea | null
+  columna: IdDeColumna
+  chip: ChipDeTarjeta | null
+  avance: AvanceDeTarjeta | null
+  accion: AccionDeTarjeta
+  run: RunDeTarjeta | null
+  tieneRepo: boolean
+}
+
+export interface ResumenDelBoard {
+  enCurso: number
+  teNecesitan: number
+  enCola: number
+}
+
+/** Los gestores que el contrato nombra. `string` para no romper con uno nuevo. */
+export type GestorDeTickets = 'github' | 'linear' | 'azure-devops' | 'fake' | (string & {})
+
+export interface ProyectoDelBoard {
+  id: string
+  nombre: string
+  estado: EstadoProyecto
+  color: string | null
+  gestor: GestorDeTickets | null
+  /** Si su gestor sabe listar tickets. Sin la capacidad, el board degrada. */
+  listItems: boolean
+}
+
+export interface AvisoDelBoard {
+  proyecto: string | null
+  nivel: 'error' | 'aviso'
+  causa: string
+  accion: string
+}
+
+/** `GET /v1/board?project=<id>&includeDone=0|1`. */
+export interface Board {
+  columnas: ColumnaDelBoard[]
+  tarjetas: Tarjeta[]
+  resumen: ResumenDelBoard
+  proyectos: ProyectoDelBoard[]
+  avisos: AvisoDelBoard[]
+}
+
+/** Respuesta de lanzar, aprobar y reintentar: `202`, o `200` si ya existia. */
+export interface RespuestaDeLanzamiento {
+  run: {
+    itemId: string
+    estado: string
+    posicion: number | null
+  }
+}
+
+/** Una fila de `GET /v1/runs`. */
+export interface RunListado {
+  itemId: string
+  /**
+   * El contrato no fija si viaja la referencia o solo el identificador; se
+   * aceptan las dos y `referenciaDeProyecto()` las iguala.
+   */
+  proyecto: ReferenciaDeProyecto | string
+  titulo: string
+  estado: string
+  avance: AvanceDeTarjeta | null
+  pr: string | null
+  gasto: GastoDeRun | null
+  creado: string | null
+  actualizado: string | null
+}
+
+export function referenciaDeProyecto(
+  valor: ReferenciaDeProyecto | string | null | undefined,
+): ReferenciaDeProyecto | null {
+  if (!valor) return null
+  if (typeof valor === 'string') return { id: valor, nombre: valor, color: null }
+  return valor
+}
+
+export interface UsoAgregado {
+  usd: number
+  calls: number
+  /** Runs cuyo runtime no mide gasto. Se cuentan aparte, nunca como cero. */
+  sinMedir: number
+}
+
+/** `GET /v1/usage?desde=<ISO>&hasta=<ISO>`. */
+export interface Uso {
+  total: UsoAgregado
+  porProyecto: Array<UsoAgregado & { proyecto: ReferenciaDeProyecto | string }>
+  runs: Array<{
+    itemId: string
+    proyecto: ReferenciaDeProyecto | string
+    titulo: string
+    usd: number | null
+    calls: number | null
+    medido: boolean
+  }>
+}
+
+/* --- Modelos: los runtimes de agente ------------------------------------ */
+
+/**
+ * Como esta conectado un runtime. `null` es «no conectado».
+ *
+ * Son metodos de AUTENTICACION, no marcas: el mismo runtime puede estar con la
+ * suscripcion del operador o con una clave de API, y la diferencia importa
+ * porque la clave se factura aparte.
+ */
+export type MetodoDeRuntime = 'suscripcion_claude' | 'cuenta_chatgpt' | 'api_key'
+
+/** Una fila de `GET /v1/runtimes`. */
+export interface EstadoDeRuntime {
+  runtime: string
+  nombre: string
+  conectado: boolean
+  metodo: MetodoDeRuntime | null
+  /** Lo que el servicio sabe decir del estado, en una frase. */
+  detalle: string
+  /** Solo cuando no esta conectado: por que, y que hacer. */
+  causa?: string
+  accion?: string
+}
+
+/* --- El diff de una tarea (US6) ----------------------------------------- */
+
+/** `A` anadido, `M` modificado, `D` borrado, `R` renombrado: lo de `git`. */
+export type EstadoDeArchivoEnDiff = 'A' | 'M' | 'D' | 'R'
+
+export interface ArchivoDeDiff {
+  ruta: string
+  estado: EstadoDeArchivoEnDiff | string
+  mas: number
+  menos: number
+  /** El parche unificado del archivo, desde el primer `@@`. */
+  parche: string
+  /**
+   * EL PARCHE SE CORTO. El contrato dice que los de mas de 200 KB se cortan
+   * «y lo dicen»; no fija con que campo, asi que se aceptan los dos nombres
+   * razonables y ademas se mira el texto (ver `parcheCortado` en el visor).
+   * Un parche cortado pintado como entero haria creer que el archivo termina
+   * donde termina lo que llego.
+   */
+  cortado?: boolean
+  truncado?: boolean
+}
+
+export type TipoDeCommit = 'test' | 'impl' | 'otro'
+
+export interface CommitDeTarea {
+  sha: string
+  mensaje: string
+  tipo: TipoDeCommit | string
+  archivos: ArchivoDeDiff[]
+}
+
+/** `GET /v1/runs/:itemId/tasks/:taskId/diff`. Solo lectura: `git log`/`git diff`. */
+export interface DiffDeTarea {
+  tarea: {
+    id: string
+    titulo?: string | null
+    estado?: string | null
+    /** El runtime que la trabajo: `claude-agent-sdk`, `codex`… */
+    agente?: string | null
+    rama?: string | null
+  }
+  commits: CommitDeTarea[]
+  /** Lo que la tarea lleva hecho en su worktree respecto a su base. */
+  sinCommitear: { archivos: ArchivoDeDiff[] } | null
+}
+
+/* --- Tareas propias (FR-030 a FR-032) ----------------------------------- */
+
+/** Como termina una tarea. Ninguno mergea: la autonomia acaba en el PR. */
+export type TerminoDeTarea = 'changes' | 'commit' | 'pr'
+
+/**
+ * `POST /v1/projects/:id/tasks` y `PATCH /v1/tasks/:id`.
+ *
+ * El servicio es el unico escritor del gestor local (principio VIII): esta
+ * interfaz manda el formulario y no guarda nada de el.
+ */
+export interface TareaNueva {
+  repo?: string | null
+  titulo: string
+  /** Markdown. */
+  plan: string
+  criterios: string[]
+  /** 0 urgente … 3 baja, `null` sin prioridad: la misma escala que las tarjetas. */
+  prioridad: number | null
+  etiquetas: string[]
+  /** Sin ejecutor, hereda en cascada: repo → proyecto → general (FR-031). */
+  ejecutor?: EjecutorDeTarea | null
+  termino?: TerminoDeTarea
+}
+
+export interface TareaCreada {
+  tarea: {
+    id: string
+    /** `<PREFIJO>-<n>`, p. ej. `PAY-12`. */
+    key: string
+    [campo: string]: unknown
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 004 · Diagnostico (`GET /v1/diagnostics`, FR-001..003)                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `bloqueante` apaga Run en las tarjetas a las que afecta; `aviso` solo se
+ * dice. La confianza `desconocida` es aviso a proposito: no saber no es
+ * motivo para bloquear (principio X).
+ */
+export type NivelDeProblema = 'bloqueante' | 'aviso'
+
+export interface ProblemaDeDiagnostico {
+  codigo: string
+  nivel: NivelDeProblema
+  /** El runtime al que afecta, o `null` si a todas las tareas. */
+  afecta: string | null
+  causa: string
+  accion: string
+  /** La frase corta que el board pone bajo el boton apagado. */
+  motivo: string
+  binario?: string
+}
+
+export type EstadoDeBinario = 'presente' | 'ausente' | 'fallo'
+
+export interface BinarioDiagnosticado {
+  nombre: string
+  estado: EstadoDeBinario
+  version: string | null
+  causa?: string
+  accion?: string
+}
+
+export type EstadoDeConfianza = 'aceptada' | 'pendiente' | 'desconocida'
+
+export interface ConfianzaDeClaude {
+  estado: EstadoDeConfianza
+  /** El `~/.claude.json` que se leyo. */
+  archivo: string
+  /** La ruta real (canonica) por la que se pregunto. */
+  clave: string | null
+  /** Lo que se leyo: la clave y el booleano, nada mas del archivo. */
+  evidencia: string
+  causa?: string
+  accion?: string
+  /** Donde corren de verdad las fases: worktrees bajo el home de noxloop. */
+  rutaDeFase: string
+  notaDeFase: string
+}
+
+export interface RuntimeDeRol {
+  rol: 'implementador' | 'revisor' | 'planificador'
+  runtime: string
+  agente: string | null
+  /** `null`: noxloop no sabe preguntarle a ese runtime. */
+  conectado: boolean | null
+  detalle: string | null
+  causa?: string
+  accion?: string
+}
+
+export interface DiagnosticoDeProyecto {
+  id: string
+  nombre: string
+  estadoDelProyecto: string
+  estado: 'ok' | 'aviso' | 'bloqueado'
+  repositorio: { estado: 'ok' | 'problema'; ruta: string; rutaReal: string | null; detalle: string }
+  confianza: ConfianzaDeClaude
+  gate: { declarado: boolean; comando: string | null; de: string | null }
+  runtimes: RuntimeDeRol[]
+  problemas: ProblemaDeDiagnostico[]
+}
+
+export interface Diagnostico {
+  /** ISO 8601. */
+  generado: string
+  maquina: { binarios: BinarioDiagnosticado[]; problemas: ProblemaDeDiagnostico[] }
+  proyectos: DiagnosticoDeProyecto[]
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 004 · Run en vivo: el transcript de cada fase                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Los cinco tipos del transcript, y ni uno mas (contrato de adaptadores,
+ * `TIPOS_DE_EVENTO`). La interfaz no sabe que runtime corrio: pinta estos.
+ */
+export type TipoDeEventoDeTranscript = 'texto' | 'herramienta' | 'resultado_herramienta' | 'resultado' | 'error'
+
+/** Los tokens de UNA invocacion, tal como el runtime los reporto. Lo que no da, en `null`. */
+export interface TokensDeInvocacion {
+  entrada: number
+  salida: number
+  cacheLectura: number | null
+  cacheEscritura: number | null
+}
+
+export interface EventoDeTranscript {
+  /** ISO 8601: cuando el adaptador lo vio. */
+  t: string
+  tipo: TipoDeEventoDeTranscript
+  /** Siempre texto, ya redactado por el motor. La entrada de una herramienta viene como JSON. */
+  contenido: string
+  herramienta?: string
+  tokens?: TokensDeInvocacion
+}
+
+/**
+ * Los tokens de una fase (o de la tarea). `medido: false` es «sin medir» y
+ * lleva los numeros en `null`: NO es cero, y la interfaz no lo pinta como cero.
+ */
+export interface TokensDeFase {
+  medido: boolean
+  entrada: number | null
+  salida: number | null
+  cacheLectura: number | null
+  cacheEscritura: number | null
+}
+
+/** Una fase (RED, GREEN, REVIEW con su lente...) con un tramo de su transcript. */
+export interface FaseDeTranscript {
+  fase: string
+  lente?: string
+  eventos: EventoDeTranscript[]
+  tokens: TokensDeFase
+  /** Lineas que tiene la fase en disco ahora. */
+  total: number
+  /** La linea desde la que empieza este tramo. */
+  desde: number
+  /** Desde donde pedir lo que sigue (`?desde=`). */
+  siguiente: number
+  /** Hay mas lineas de las que vinieron: lo cortado se dice. */
+  cortado: boolean
+}
+
+/** `GET /v1/runs/:itemId/tasks/:taskId/transcript` */
+export interface TranscriptDeTarea {
+  itemId: string
+  tareaId: string
+  fases: FaseDeTranscript[]
+  /** La suma de las fases; sin medir si alguna no lo esta. */
+  total: TokensDeFase
+  limite: number
+}
+
+/** Los datos del evento SSE `run.transcript`: que transcript crecio. */
+export interface AvisoDeTranscript {
+  projectId: string | null
+  itemId: string
+  taskId: string
+  fase: string
+  lente?: string
 }
