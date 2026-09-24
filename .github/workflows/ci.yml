@@ -359,9 +359,20 @@ jobs:
           workspaces: apps/desktop/src-tauri
 
       # `tauri-build` aborta si el binario declarado en `externalBin` no esta en
-      # disco, y ese binario es un runtime de Node de ~100 MB que no se
-      # versiona. La variable le dice al script que no hace falta materializarlo
-      # para compilar; empaquetarlo es trabajo del job de release.
+      # disco (`resource path binaries/noxloop-service-<triple> doesn't exist`),
+      # y ese binario es un runtime de Node de ~100 MB que no se versiona. Lo
+      # deja `preparar-sidecar.mjs`, copiando el Node del runner; la variable le
+      # dice que no hace falta que sea autocontenido para compilar — empaquetarlo
+      # es trabajo del job de release. Sin este paso la variable no la leia
+      # nadie y el job fallaba siempre.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: preparar el sidecar para compilar
+        env:
+          NOXLOOP_SIDECAR_ENLAZADO_OK: "1"
+        run: node apps/desktop/scripts/preparar-sidecar.mjs
+
       - name: las pruebas de la cascara
         working-directory: apps/desktop/src-tauri
         env:
