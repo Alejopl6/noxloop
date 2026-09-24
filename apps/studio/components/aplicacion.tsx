@@ -3,16 +3,33 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Boxes,
+  ChartColumn,
   Compass,
+  Cpu,
   FileSearch,
   Inbox,
+  Kanban,
   KeyRound,
+  Plug,
   Plus,
   ScrollText,
+  Settings2,
+  SquareActivity,
+  Users,
   Wrench,
 } from 'lucide-react'
 
-import { esSeccionDeProyecto, useRuta, type Navegar, type Ruta } from '@/lib/ruta'
+import {
+  esAjusteDeProyecto,
+  esAjusteGeneral,
+  esSeccionDeProyecto,
+  SECCIONES_DE_AJUSTES_DE_PROYECTO,
+  useRuta,
+  type Navegar,
+  type Ruta,
+} from '@/lib/ruta'
+import { useLectura } from '@/lib/lectura'
+import type { Proyecto } from '@/lib/tipos'
 import { useServicio } from '@/components/proveedor-servicio'
 import { PedirToken } from '@/components/pedir-token'
 import { tokenDeSesion } from '@/lib/daemon'
@@ -26,7 +43,16 @@ import { MenuDeComandos, useMenuDeComandos, type Comando } from '@/components/ui
 import { SelectorDeTema } from '@/components/selector-tema'
 import { Marco } from '@/components/marco/marco'
 import { anchoDelLienzo } from '@/components/marco/lienzo'
-import { ETIQUETA_DE_SECCION, SECCIONES_DE_LA_ETAPA } from '@/components/marco/secciones'
+import { etiquetaDePestana } from '@/components/marco/secciones'
+import { AjustesDelProyecto, AjustesGenerales } from '@/components/ajustes/marco-de-ajustes'
+import { VistaDeAjustesDeProyecto } from '@/components/ajustes/vista-ajustes-de-proyecto'
+import { VistaDeModelos } from '@/components/ajustes/vista-modelos'
+import { VistaDeFlotaPorDefecto } from '@/components/ajustes/vista-flota-por-defecto'
+import { VistaDeBoard } from '@/components/vista-board'
+import { VistaDeListaDeRuns } from '@/components/vista-lista-de-runs'
+import { VistaDeCostos } from '@/components/vista-costos'
+import { VistaDeGuidelines } from '@/components/vista-guidelines'
+import { PasoDeDiseno } from '@/components/asistente/paso-de-diseno'
 import { Asistente } from '@/components/asistente/asistente'
 import { VistaDeInicio } from '@/components/vista-inicio'
 import { VistaDeBandeja } from '@/components/vista-bandeja'
@@ -112,71 +138,118 @@ function FaltaElProyecto({ seccion, navegar }: { seccion: string; navegar: Naveg
         identificador, asi que no hay nada que leer todavia.
       </p>
       <p className="text-copy-14 text-ds-gray-1000">
-        Elige un proyecto de la lista y vuelve a entrar desde ahi.
+        Elige un proyecto en la lista de la izquierda y abre su Settings.
       </p>
-      <Button onClick={() => navegar({ seccion: 'proyectos', id: null })}>
-        Ver los proyectos
-      </Button>
+      <Button onClick={() => navegar({ seccion: 'board', id: null })}>Ir al board</Button>
     </div>
   )
 }
 
+/** La pestana de Settings del proyecto que corresponde a la seccion. */
+function PestanaDeProyecto({
+  seccion,
+  proyectoId,
+  navegar,
+}: {
+  seccion: Ruta['seccion']
+  proyectoId: string
+  navegar: Navegar
+}) {
+  switch (seccion) {
+    case 'ajustes':
+      return <VistaDeAjustesDeProyecto proyectoId={proyectoId} navegar={navegar} />
+    case 'snapshot':
+      return <VistaDeSnapshot proyectoId={proyectoId} navegar={navegar} />
+    case 'constitution':
+      return <VistaDeConstitution proyectoId={proyectoId} navegar={navegar} />
+    case 'guidelines':
+      return <VistaDeGuidelines proyectoId={proyectoId} />
+    case 'diseno':
+      // El paso del asistente, montado como pestana. `alTerminar` no navega:
+      // aqui no hay paso siguiente, se ajusta y se queda.
+      return <PasoDeDiseno proyectoId={proyectoId} alTerminar={() => undefined} />
+    case 'bootstrap':
+      return <VistaDeBootstrap proyectoId={proyectoId} navegar={navegar} />
+    case 'conexiones':
+      return <VistaDeConexiones proyectoId={proyectoId} navegar={navegar} />
+    case 'flota':
+      return <VistaDeFlota proyectoId={proyectoId} navegar={navegar} />
+    case 'ciclos':
+      return <VistaDeRuns proyectoId={proyectoId} navegar={navegar} />
+    default:
+      return null
+  }
+}
+
 /** Que pantalla corresponde a la ruta. Un solo sitio donde mirarlo. */
-function Contenido({ ruta, navegar }: { ruta: Ruta; navegar: Navegar }) {
-  switch (ruta.seccion) {
+function Contenido({
+  ruta,
+  navegar,
+  proyectos,
+}: {
+  ruta: Ruta
+  navegar: Navegar
+  proyectos: Proyecto[] | null
+}) {
+  const { seccion } = ruta
+
+  // SETTINGS GENERAL: las pestanas del portal de tools.
+  if (esAjusteGeneral(seccion)) {
+    return (
+      <AjustesGenerales seccion={seccion} navegar={navegar}>
+        {seccion === 'settings' ? (
+          <VistaDeConexiones proyectoId={null} navegar={navegar} />
+        ) : seccion === 'modelos' ? (
+          <VistaDeModelos />
+        ) : seccion === 'credenciales' ? (
+          <VistaDeCredenciales credencialAbierta={ruta.id} navegar={navegar} />
+        ) : seccion === 'flota-por-defecto' ? (
+          <VistaDeFlotaPorDefecto navegar={navegar} />
+        ) : (
+          <VistaDeAuditoria navegar={navegar} />
+        )}
+      </AjustesGenerales>
+    )
+  }
+
+  // SETTINGS DEL PROYECTO: las pantallas de la 002, como pestanas.
+  if (esAjusteDeProyecto(seccion)) {
+    if (!ruta.id) {
+      return <FaltaElProyecto seccion={etiquetaDePestana(seccion).toLowerCase()} navegar={navegar} />
+    }
+    return (
+      <AjustesDelProyecto
+        seccion={seccion}
+        proyectoId={ruta.id}
+        proyecto={proyectos?.find((proyecto) => proyecto.id === ruta.id) ?? null}
+        navegar={navegar}
+      >
+        <PestanaDeProyecto seccion={seccion} proyectoId={ruta.id} navegar={navegar} />
+      </AjustesDelProyecto>
+    )
+  }
+
+  switch (seccion) {
+    case 'board':
+      return <VistaDeBoard proyectoId={ruta.id} navegar={navegar} />
+    case 'runs':
+      return <VistaDeListaDeRuns ruta={ruta} navegar={navegar} />
+    case 'costos':
+      return <VistaDeCostos navegar={navegar} />
     // El asistente es LA unica seccion que no exige identificador de proyecto
-    // aun llevandolo: su primer paso es conseguirlo. Por eso no pasa por
-    // `FaltaElProyecto` como las seis etapas.
+    // aun llevandolo: su primer paso es conseguirlo.
     case 'asistente':
       return <Asistente ruta={ruta} navegar={navegar} />
+    case 'inicio':
+      return <VistaDeInicio navegar={navegar} />
     case 'bandeja':
       return <VistaDeBandeja entradaAbierta={ruta.id} navegar={navegar} />
     case 'proyectos':
       return <VistaDeProyectos navegar={navegar} />
     case 'proyecto-nuevo':
       return <VistaDeAltaDeProyecto navegar={navegar} />
-    case 'snapshot':
-      return ruta.id ? (
-        <VistaDeSnapshot proyectoId={ruta.id} navegar={navegar} />
-      ) : (
-        <FaltaElProyecto seccion="el snapshot" navegar={navegar} />
-      )
-    case 'constitution':
-      return ruta.id ? (
-        <VistaDeConstitution proyectoId={ruta.id} navegar={navegar} />
-      ) : (
-        <FaltaElProyecto seccion="la constitution" navegar={navegar} />
-      )
-    case 'bootstrap':
-      return ruta.id ? (
-        <VistaDeBootstrap proyectoId={ruta.id} navegar={navegar} />
-      ) : (
-        <FaltaElProyecto seccion="el bootstrap" navegar={navegar} />
-      )
-    case 'conexiones':
-      return ruta.id ? (
-        <VistaDeConexiones proyectoId={ruta.id} navegar={navegar} />
-      ) : (
-        <FaltaElProyecto seccion="las conexiones" navegar={navegar} />
-      )
-    case 'flota':
-      return ruta.id ? (
-        <VistaDeFlota proyectoId={ruta.id} navegar={navegar} />
-      ) : (
-        <FaltaElProyecto seccion="la flota" navegar={navegar} />
-      )
-    case 'runs':
-      return ruta.id ? (
-        <VistaDeRuns proyectoId={ruta.id} navegar={navegar} />
-      ) : (
-        <FaltaElProyecto seccion="los ciclos" navegar={navegar} />
-      )
-    case 'credenciales':
-      return <VistaDeCredenciales credencialAbierta={ruta.id} navegar={navegar} />
-    case 'auditoria':
-      return <VistaDeAuditoria navegar={navegar} />
     default:
-      return <VistaDeInicio navegar={navegar} />
+      return <VistaDeBoard proyectoId={null} navegar={navegar} />
   }
 }
 
@@ -185,97 +258,153 @@ function Contenido({ ruta, navegar }: { ruta: Ruta; navegar: Navegar }) {
  *
  * VIVEN EN LA CASCARA Y NO EN CADA PANTALLA, que es lo que los hace utiles:
  * el valor del menu es llegar a cualquier sitio desde cualquier sitio sin
- * levantar las manos del teclado. Un menu que solo conoce los comandos de la
- * pantalla abierta es una barra de herramientas con otro aspecto.
+ * levantar las manos del teclado.
  *
- * LAS ETAPAS DEL PROYECTO YA SI ESTAN, y antes no. La razon por la que no
- * estaban era buena mientras duro: sin contexto de proyecto persistente, un
- * comando "Abrir constitution" no sabia de que proyecto y habria llevado a la
- * pantalla que dice que falta el identificador. Con el proyecto abierto en el
- * marco, el identificador se conoce, y las seis etapas entran al menu ATADAS A
- * EL. Sin proyecto abierto siguen sin aparecer, por el mismo motivo de antes.
+ * CON LA 003 EL MENU CARGA CON LO QUE SALIO DE LA NAVEGACION. La navegacion
+ * lateral tiene cuatro destinos; todo lo demas —las pantallas de
+ * establecimiento de cada proyecto, la bandeja, los indicadores, la lista de
+ * proyectos— se alcanza desde Settings y DESDE AQUI (FR-025). Por eso cada
+ * pantalla de la 002 tiene su comando, y las de proyecto salen atadas a cada
+ * proyecto: «Constitution de pagos» y no «Abrir constitution» a secas, que sin
+ * proyecto abierto no sabria de cual.
  */
-function comandosDeNavegacion(navegar: Navegar, proyectoId: string | null): Comando[] {
+function comandosDeNavegacion(
+  navegar: Navegar,
+  proyectoAbierto: string | null,
+  proyectos: Proyecto[],
+): Comando[] {
   const ir = (destino: Ruta) => () => navegar(destino)
 
-  const deEtapa: Comando[] = proyectoId
-    ? SECCIONES_DE_LA_ETAPA.map((seccion) => ({
-        id: `ir-${seccion}`,
-        etiqueta: `Abrir ${ETIQUETA_DE_SECCION[seccion].toLowerCase()}`,
-        descripcion: 'Del proyecto que tienes abierto',
-        grupo: 'Proyecto abierto',
-        ejecutar: ir({ seccion, id: proyectoId }),
-      }))
-    : []
+  const principales: Comando[] = [
+    {
+      id: 'ir-board',
+      etiqueta: 'Board',
+      descripcion: 'Todos los proyectos en columnas: lo que corre y lo que te necesita',
+      grupo: 'Navegacion',
+      palabrasClave: ['kanban', 'tablero', 'inicio', 'tickets'],
+      icono: <Kanban />,
+      ejecutar: ir({ seccion: 'board', id: null }),
+    },
+    {
+      id: 'ir-runs',
+      etiqueta: 'Runs',
+      descripcion: 'Los runs de todos los proyectos, con su estado y su diff',
+      grupo: 'Navegacion',
+      palabrasClave: ['ejecuciones', 'ciclos', 'motor'],
+      icono: <SquareActivity />,
+      ejecutar: ir({ seccion: 'runs', id: null }),
+    },
+    {
+      id: 'ir-costos',
+      etiqueta: 'Costos',
+      descripcion: 'Gasto por proyecto y por run',
+      grupo: 'Navegacion',
+      palabrasClave: ['gasto', 'dinero', 'usd', 'uso'],
+      icono: <ChartColumn />,
+      ejecutar: ir({ seccion: 'costos', id: null }),
+    },
+    {
+      id: 'ir-settings',
+      etiqueta: 'Settings',
+      descripcion: 'Herramientas y conexiones, modelos, credenciales, flota, auditoria',
+      grupo: 'Navegacion',
+      palabrasClave: ['ajustes', 'configuracion', 'tools', 'herramientas'],
+      icono: <Settings2 />,
+      ejecutar: ir({ seccion: 'settings', id: null }),
+    },
+  ]
 
-  return [
-    // EL RECORRIDO GUIADO VA EL PRIMERO, y no por cortesia: es el camino por
-    // defecto del producto. Con proyecto abierto lleva a SU recorrido, y sin
-    // el lleva al primer paso, que es elegir o crear uno — la misma entrada
-    // significando lo mismo en los dos casos.
+  const deSettings: Comando[] = [
+    { id: 'ir-herramientas', etiqueta: 'Herramientas y conexiones', grupo: 'Settings', palabrasClave: ['conexiones', 'github', 'linear', 'gestor'], icono: <Plug />, ejecutar: ir({ seccion: 'settings', id: null }) },
+    { id: 'ir-modelos', etiqueta: 'Modelos', descripcion: 'Runtimes de agente: iniciar sesion o API key', grupo: 'Settings', palabrasClave: ['runtime', 'claude', 'codex', 'openai', 'api key'], icono: <Cpu />, ejecutar: ir({ seccion: 'modelos', id: null }) },
+    { id: 'ir-credenciales', etiqueta: 'Credenciales', descripcion: 'Inventario, grants y vista inversa', grupo: 'Settings', palabrasClave: ['secreto', 'token', 'grant', 'boveda'], icono: <KeyRound />, ejecutar: ir({ seccion: 'credenciales', id: null }) },
+    { id: 'ir-flota-por-defecto', etiqueta: 'Flota por defecto', grupo: 'Settings', palabrasClave: ['agentes', 'flota'], icono: <Users />, ejecutar: ir({ seccion: 'flota-por-defecto', id: null }) },
+    { id: 'ir-auditoria', etiqueta: 'Auditoria', descripcion: 'Registro append-only, solo lectura', grupo: 'Settings', palabrasClave: ['registro', 'bitacora', 'append'], icono: <ScrollText />, ejecutar: ir({ seccion: 'auditoria', id: null }) },
+    { id: 'ir-inicio', etiqueta: 'Indicadores', descripcion: 'Indicadores agregados y la bandeja', grupo: 'Settings', palabrasClave: ['inicio', 'dashboard'], icono: <Boxes />, ejecutar: ir({ seccion: 'inicio', id: null }) },
+    { id: 'ir-bandeja', etiqueta: 'Bandeja', descripcion: 'Lo que requiere una decision tuya', grupo: 'Settings', palabrasClave: ['pendiente', 'decidir', 'atencion'], icono: <Inbox />, ejecutar: ir({ seccion: 'bandeja', id: null }) },
+    { id: 'ir-proyectos', etiqueta: 'Lista de proyectos', grupo: 'Settings', icono: <FileSearch />, ejecutar: ir({ seccion: 'proyectos', id: null }) },
+  ]
+
+  const deProyectos: Comando[] = [
     {
-      id: 'ir-asistente',
-      etiqueta: proyectoId ? 'Continuar el asistente' : 'Abrir el asistente',
-      descripcion: proyectoId
-        ? 'Retoma el recorrido del proyecto abierto en la etapa que le falta'
-        : 'El recorrido guiado: crear el proyecto y establecerlo paso a paso',
-      grupo: 'Navegacion',
-      palabrasClave: ['guiado', 'recorrido', 'wizard', 'establecer', 'empezar'],
-      icono: <Compass />,
-      ejecutar: ir({ seccion: 'asistente', id: proyectoId }),
-    },
-    ...deEtapa,
-    {
-      id: 'ir-inicio',
-      etiqueta: 'Abrir inicio',
-      descripcion: 'Indicadores agregados y la bandeja',
-      grupo: 'Navegacion',
-      icono: <Boxes />,
-      ejecutar: ir({ seccion: 'inicio', id: null }),
-    },
-    {
-      id: 'ir-bandeja',
-      etiqueta: 'Abrir bandeja',
-      descripcion: 'Lo que requiere una decision tuya',
-      grupo: 'Navegacion',
-      palabrasClave: ['pendiente', 'decidir', 'atencion'],
-      icono: <Inbox />,
-      ejecutar: ir({ seccion: 'bandeja', id: null }),
-    },
-    {
-      id: 'ir-proyectos',
-      etiqueta: 'Abrir proyectos',
-      grupo: 'Navegacion',
-      icono: <FileSearch />,
-      ejecutar: ir({ seccion: 'proyectos', id: null }),
+      id: 'crear-proyecto',
+      etiqueta: 'Crear proyecto',
+      descripcion: 'El asistente: de la carpeta al primer run',
+      grupo: 'Proyectos',
+      palabrasClave: ['nuevo', 'alta', 'asistente', 'wizard'],
+      icono: <Plus />,
+      ejecutar: ir({ seccion: 'asistente', id: null }),
     },
     {
       id: 'anadir-proyecto',
-      etiqueta: 'Anadir proyecto',
+      etiqueta: 'Anadir proyecto sin asistente',
       descripcion: 'Carpeta local, repositorio remoto o proyecto nuevo',
       grupo: 'Proyectos',
-      palabrasClave: ['nuevo', 'clonar', 'adoptar', 'alta'],
+      palabrasClave: ['clonar', 'adoptar'],
       icono: <Plus />,
       ejecutar: ir({ seccion: 'proyecto-nuevo', id: null }),
     },
-    {
-      id: 'ir-credenciales',
-      etiqueta: 'Abrir credenciales',
-      descripcion: 'Inventario, grants y vista inversa',
-      grupo: 'Gobernanza',
-      palabrasClave: ['secreto', 'token', 'grant', 'boveda'],
-      icono: <KeyRound />,
-      ejecutar: ir({ seccion: 'credenciales', id: null }),
-    },
-    {
-      id: 'ir-auditoria',
-      etiqueta: 'Abrir auditoria',
-      descripcion: 'Registro append-only, solo lectura',
-      grupo: 'Gobernanza',
-      palabrasClave: ['registro', 'bitacora', 'append'],
-      icono: <ScrollText />,
-      ejecutar: ir({ seccion: 'auditoria', id: null }),
-    },
+    ...proyectos.flatMap<Comando>((proyecto) =>
+      proyecto.estado === 'ACTIVE'
+        ? [
+            {
+              id: `board-${proyecto.id}`,
+              etiqueta: `Board de ${proyecto.nombre}`,
+              grupo: 'Proyectos',
+              palabrasClave: [proyecto.id],
+              icono: <Kanban />,
+              ejecutar: ir({ seccion: 'board', id: proyecto.id }),
+            },
+            {
+              id: `settings-${proyecto.id}`,
+              etiqueta: `Settings de ${proyecto.nombre}`,
+              grupo: 'Proyectos',
+              palabrasClave: [proyecto.id, 'ajustes', 'autonomia'],
+              icono: <Settings2 />,
+              ejecutar: ir({ seccion: 'ajustes', id: proyecto.id }),
+            },
+          ]
+        : [
+            {
+              id: `asistente-${proyecto.id}`,
+              etiqueta: `Terminar de configurar ${proyecto.nombre}`,
+              descripcion: 'Retoma el asistente en la etapa que le falta',
+              grupo: 'Proyectos',
+              palabrasClave: [proyecto.id, 'asistente'],
+              icono: <Compass />,
+              ejecutar: ir({ seccion: 'asistente', id: proyecto.id }),
+            },
+          ],
+    ),
+  ]
+
+  // Las pestanas de Settings del proyecto abierto, atadas a el.
+  const abierto = proyectoAbierto ? proyectos.find((proyecto) => proyecto.id === proyectoAbierto) : null
+  const delAbierto: Comando[] = proyectoAbierto
+    ? [
+        {
+          id: 'continuar-asistente',
+          etiqueta: 'Continuar el asistente',
+          descripcion: 'Retoma el recorrido del proyecto abierto',
+          grupo: 'Proyecto abierto',
+          icono: <Compass />,
+          ejecutar: ir({ seccion: 'asistente', id: proyectoAbierto }),
+        },
+        ...SECCIONES_DE_AJUSTES_DE_PROYECTO.map<Comando>((seccion) => ({
+          id: `abrir-${seccion}`,
+          etiqueta: `${etiquetaDePestana(seccion)} de ${abierto?.nombre ?? proyectoAbierto}`,
+          descripcion: 'Settings del proyecto abierto',
+          grupo: 'Proyecto abierto',
+          ejecutar: ir({ seccion, id: proyectoAbierto }),
+        })),
+      ]
+    : []
+
+  return [
+    ...principales,
+    ...delAbierto,
+    ...deProyectos,
+    ...deSettings,
     {
       id: 'ir-catalogo',
       etiqueta: 'Abrir el catalogo de componentes',
@@ -287,15 +416,27 @@ function comandosDeNavegacion(navegar: Navegar, proyectoId: string | null): Coma
   ]
 }
 
+const EVENTOS_DE_PROYECTOS = ['proyecto.estado', 'sincronizar_completo'] as const
+
 export function Aplicacion() {
   const { ruta, navegar } = useRuta()
   const { estado, reintentar } = useServicio()
   const menu = useMenuDeComandos()
 
+  // LA LISTA DE PROYECTOS SE LEE UNA VEZ, AQUI. La usan el lateral (todos,
+  // tambien los que no estan activos), las migas (el nombre del conmutador),
+  // Settings del proyecto (el titulo) y ⌘K (un comando por proyecto). Cuatro
+  // lecturas serian cuatro `GET /v1/projects` por cada evento del canal.
+  const lecturaDeProyectos = useLectura<Proyecto[]>(
+    estado === 'conectado' || estado === 'sin_conexion' ? '/v1/projects' : null,
+    { relerEn: EVENTOS_DE_PROYECTOS },
+  )
+  const proyectos = lecturaDeProyectos.datos
+
   const proyectoAbierto = esSeccionDeProyecto(ruta.seccion) ? ruta.id : null
   const comandos = useMemo(
-    () => comandosDeNavegacion(navegar, proyectoAbierto),
-    [navegar, proyectoAbierto],
+    () => comandosDeNavegacion(navegar, proyectoAbierto, proyectos ?? []),
+    [navegar, proyectoAbierto, proyectos],
   )
 
   // El catalogo de componentes va ANTES de la comprobacion del servicio, y a
@@ -342,24 +483,28 @@ export function Aplicacion() {
       <Marco
         ruta={ruta}
         navegar={navegar}
+        proyectos={proyectos}
+        alAbrirComandos={menu.abrir}
         aviso={estado === 'sin_conexion' ? <BannerSinConexion /> : null}
-        acciones={
-          <>
-            {/* El menu de comandos tiene su atajo global, y ademas un boton:
-                un atajo sin nada que lo anuncie solo lo usa quien ya sabia que
-                existe. */}
-            <Button variant="ghost" size="sm" onClick={menu.abrir}>
-              Comandos
-              <span aria-hidden="true" className="fuente-operativa text-ds-gray-700">
-                ⌘K
-              </span>
-            </Button>
+        // Frescura y tema van AL PIE DEL LATERAL, y la cabecera se queda con
+        // las migas: es lo que deja al board todo el alto. El menu de comandos
+        // ya tiene su boton —el buscador del lateral— y su atajo.
+        pie={
+          <div className="flex items-center justify-between gap-2">
             <IndicadorDeFrescura />
             <SelectorDeTema />
-          </>
+          </div>
+        }
+        // Debajo de `lg` no hay lateral: la frescura y el tema suben a la
+        // cabecera para no desaparecer.
+        acciones={
+          <div className="flex items-center gap-3 lg:hidden">
+            <IndicadorDeFrescura />
+            <SelectorDeTema />
+          </div>
         }
       >
-        <Contenido ruta={ruta} navegar={navegar} />
+        <Contenido ruta={ruta} navegar={navegar} proyectos={proyectos} />
       </Marco>
 
       {/* Fuera del marco, y no dentro de `<main>`: un dialogo global no

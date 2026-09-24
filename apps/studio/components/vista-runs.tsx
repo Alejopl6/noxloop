@@ -80,11 +80,11 @@ const TONO_DE_LA_TAREA: Record<EstadoDeTarea, TonoDeBadge> = {
   blocked: 'error',
 }
 
-function etiquetaDeTarea(estado: string): string {
+export function etiquetaDeTarea(estado: string): string {
   return ETIQUETA_ESTADO_TAREA[estado as EstadoDeTarea] ?? estado
 }
 
-function tonoDeTarea(estado: string): TonoDeBadge {
+export function tonoDeTarea(estado: string): TonoDeBadge {
   return TONO_DE_LA_TAREA[estado as EstadoDeTarea] ?? 'neutral'
 }
 
@@ -460,7 +460,7 @@ export function VistaDeRuns({
     await mutacion.enviar(
       'POST',
       `/v1/projects/${proyectoId}/runs`,
-      workItem ? { item: workItem } : undefined,
+      workItem ? { itemId: workItem } : undefined,
     )
     lectura.releer()
     // El proyecto tambien: si el rechazo fue por estado, lo que esta pantalla

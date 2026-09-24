@@ -59,3 +59,21 @@ export function ProveedorDeAsistente({ children }: { children: ReactNode }) {
 export function useDentroDelAsistente(): boolean {
   return useContext(ContextoDeAsistente)
 }
+
+/**
+ * Si el contenido se esta pintando DENTRO DE SETTINGS, como una pestana.
+ *
+ * El mismo fallo que el del asistente, un nivel mas abajo: Settings pinta su
+ * `<h1>` —«Settings» o el nombre del proyecto— y la vista reutilizada de la
+ * 002 pinta el suyo con `Encabezado`. Con esto baja a `<h2>` sin tocar las
+ * vistas, que siguen siendo las mismas pantallas de siempre.
+ */
+const ContextoDeAjustes = createContext(false)
+
+export function ProveedorDeAjustes({ children }: { children: ReactNode }) {
+  return <ContextoDeAjustes.Provider value={true}>{children}</ContextoDeAjustes.Provider>
+}
+
+export function useDentroDeAjustes(): boolean {
+  return useContext(ContextoDeAjustes)
+}

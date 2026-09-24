@@ -22,6 +22,14 @@ import {
 } from '@/components/vista-flota'
 import { PanelDeRuns } from '@/components/vista-runs'
 import { PanelDeAuditoria } from '@/components/vista-auditoria'
+import { PanelDeBoard } from '@/components/vista-board'
+import { PanelDeListaDeRuns } from '@/components/vista-lista-de-runs'
+import { PanelDeCostos } from '@/components/vista-costos'
+import { PanelDeDetalleDeRun, ResumenDeDiff } from '@/components/runs/detalle-de-run'
+import { FormularioDeTareaNueva } from '@/components/board/tarea-nueva'
+import { EstadoDeGestores, PanelLateral } from '@/components/marco/navegacion-lateral'
+import { PanelDeModelos } from '@/components/ajustes/vista-modelos'
+import { PanelDeFlotaPorDefecto } from '@/components/ajustes/vista-flota-por-defecto'
 import { ErrorDelServicio } from '@/lib/daemon'
 import type { Lectura } from '@/lib/lectura'
 import type {
@@ -29,6 +37,13 @@ import type {
   AlcanceDeAgente,
   AlcanceDeCredencial,
   ArtefactosDeProyecto,
+  Board,
+  DiffDeTarea,
+  EstadoDeRuntime,
+  ProyectoDelBoard,
+  RunListado,
+  Tarjeta,
+  Uso,
   Capacidades,
   EntradaDeCatalogoDeConexiones,
   Conexion,
@@ -1081,6 +1096,502 @@ const SIN_BOVEDA = new ErrorDelServicio({
 
 const SIN_EFECTO = () => undefined
 
+/* ========================================================================== */
+/* Spec 003 · el board, los runs, costos y Settings, sin servicio             */
+/* ========================================================================== */
+
+/**
+ * DATOS DE EJEMPLO DEL BOARD, con todos los chips del contrato.
+ *
+ * Trece tarjetas en tres proyectos, y cada una esta ahi por un estado que el
+ * operador va a ver algun dia: los diez chips de `TipoDeChip`, una tarea
+ * propia (`origen: 'local'`), una sin repo, una con el modelo sin conectar,
+ * una sin asignar y una terminada. Un gestor sin `listItems` (el de
+ * Facturacion) para ver la nota de columna y el aviso sin tumbar el board.
+ */
+const PROYECTOS_DEL_BOARD: ProyectoDelBoard[] = [
+  { id: 'pagos', nombre: 'Pagos', estado: 'ACTIVE', color: null, gestor: 'linear', listItems: true },
+  { id: 'portal', nombre: 'Portal', estado: 'ACTIVE', color: '#0a72ef', gestor: 'github', listItems: true },
+  { id: 'facturacion', nombre: 'Facturacion', estado: 'ACTIVE', color: null, gestor: 'azure-devops', listItems: false },
+]
+
+const PROYECTOS_DEL_LATERAL: Proyecto[] = [
+  ...PROYECTOS_DEL_BOARD.map((proyecto) => ({
+    id: proyecto.id,
+    nombre: proyecto.nombre,
+    origen: 'local' as const,
+    estado: proyecto.estado,
+    creado: '2026-09-01T10:00:00.000Z',
+  })),
+  { id: 'inventario', nombre: 'Inventario', origen: 'remoto', estado: 'CONSTITUTED', creado: '2026-09-22T10:00:00.000Z' },
+]
+
+const REF = {
+  pagos: { id: 'pagos', nombre: 'Pagos', color: null },
+  portal: { id: 'portal', nombre: 'Portal', color: '#0a72ef' },
+  facturacion: { id: 'facturacion', nombre: 'Facturacion', color: null },
+} as const
+
+const ANA = { nombre: 'Ana Ruiz', iniciales: 'AR' }
+const LEO = { nombre: 'Leo Marin', iniciales: 'LM' }
+const CLAUDE = { runtime: 'claude-agent-sdk', agente: null }
+const CODEX = { runtime: 'codex', agente: 'revisor-estricto' }
+
+const ACCION_RUN = { tipo: 'run', habilitada: true, motivo: null } as const
+const ABRIR_RUN = { tipo: 'open_run', habilitada: true, motivo: null } as const
+const RETRY = { tipo: 'retry', habilitada: true, motivo: null } as const
+
+function gasto(usd: number, calls: number) {
+  return { usd, calls, medido: true }
+}
+
+const TARJETAS: Tarjeta[] = [
+  {
+    id: 'pagos:PAY-201',
+    proyecto: REF.pagos,
+    ticket: { id: 'PAY-201', key: 'PAY-201', titulo: 'Conciliar pagos parciales con el extracto del banco', url: null, prioridad: 3, equipo: 'Core', etiquetas: ['backend'], asignado: null },
+    columna: 'backlog', chip: null, avance: null, accion: ACCION_RUN, run: null, tieneRepo: true,
+  },
+  {
+    id: 'portal:112',
+    proyecto: REF.portal,
+    ticket: { id: '112', key: '#112', titulo: 'Modo oscuro en el panel de facturas', url: 'https://github.com/org/portal/issues/112', prioridad: null, equipo: 'org/portal', etiquetas: ['frontend', 'ux'], asignado: LEO },
+    columna: 'backlog', chip: null, avance: null, accion: ACCION_RUN, run: null, tieneRepo: true,
+  },
+  {
+    id: 'pagos:PAY-12',
+    proyecto: REF.pagos,
+    origen: 'local',
+    ejecutor: CLAUDE,
+    ticket: { id: 'PAY-12', key: 'PAY-12', titulo: 'Reintentos idempotentes en el webhook de cobros', url: null, prioridad: 1, equipo: null, etiquetas: ['api', 'webhooks'], asignado: null },
+    columna: 'todo', chip: null, avance: null, accion: ACCION_RUN, run: null, tieneRepo: true,
+  },
+  {
+    id: 'facturacion:4312',
+    proyecto: REF.facturacion,
+    ticket: { id: '4312', key: 'FAC-4312', titulo: 'Exportar facturas rectificativas en el formato nuevo', url: null, prioridad: 2, equipo: 'Fiscal', etiquetas: ['export'], asignado: ANA },
+    columna: 'todo',
+    chip: { tipo: 'sin_repo', texto: 'Sin repo', detalle: 'El proyecto Facturacion no tiene repositorio configurado: sin el, el motor no tiene donde crear la rama ni abrir el pull request.' },
+    avance: null,
+    accion: { tipo: 'run', habilitada: false, motivo: 'Sin repo: anade el repositorio en Settings del proyecto → General.' },
+    run: null, tieneRepo: false,
+  },
+  {
+    id: 'portal:118',
+    proyecto: REF.portal,
+    ticket: { id: '118', key: '#118', titulo: 'Paginacion por cursor en la lista de clientes', url: 'https://github.com/org/portal/issues/118', prioridad: 2, equipo: 'org/portal', etiquetas: ['api'], asignado: ANA },
+    columna: 'todo', chip: null, avance: null,
+    accion: { tipo: 'run', habilitada: false, motivo: 'Conecta un modelo en Settings → Modelos' },
+    run: null, tieneRepo: true,
+  },
+  {
+    id: 'pagos:PAY-188',
+    proyecto: REF.pagos,
+    ticket: { id: 'PAY-188', key: 'PAY-188', titulo: 'Mejorar el rendimiento del listado', url: null, prioridad: 3, equipo: 'Core', etiquetas: [], asignado: LEO },
+    columna: 'todo',
+    chip: { tipo: 'necesita_criterios', texto: 'Necesita criterios', detalle: 'El planificador no puede partir este ticket: «mejorar el rendimiento» no dice cuanto ni medido como. ¿Que latencia p95 del listado cuenta como hecho, y con cuantos registros?' },
+    avance: null, accion: ACCION_RUN, run: null, tieneRepo: true,
+  },
+  {
+    id: 'pagos:PAY-142',
+    proyecto: REF.pagos,
+    ejecutor: CLAUDE,
+    ticket: { id: 'PAY-142', key: 'PAY-142', titulo: 'Validar el IBAN antes de crear el mandato SEPA', url: null, prioridad: 0, equipo: 'Core', etiquetas: ['api', 'sepa'], asignado: ANA },
+    columna: 'in_progress',
+    chip: { tipo: 'fase', texto: 'Fase 3/9 · Test', detalle: null },
+    avance: { hechas: 3, total: 9, fase: 'Test' }, accion: ABRIR_RUN,
+    run: { itemId: 'PAY-142', estado: 'corriendo', pr: null, gasto: gasto(1.84, 22) }, tieneRepo: true,
+  },
+  {
+    id: 'portal:121',
+    proyecto: REF.portal,
+    ejecutor: CODEX,
+    ticket: { id: '121', key: '#121', titulo: 'Auditar los permisos del endpoint de exportacion', url: 'https://github.com/org/portal/issues/121', prioridad: 1, equipo: 'org/portal', etiquetas: ['seguridad'], asignado: LEO },
+    columna: 'in_progress',
+    chip: { tipo: 'necesita_permiso', texto: 'Necesita permiso', detalle: 'El agente implementador pidio la credencial «token-registro-npm» para instalar una dependencia privada, y no tiene grant sobre ella. Concede el grant en Settings → Credenciales o rechaza la peticion; el run espera sin gastar.' },
+    avance: { hechas: 1, total: 4, fase: 'Implementar' }, accion: ABRIR_RUN,
+    run: { itemId: '121', estado: 'esperando_permiso', pr: null, gasto: gasto(0.62, 9) }, tieneRepo: true,
+  },
+  {
+    id: 'pagos:PAY-150',
+    proyecto: REF.pagos,
+    ticket: { id: 'PAY-150', key: 'PAY-150', titulo: 'Cancelar suscripciones con prorrateo', url: null, prioridad: 2, equipo: 'Core', etiquetas: ['billing'], asignado: ANA },
+    columna: 'in_progress',
+    chip: { tipo: 'plan_listo', texto: 'Plan listo', detalle: 'El planificador partio el ticket en 6 tareas. El proyecto esta en L1: la ejecucion empieza cuando apruebes el plan.' },
+    avance: { hechas: 0, total: 6, fase: null },
+    accion: { tipo: 'approve', habilitada: true, motivo: null },
+    run: { itemId: 'PAY-150', estado: 'plan_listo', pr: null, gasto: gasto(0.21, 3) }, tieneRepo: true,
+  },
+  {
+    id: 'facturacion:4290',
+    proyecto: REF.facturacion,
+    ticket: { id: '4290', key: 'FAC-4290', titulo: 'Numeracion correlativa por serie', url: null, prioridad: 2, equipo: 'Fiscal', etiquetas: [], asignado: null },
+    columna: 'in_progress',
+    chip: { tipo: 'en_cola', texto: 'En cola', detalle: 'El proyecto admite 1 run en paralelo y ya hay uno corriendo.', posicion: 2 },
+    avance: null, accion: ABRIR_RUN,
+    run: { itemId: '4290', estado: 'en_cola', pr: null, gasto: null }, tieneRepo: true,
+  },
+  {
+    id: 'portal:97',
+    proyecto: REF.portal,
+    ticket: { id: '97', key: '#97', titulo: 'Migrar el formulario de alta a validacion en servidor', url: 'https://github.com/org/portal/issues/97', prioridad: 3, equipo: 'org/portal', etiquetas: ['frontend'], asignado: LEO },
+    columna: 'in_progress',
+    chip: { tipo: 'interrumpido', texto: 'Interrumpido', detalle: 'El servicio se detuvo con este run en vuelo. Lo integrado (2 de 5 tareas) sigue en disco; Retry lo retoma desde ahi.' },
+    avance: { hechas: 2, total: 5, fase: 'Gate' }, accion: RETRY,
+    run: { itemId: '97', estado: 'interrumpido', pr: null, gasto: { usd: null, calls: null, medido: false } }, tieneRepo: true,
+  },
+  {
+    id: 'pagos:PAY-160',
+    proyecto: REF.pagos,
+    ticket: { id: 'PAY-160', key: 'PAY-160', titulo: 'Notificar al cliente cuando falla un cobro recurrente', url: null, prioridad: 1, equipo: 'Core', etiquetas: ['notificaciones'], asignado: ANA },
+    columna: 'in_progress',
+    chip: { tipo: 'fallido', texto: 'Fallido', detalle: 'La tarea T004 agoto sus 3 vueltas de gate: `npm test` falla en notificaciones.test.ts:88 — esperaba 1 correo, llegaron 2.' },
+    avance: { hechas: 3, total: 7, fase: 'Gate' }, accion: RETRY,
+    run: { itemId: 'PAY-160', estado: 'fallido', pr: null, gasto: gasto(3.4, 41) }, tieneRepo: true,
+  },
+  {
+    id: 'portal:103',
+    proyecto: REF.portal,
+    ejecutor: CLAUDE,
+    ticket: { id: '103', key: '#103', titulo: 'Cabeceras de cache en los assets estaticos', url: 'https://github.com/org/portal/issues/103', prioridad: 3, equipo: 'org/portal', etiquetas: ['infra'], asignado: LEO },
+    columna: 'in_review',
+    chip: { tipo: 'pr_listo', texto: 'PR #43 listo', detalle: null },
+    avance: { hechas: 4, total: 4, fase: null }, accion: ABRIR_RUN,
+    run: { itemId: '103', estado: 'pr_abierto', pr: 'https://github.com/org/portal/pull/43', gasto: gasto(2.05, 30) }, tieneRepo: true,
+  },
+  {
+    id: 'pagos:PAY-133',
+    proyecto: REF.pagos,
+    ticket: { id: 'PAY-133', key: 'PAY-133', titulo: 'Tipos de cambio por fecha valor', url: null, prioridad: 2, equipo: 'Core', etiquetas: ['fx'], asignado: LEO },
+    columna: 'blocked',
+    chip: { tipo: 'bloqueado', texto: 'Bloqueado', detalle: 'La tarea T002 espera una decision: la constitution dice «redondeo bancario» y el test existente espera redondeo comercial. ¿Cual manda?' },
+    avance: { hechas: 1, total: 5, fase: 'Revision' }, accion: ABRIR_RUN,
+    run: { itemId: 'PAY-133', estado: 'bloqueado', pr: null, gasto: gasto(1.12, 15) }, tieneRepo: true,
+  },
+  {
+    id: 'portal:88',
+    proyecto: REF.portal,
+    ticket: { id: '88', key: '#88', titulo: 'Quitar la dependencia de moment.js', url: 'https://github.com/org/portal/issues/88', prioridad: 3, equipo: 'org/portal', etiquetas: ['deuda'], asignado: ANA },
+    columna: 'done', chip: null, avance: null,
+    accion: { tipo: 'ninguna', habilitada: false, motivo: null },
+    run: null, tieneRepo: true,
+  },
+]
+
+const BOARD_DE_EJEMPLO: Board = {
+  columnas: [
+    { id: 'backlog', titulo: 'Backlog', total: 2, nota: null },
+    { id: 'todo', titulo: 'Todo', total: 4, nota: 'Facturacion: Azure DevOps no declara la capacidad de listar tickets; de ese proyecto solo aparecen los que ya tienen run.' },
+    { id: 'in_progress', titulo: 'En curso', total: 6, nota: null },
+    { id: 'in_review', titulo: 'En revision', total: 1, nota: null },
+    { id: 'blocked', titulo: 'Bloqueado', total: 1, nota: null },
+    { id: 'done', titulo: 'Hecho', total: 1, nota: null },
+  ],
+  tarjetas: TARJETAS,
+  resumen: { enCurso: 1, teNecesitan: 3, enCola: 1 },
+  proyectos: PROYECTOS_DEL_BOARD,
+  avisos: [
+    {
+      proyecto: 'facturacion',
+      nivel: 'aviso',
+      causa: 'Azure DevOps no sabe listar los tickets abiertos de este proyecto (capacidad listItems no declarada).',
+      accion: 'Las columnas muestran lo que el motor ya conoce. Para ver el backlog entero, conecta un gestor que liste tickets o crea tareas propias.',
+    },
+  ],
+}
+
+const BOARD_SIN_PROYECTOS: Board = {
+  columnas: BOARD_DE_EJEMPLO.columnas.map((columna) => ({ ...columna, total: 0, nota: null })),
+  tarjetas: [],
+  resumen: { enCurso: 0, teNecesitan: 0, enCola: 0 },
+  proyectos: [],
+  avisos: [],
+}
+
+const SIN_BOARD = new ErrorDelServicio({
+  codigo: 'recurso_inexistente',
+  causa: 'El servicio de control no conoce GET /v1/board. O el recurso ya no existe, o este servicio habla una version distinta de la API.',
+  accion: 'Comprueba en /v1/health que el servicio y la interfaz son de la misma version.',
+  estadoHttp: 404,
+  recurso: 'GET /v1/board',
+})
+
+const RUNTIMES_DE_EJEMPLO: EstadoDeRuntime[] = [
+  {
+    runtime: 'claude-agent-sdk',
+    nombre: 'Claude (Claude Code / Agent SDK)',
+    conectado: true,
+    metodo: 'suscripcion_claude',
+    detalle: 'Sesion de Claude Code detectada en esta maquina; los runs usan tu suscripcion.',
+  },
+  {
+    runtime: 'codex',
+    nombre: 'OpenAI (Codex)',
+    conectado: false,
+    metodo: null,
+    detalle: 'El binario de Codex esta instalado y no tiene sesion.',
+    causa: 'No hay sesion de ChatGPT ni API key de OpenAI para este runtime.',
+    accion: 'Inicia sesion con tu cuenta de ChatGPT o usa una API key.',
+  },
+]
+
+const RUNS_LISTADOS: RunListado[] = [
+  { itemId: 'PAY-142', proyecto: REF.pagos, titulo: 'Validar el IBAN antes de crear el mandato SEPA', estado: 'corriendo', avance: { hechas: 3, total: 9, fase: 'Test' }, pr: null, gasto: gasto(1.84, 22), creado: '2026-09-20T09:10:00.000Z', actualizado: '2026-09-20T11:58:00.000Z' },
+  { itemId: '103', proyecto: REF.portal, titulo: 'Cabeceras de cache en los assets estaticos', estado: 'pr_abierto', avance: { hechas: 4, total: 4, fase: null }, pr: 'https://github.com/org/portal/pull/43', gasto: gasto(2.05, 30), creado: '2026-09-19T15:00:00.000Z', actualizado: '2026-09-20T08:20:00.000Z' },
+  { itemId: 'PAY-160', proyecto: 'pagos', titulo: 'Notificar al cliente cuando falla un cobro recurrente', estado: 'fallido', avance: { hechas: 3, total: 7, fase: 'Gate' }, pr: null, gasto: gasto(3.4, 41), creado: '2026-09-19T10:00:00.000Z', actualizado: '2026-09-19T18:40:00.000Z' },
+  { itemId: '97', proyecto: REF.portal, titulo: 'Migrar el formulario de alta a validacion en servidor', estado: 'interrumpido', avance: { hechas: 2, total: 5, fase: 'Gate' }, pr: null, gasto: { usd: null, calls: null, medido: false }, creado: '2026-09-18T12:00:00.000Z', actualizado: '2026-09-18T16:00:00.000Z' },
+]
+
+const RUN_DETALLE: Run = {
+  item: { id: 'PAY-142', title: 'Validar el IBAN antes de crear el mandato SEPA', url: null, branch: 'noxloop/PAY-142', pr: null },
+  project_id: 'pagos',
+  tasks: [
+    { id: 'T001', title: 'Validador de IBAN con checksum mod 97', status: 'integrated' },
+    { id: 'T002', title: 'Rechazar el mandato con IBAN invalido', status: 'integrated' },
+    { id: 'T003', title: 'Mensaje de error en la respuesta de la API', status: 'red' },
+    { id: 'T004', title: 'Documentar el nuevo codigo de error', status: 'pending' },
+  ],
+  spent: { usd: 1.84, calls: 22 },
+}
+
+const DIFF_DE_EJEMPLO: DiffDeTarea = {
+  tarea: { id: 'T001', titulo: 'Validador de IBAN con checksum mod 97', estado: 'integrated', agente: 'claude-agent-sdk', rama: 'noxloop/PAY-142/T001' },
+  commits: [
+    {
+      sha: '3f9c2a1b7d4e5f60718293a4b5c6d7e8f9012345',
+      mensaje: 'test(iban): el checksum mod 97 rechaza un IBAN con un digito cambiado\n\nFalla antes de la implementacion: `validarIban` no existe todavia.',
+      tipo: 'test',
+      archivos: [
+        {
+          ruta: 'src/iban/iban.test.ts',
+          estado: 'A',
+          mas: 14,
+          menos: 0,
+          parche: "@@ -0,0 +1,14 @@\n+import { describe, it, expect } from 'vitest'\n+import { validarIban } from './iban'\n+\n+describe('validarIban', () => {\n+  it('acepta un IBAN espanol valido', () => {\n+    expect(validarIban('ES9121000418450200051332')).toBe(true)\n+  })\n+\n+  it('rechaza el mismo IBAN con un digito cambiado', () => {\n+    expect(validarIban('ES9121000418450200051333')).toBe(false)\n+  })\n+})\n+\n+// TODO: casos de longitud por pais",
+        },
+      ],
+    },
+    {
+      sha: '8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b',
+      mensaje: 'feat(iban): validarIban con checksum mod 97',
+      tipo: 'impl',
+      archivos: [
+        {
+          ruta: 'src/iban/iban.ts',
+          estado: 'A',
+          mas: 9,
+          menos: 0,
+          parche: "@@ -0,0 +1,9 @@\n+export function validarIban(iban: string): boolean {\n+  const limpio = iban.replace(/\\s+/g, '').toUpperCase()\n+  if (!/^[A-Z]{2}\\d{2}[A-Z0-9]{10,30}$/.test(limpio)) return false\n+  const reordenado = limpio.slice(4) + limpio.slice(0, 4)\n+  const numerico = reordenado.replace(/[A-Z]/g, (letra) => String(letra.charCodeAt(0) - 55))\n+  let resto = 0\n+  for (const cifra of numerico) resto = (resto * 10 + Number(cifra)) % 97\n+  return resto === 1\n+}",
+        },
+        {
+          ruta: 'src/mandatos/crear.ts',
+          estado: 'M',
+          mas: 3,
+          menos: 1,
+          parche: "@@ -1,6 +1,8 @@\n import { guardarMandato } from './almacen'\n+import { validarIban } from '../iban/iban'\n \n export async function crearMandato(datos: DatosDeMandato) {\n-  return guardarMandato(datos)\n+  if (!validarIban(datos.iban)) throw new ErrorDeMandato('iban_invalido')\n+  return guardarMandato(datos)\n }\n\\ No newline at end of file",
+        },
+        {
+          ruta: 'fixtures/ibans-de-prueba.json',
+          estado: 'A',
+          mas: 5000,
+          menos: 0,
+          cortado: true,
+          parche: '@@ -0,0 +1,5000 @@\n+[\n+  "ES9121000418450200051332",\n+  "DE89370400440532013000",\n+  "FR1420041010050500013M02606",',
+        },
+      ],
+    },
+  ],
+  sinCommitear: {
+    archivos: [
+      {
+        ruta: 'src/iban/iban.ts',
+        estado: 'M',
+        mas: 2,
+        menos: 1,
+        parche: "@@ -1,3 +1,4 @@\n export function validarIban(iban: string): boolean {\n-  const limpio = iban.replace(/\\s+/g, '').toUpperCase()\n+  // Los IBAN impresos llevan espacios cada cuatro caracteres.\n+  const limpio = iban.replace(/[\\s-]+/g, '').toUpperCase()\n   if (!/^[A-Z]{2}\\d{2}[A-Z0-9]{10,30}$/.test(limpio)) return false",
+      },
+    ],
+  },
+}
+
+const USO_DE_EJEMPLO: Uso = {
+  total: { usd: 9.12, calls: 118, sinMedir: 1 },
+  porProyecto: [
+    { proyecto: REF.pagos, usd: 6.57, calls: 81, sinMedir: 0 },
+    { proyecto: REF.portal, usd: 2.05, calls: 30, sinMedir: 1 },
+    { proyecto: REF.facturacion, usd: 0.5, calls: 7, sinMedir: 0 },
+  ],
+  runs: [
+    { itemId: 'PAY-160', proyecto: REF.pagos, titulo: 'Notificar al cliente cuando falla un cobro recurrente', usd: 3.4, calls: 41, medido: true },
+    { itemId: '103', proyecto: REF.portal, titulo: 'Cabeceras de cache en los assets estaticos', usd: 2.05, calls: 30, medido: true },
+    { itemId: 'PAY-142', proyecto: REF.pagos, titulo: 'Validar el IBAN antes de crear el mandato SEPA', usd: 1.84, calls: 22, medido: true },
+    { itemId: '97', proyecto: REF.portal, titulo: 'Migrar el formulario de alta a validacion en servidor', usd: null, calls: null, medido: false },
+  ],
+}
+
+function lecturaDelBoard(datos: Board | null, error: ErrorDelServicio | null = null) {
+  return { datos, error, releer: SIN_EFECTO }
+}
+
+/**
+ * EL MARCO DE EJEMPLO: navegacion lateral y board juntos, a la altura de una
+ * ventana. Es la vista que el operador describio —«un proyecto tiene un board
+ * de control y listo»— y la que hay que poder mirar sin servicio.
+ */
+function MarcoDeEjemplo({
+  navegar,
+  board,
+  error = null,
+  proyectoId = null,
+}: {
+  navegar: Navegar
+  board: Board | null
+  error?: ErrorDelServicio | null
+  proyectoId?: string | null
+}) {
+  return (
+    <div className="flex h-[46rem] overflow-hidden rounded-lg bg-ds-background-100 shadow-ds-border">
+      <div className="hidden shrink-0 border-r border-ds-gray-400 lg:block">
+        <PanelLateral
+          ruta={{ seccion: 'board', id: proyectoId }}
+          navegar={navegar}
+          alAbrirComandos={SIN_EFECTO}
+          proyectos={board ? PROYECTOS_DEL_LATERAL : null}
+          board={board}
+          pie={
+            <div className="flex flex-col gap-2">
+              <EstadoDeGestores board={board} />
+              <span className="flex items-center gap-2 text-label-12 text-ds-gray-900">
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-ds-green-700" />
+                En vivo
+              </span>
+            </div>
+          }
+        />
+      </div>
+      <div className="min-w-0 flex-1">
+        <PanelDeBoard
+          lectura={lecturaDelBoard(board, error)}
+          proyectoId={proyectoId}
+          navegar={navegar}
+          incluirTerminados={false}
+          alCambiarIncluirTerminados={SIN_EFECTO}
+          alAccionar={SIN_EFECTO}
+          trabajandoEn={null}
+          errores={{}}
+          alAbrirExterno={SIN_EFECTO}
+          alNuevaTarea={SIN_EFECTO}
+        />
+      </div>
+    </div>
+  )
+}
+
+function CatalogoDelBoard({ navegar }: { navegar: Navegar }) {
+  return (
+    <>
+      <Pantalla
+        titulo="Board · spec 003"
+        nota="La pantalla de inicio: navegacion lateral (cuatro destinos, proyectos y runs activos) y el board con sus columnas. Trece tarjetas de ejemplo con los diez chips del contrato, una tarea propia, una sin repo y una con el modelo sin conectar."
+      >
+        <Estado nombre="todos los proyectos">
+          <MarcoDeEjemplo navegar={navegar} board={BOARD_DE_EJEMPLO} />
+        </Estado>
+        <Estado nombre="un proyecto elegido · el filtro vive en la direccion">
+          <MarcoDeEjemplo navegar={navegar} board={BOARD_DE_EJEMPLO} proyectoId="portal" />
+        </Estado>
+        <Estado nombre="cargando · el esqueleto tiene la forma de las columnas">
+          <MarcoDeEjemplo navegar={navegar} board={null} />
+        </Estado>
+        <Estado nombre="sin proyectos activos · vacio explicito">
+          <MarcoDeEjemplo navegar={navegar} board={BOARD_SIN_PROYECTOS} />
+        </Estado>
+        <Estado nombre="el servicio no tiene /v1/board · causa y accion, sin pantalla en blanco">
+          <MarcoDeEjemplo navegar={navegar} board={null} error={SIN_BOARD} />
+        </Estado>
+      </Pantalla>
+
+      <Pantalla
+        titulo="Nueva tarea"
+        nota="El formulario del dialogo, montado en linea: proyecto, repo, titulo, plan con vista previa, criterios editables, prioridad, etiquetas, ejecutor y como termina."
+      >
+        <div className="max-w-2xl">
+          <FormularioDeTareaNueva
+            proyectos={PROYECTOS_DEL_BOARD}
+            proyectoInicial="pagos"
+            runtimes={RUNTIMES_DE_EJEMPLO}
+            enviando={false}
+            error={null}
+            alEnviar={async () => false}
+          />
+        </div>
+      </Pantalla>
+
+      <Pantalla titulo="Runs" nota="Todos los runs de todos los proyectos. «sin medir» no es cero.">
+        <PanelDeListaDeRuns
+          runs={RUNS_LISTADOS}
+          cargando={false}
+          error={null}
+          proyectoId={null}
+          proyectos={PROYECTOS_DEL_BOARD}
+          ahora={AHORA_DEL_CATALOGO}
+          navegar={navegar}
+          alAbrirExterno={SIN_EFECTO}
+        />
+      </Pantalla>
+
+      <Pantalla
+        titulo="Detalle de run y diff por commit"
+        nota="Abrir run: cabecera, tareas con agente y +/−, y el diff de la tarea abierta — el commit del test y el de la implementacion por separado, un parche cortado que lo dice, y lo que falta por commitear."
+      >
+        <PanelDeDetalleDeRun
+          itemId="PAY-142"
+          run={RUN_DETALLE}
+          resumen={RUNS_LISTADOS[0]}
+          cargando={false}
+          error={null}
+          tareaAbierta="T001"
+          alAbrirTarea={SIN_EFECTO}
+          alVolver={SIN_EFECTO}
+          alAbrirExterno={SIN_EFECTO}
+          resumenDeTarea={(tarea) => <ResumenDeDiff diff={tarea.id === 'T001' ? DIFF_DE_EJEMPLO : null} />}
+          diff={{ datos: DIFF_DE_EJEMPLO, error: null }}
+        />
+      </Pantalla>
+
+      <Pantalla titulo="Costos" nota="Total, por proyecto y los runs mas caros. Los sin medir se cuentan aparte.">
+        <PanelDeCostos
+          uso={USO_DE_EJEMPLO}
+          cargando={false}
+          error={null}
+          periodo="30"
+          alCambiarPeriodo={SIN_EFECTO}
+          navegar={navegar}
+        />
+      </Pantalla>
+
+      <Pantalla titulo="Settings → Modelos" nota="Un runtime conectado con la suscripcion y otro sin conectar, con su causa.">
+        <PanelDeModelos
+          runtimes={RUNTIMES_DE_EJEMPLO}
+          cargando={false}
+          error={null}
+          esperando={null}
+          errorDeAccion={null}
+          trabajando={false}
+          alIniciarSesion={SIN_EFECTO}
+          alCancelarEspera={SIN_EFECTO}
+          alGuardarClave={async () => false}
+          alQuitarClave={SIN_EFECTO}
+        />
+      </Pantalla>
+
+      <Pantalla titulo="Settings → Flota por defecto" nota="El hueco declarado: la flota es de cada proyecto.">
+        <PanelDeFlotaPorDefecto proyectos={PROYECTOS_DEL_LATERAL} cargando={false} error={null} navegar={navegar} />
+      </Pantalla>
+    </>
+  )
+}
+
 /* -------------------------------------------------------------------------- */
 /* El catalogo de pantallas                                                   */
 /* -------------------------------------------------------------------------- */
@@ -1104,6 +1615,8 @@ export function CatalogoDePantallas({ navegar }: { navegar: Navegar }) {
 
   return (
     <div className="flex flex-col gap-14">
+      <CatalogoDelBoard navegar={navegar} />
+
       <Pantalla
         titulo="Campo"
         nota="La entrada de texto con etiqueta enlazada, ayuda y error. El error se escribe como en todas partes: que paso y que hacer."

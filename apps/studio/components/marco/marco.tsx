@@ -1,178 +1,246 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { Search } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
-import { useLectura } from '@/lib/lectura'
 import type { Proyecto } from '@/lib/tipos'
-import { esSeccionDeProyecto, type Navegar, type Ruta } from '@/lib/ruta'
-import { ETIQUETA_DE_SECCION, SECCION_PADRE, pintaRail } from '@/components/marco/secciones'
-import { alineacionDelLienzo, anchoDelLienzo } from '@/components/marco/lienzo'
+import {
+  esAjusteDeProyecto,
+  esAjusteGeneral,
+  type Navegar,
+  type Ruta,
+} from '@/lib/ruta'
+import {
+  DESTINOS_PRINCIPALES,
+  ETIQUETA_DE_SECCION,
+  destinoActivo,
+  etiquetaDePestana,
+  pintaRail,
+} from '@/components/marco/secciones'
+import { CLASE_DE_VISTA, alineacionDelLienzo, anchoDelLienzo } from '@/components/marco/lienzo'
 import { Migas, type Miga } from '@/components/marco/migas'
 import { NavegacionLateral } from '@/components/marco/navegacion-lateral'
 import { ConmutadorDeProyecto } from '@/components/marco/conmutador-de-proyecto'
 import { ProveedorDeMarco } from '@/components/marco/contexto'
+import { ProveedorDeBoard } from '@/components/board/contexto-board'
 
 /**
- * El armazon de la consola: cabecera, navegacion de dos niveles y lienzo.
+ * El armazon de la consola: navegacion lateral, cabecera con migas y lienzo.
  *
- * QUE PROBLEMA RESUELVE, dicho entero. Habia trece pantallas y un cascaron que
- * solo conocia cinco: una barra horizontal y un `main` a 1024px para todas. El
- * resultado no era feo, era desorientador — dentro del snapshot de un proyecto
- * el marco marcaba "Proyectos" y no decia de cual, las seis etapas no
- * aparecian en ningun sitio, y una tabla de auditoria de seis columnas vivia
- * en el mismo ancho que un formulario de cuatro campos.
+ * LA FORMA CAMBIO CON LA SPEC 003. En la 002 habia una cabecera de ancho
+ * completo y debajo un rail de dos niveles. Ahora la navegacion es una columna
+ * de altura completa a la izquierda —logo, buscador, cuatro destinos,
+ * proyectos, runs activos y, al pie, el estado del servicio y del gestor— y la
+ * cabecera vive solo sobre el contenido. Es la forma de un kanban de trabajo:
+ * el board necesita todo el alto que se le pueda dar, y una cabecera de ancho
+ * completo encima de la navegacion le quita 56 pixeles a cada columna.
  *
- * Las cuatro piezas de aqui se corresponden una a una con esos cuatro huecos:
- * las migas dicen donde se esta, el conmutador dice de que proyecto y deja
- * cambiarlo, la navegacion publica los dos niveles, y `lienzo.ts` da a cada
- * clase de pantalla el ancho que pide.
+ * LAS MIGAS SE QUEDAN, porque siguen contestando lo que contestaban: donde se
+ * esta y de que proyecto. En Settings del proyecto son las que dicen «de cual»
+ * mientras las pestanas dicen «que».
  *
- * LA LECTURA DE PROYECTOS SOLO SE PIDE CUANDO HAY PROYECTO ABIERTO. Montada
- * siempre, esta cabecera anadiria un `GET /v1/projects` a cada pantalla del
- * espacio de trabajo —incluida la que ya lo pide para pintarse— para no usar
- * la respuesta. `useLectura(null)` no pide nada, y es lo que se le pasa.
+ * EL BOARD SE LEE AQUI Y NO EN LA PANTALLA del board: el lateral lo necesita
+ * en todas las pantallas —contadores y runs activos— y una lectura por pieza
+ * seria tres respuestas que pueden no coincidir. La explicacion entera en
+ * `board/contexto-board.tsx`.
  */
 
-const EVENTOS_DEL_MARCO = ['proyecto.estado', 'sincronizar_completo'] as const
+/** La cabecera mide `h-12`. El board resta esto de la altura de la ventana. */
+const ALTO_DE_CABECERA = 'h-12'
 
-/**
- * El nivel raiz de las migas: el espacio de trabajo.
- *
- * Las clases van en texto plano y NO por `cn()`: `twMerge` no conoce
- * `text-heading-14` y la borraria al ver el `text-ds-gray-1000` de al lado.
- * La explicacion entera, con la comprobacion, esta en `migas.tsx`.
- */
-function Marca({ enInicio, navegar }: { enInicio: boolean; navegar: Navegar }) {
-  if (enInicio) {
-    return (
-      <span aria-current="page" className="text-heading-14 text-ds-gray-1000">
-        noxloop
-      </span>
-    )
+/** Las migas de cada ruta. Un solo sitio que lo decide. */
+function migasDe(
+  ruta: Ruta,
+  navegar: Navegar,
+  proyectos: Proyecto[] | null,
+): Miga[] {
+  const conmutador = (id: string): Miga => ({
+    etiqueta: id,
+    contenido: (
+      <ConmutadorDeProyecto
+        proyectoId={id}
+        seccion={ruta.seccion}
+        proyectos={proyectos ?? []}
+        cargando={proyectos === null}
+        navegar={navegar}
+      />
+    ),
+  })
+
+  const { seccion, id } = ruta
+
+  if (seccion === 'board' || seccion === 'runs') {
+    const migas: Miga[] = [
+      id ? { etiqueta: ETIQUETA_DE_SECCION[seccion], ruta: { seccion, id: null } } : { etiqueta: ETIQUETA_DE_SECCION[seccion] },
+    ]
+    if (id) migas.push(conmutador(id))
+    return migas
   }
 
-  return (
-    <button
-      type="button"
-      onClick={() => navegar({ seccion: 'inicio', id: null })}
-      className="-mx-1.5 rounded-md px-1.5 py-0.5 text-heading-14 text-ds-gray-1000 transition-colors hover:bg-ds-gray-alpha-100"
-    >
-      noxloop
-    </button>
-  )
+  if (esAjusteDeProyecto(seccion)) {
+    if (!id) return [{ etiqueta: 'Settings del proyecto' }]
+    return [
+      conmutador(id),
+      { etiqueta: 'Settings', ruta: { seccion: 'ajustes', id } },
+      { etiqueta: etiquetaDePestana(seccion) },
+    ]
+  }
+
+  if (seccion === 'asistente') {
+    return id ? [conmutador(id), { etiqueta: 'Asistente' }] : [{ etiqueta: 'Asistente' }]
+  }
+
+  if (esAjusteGeneral(seccion)) {
+    return [
+      { etiqueta: 'Settings', ruta: { seccion: 'settings', id: null } },
+      { etiqueta: etiquetaDePestana(seccion) },
+    ]
+  }
+
+  // Las pantallas de la 002 que no son pestanas —indicadores, bandeja, la
+  // lista de proyectos, el alta— cuelgan de Settings, que es donde estan
+  // enlazadas. La miga dice por donde se vuelve.
+  if (['inicio', 'bandeja', 'proyectos', 'proyecto-nuevo'].includes(seccion)) {
+    return [
+      { etiqueta: 'Settings', ruta: { seccion: 'settings', id: null } },
+      { etiqueta: ETIQUETA_DE_SECCION[seccion] },
+    ]
+  }
+
+  return [{ etiqueta: ETIQUETA_DE_SECCION[seccion] }]
 }
 
 export function Marco({
   ruta,
   navegar,
+  proyectos,
+  alAbrirComandos,
   acciones,
+  pie,
   aviso,
   children,
 }: {
   ruta: Ruta
   navegar: Navegar
-  /** Los controles del extremo derecho de la cabecera. */
+  /** `GET /v1/projects`, leido una vez en la cascara. `null` mientras llega. */
+  proyectos: Proyecto[] | null
+  alAbrirComandos: () => void
+  /** Controles del extremo derecho de la cabecera. */
   acciones?: ReactNode
+  /** Lo que va al pie de la navegacion: estado del servicio, tema. */
+  pie?: ReactNode
   /** Avisos de ancho completo entre la cabecera y el lienzo. */
   aviso?: ReactNode
   children: ReactNode
 }) {
-  const enProyecto = esSeccionDeProyecto(ruta.seccion)
-  const proyectoId = enProyecto ? ruta.id : null
-
-  const lectura = useLectura<Proyecto[]>(proyectoId ? '/v1/projects' : null, {
-    relerEn: EVENTOS_DEL_MARCO,
-  })
-  const proyectos = lectura.datos ?? []
-  const cargandoProyectos = lectura.datos === null && lectura.error === null
-
-  const migas: Miga[] = [
-    {
-      etiqueta: 'noxloop',
-      contenido: <Marca enInicio={ruta.seccion === 'inicio'} navegar={navegar} />,
-    },
-  ]
-
-  if (enProyecto) {
-    if (proyectoId) {
-      migas.push({
-        etiqueta: proyectoId,
-        contenido: (
-          <ConmutadorDeProyecto
-            proyectoId={proyectoId}
-            seccion={ruta.seccion}
-            proyectos={proyectos}
-            cargando={cargandoProyectos}
-            navegar={navegar}
-          />
-        ),
-      })
-    } else {
-      // La direccion llego sin proyecto. El nivel del medio no se puede
-      // rellenar con nada verdadero, asi que se sustituye por el camino para
-      // elegirlo — que es lo mismo que dice el contenido. Un conmutador vacio
-      // aqui seria un control que promete cambiar algo que no existe.
-      migas.push({
-        etiqueta: ETIQUETA_DE_SECCION.proyectos,
-        ruta: { seccion: 'proyectos', id: null },
-      })
-    }
-    migas.push({ etiqueta: ETIQUETA_DE_SECCION[ruta.seccion] })
-  } else if (ruta.seccion !== 'inicio') {
-    const padre = SECCION_PADRE[ruta.seccion]
-    if (padre) {
-      migas.push({ etiqueta: ETIQUETA_DE_SECCION[padre], ruta: { seccion: padre, id: null } })
-    }
-    migas.push({ etiqueta: ETIQUETA_DE_SECCION[ruta.seccion] })
-  }
+  const clase = CLASE_DE_VISTA[ruta.seccion]
+  const aSangre = clase === 'tablero'
+  // Settings pinta sus pestanas y pone el ancho de cada una por dentro: si el
+  // lienzo lo pusiera por fuera, las pestanas cambiarian de ancho —y de
+  // sitio— al pasar de la constitution (768px) a la flota (1152px).
+  const enSettings = esAjusteGeneral(ruta.seccion) || esAjusteDeProyecto(ruta.seccion)
+  const destino = destinoActivo(ruta.seccion)
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      {/* NFR-005: lo primero que recibe el foco es la forma de saltarse el
-          marco. Sin esto, llegar al contenido con teclado cuesta ahora mas que
-          antes, no menos: la navegacion de dos niveles son hasta once paradas
-          de tabulador por delante del contenido. */}
-      <a
-        href="#contenido"
-        className="sr-only rounded-md bg-ds-background-100 px-3 py-2 text-label-14 text-ds-gray-1000 focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50"
-      >
-        Saltar al contenido
-      </a>
+    <ProveedorDeBoard>
+      <div className="flex min-h-dvh">
+        {/* NFR-005: lo primero que recibe el foco es la forma de saltarse la
+            navegacion. Con proyectos y runs activos en el lateral son
+            fácilmente veinte paradas de tabulador antes del contenido. */}
+        <a
+          href="#contenido"
+          className="sr-only rounded-md bg-ds-background-100 px-3 py-2 text-label-14 text-ds-gray-1000 focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50"
+        >
+          Saltar al contenido
+        </a>
 
-      {/* Altura fija y sin envolver: la navegacion se pega a `top-14` y una
-          cabecera que crece al envolver dejaria el rail desplazado justo esa
-          diferencia. Lo que se encoge son las migas, que para eso truncan. */}
-      <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-ds-gray-400 bg-ds-background-200 px-4 sm:px-6">
-        <Migas migas={migas} navegar={navegar} className="flex-1" />
-        {acciones ? <div className="flex shrink-0 items-center gap-3">{acciones}</div> : null}
-      </header>
+        {/* El lateral desaparece en el recorrido guiado, y solo ahi. El motivo
+            esta en `SECCIONES_SIN_RAIL`. Debajo de `lg` tampoco: en su lugar
+            va la tira de destinos de la cabecera. */}
+        {pintaRail(ruta.seccion) ? (
+          <div className="sticky top-0 hidden h-dvh shrink-0 border-r border-ds-gray-400 lg:block">
+            <NavegacionLateral
+              ruta={ruta}
+              navegar={navegar}
+              alAbrirComandos={alAbrirComandos}
+              proyectos={proyectos}
+              pie={pie}
+            />
+          </div>
+        ) : null}
 
-      <div className="flex flex-1 flex-col lg:flex-row">
-        {/* El rail desaparece en el recorrido guiado, y solo ahi. El motivo
-            concreto esta en `SECCIONES_SIN_RAIL`: un asistente que pide UNA
-            decision con once destinos permanentes al lado no la esta pidiendo.
-            La cabecera se queda entera, asi que la salida sigue estando. */}
-        {pintaRail(ruta.seccion) ? <NavegacionLateral ruta={ruta} navegar={navegar} /> : null}
+        <div
+          className={cn(
+            'flex min-w-0 flex-1 flex-col bg-ds-background-100',
+            aSangre ? 'h-dvh overflow-hidden' : null,
+          )}
+        >
+          <header
+            className={cn(
+              'sticky top-0 z-30 flex shrink-0 items-center gap-3 border-b border-ds-gray-400 bg-ds-background-100 px-4 sm:px-6',
+              ALTO_DE_CABECERA,
+            )}
+          >
+            <Migas migas={migasDe(ruta, navegar, proyectos)} navegar={navegar} className="flex-1" />
+            {acciones ? <div className="flex shrink-0 items-center gap-3">{acciones}</div> : null}
+          </header>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Debajo de `lg` no hay lateral, y los cuatro destinos no pueden
+              desaparecer detras de una hamburguesa: esta aplicacion corre en
+              una ventana de escritorio que el operador estrecha, y ahi un
+              menu escondido es un menu que no existe. Proyectos y runs
+              activos quedan en ⌘K y en el filtro del board. */}
+          {pintaRail(ruta.seccion) ? (
+            <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-ds-gray-400 px-3 py-1.5 lg:hidden">
+              {DESTINOS_PRINCIPALES.map((principal) => (
+                <button
+                  key={principal}
+                  type="button"
+                  aria-current={destino === principal ? 'page' : undefined}
+                  onClick={() => navegar({ seccion: principal, id: null })}
+                  className={`h-7 shrink-0 rounded-md px-2 text-button-12 transition-colors ${
+                    destino === principal
+                      ? 'bg-ds-gray-alpha-200 text-ds-gray-1000'
+                      : 'text-ds-gray-900 hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000'
+                  }`}
+                >
+                  {ETIQUETA_DE_SECCION[principal]}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={alAbrirComandos}
+                aria-label="Buscar o ejecutar"
+                className="ml-auto flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-label-12 text-ds-gray-900 shadow-ds-border"
+              >
+                <Search aria-hidden="true" className="size-3.5" />
+                ⌘K
+              </button>
+            </div>
+          ) : null}
+
           {aviso}
 
-          {/* El centrado sale de `lienzo.ts` y no de aqui: lo que se crea o se
-              edita va al centro, lo que se inventaria va a la izquierda. La
-              regla entera, con el porque de cada mitad, esta alli. */}
           <main
             id="contenido"
             className={cn(
-              'w-full flex-1 px-4 py-8 sm:px-6 lg:px-8',
-              anchoDelLienzo(ruta.seccion),
-              alineacionDelLienzo(ruta.seccion),
+              'w-full',
+              aSangre
+                ? 'flex min-h-0 flex-1 flex-col'
+                : enSettings
+                  ? 'flex-1 px-4 py-6 sm:px-6 lg:px-8'
+                  : cn(
+                      'flex-1 px-4 py-8 sm:px-6 lg:px-8',
+                      anchoDelLienzo(ruta.seccion),
+                      alineacionDelLienzo(ruta.seccion),
+                    ),
             )}
           >
             <ProveedorDeMarco>{children}</ProveedorDeMarco>
           </main>
         </div>
       </div>
-    </div>
+    </ProveedorDeBoard>
   )
 }

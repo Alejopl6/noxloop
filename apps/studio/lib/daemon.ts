@@ -14,7 +14,17 @@
  * 3. El token de sesion no se persiste. Ver `establecerTokenDeSesion`.
  */
 
-import type { Salud } from '@/lib/tipos'
+import type {
+  Board,
+  DiffDeTarea,
+  EstadoDeRuntime,
+  RespuestaDeLanzamiento,
+  RunListado,
+  Salud,
+  TareaCreada,
+  TareaNueva,
+  Uso,
+} from '@/lib/tipos'
 
 export type ModoDeOrigen = 'escritorio' | 'web'
 
@@ -411,6 +421,133 @@ export interface ClienteServicio {
    * nadie "arregle" esto moviendolo a una cabecera y rompa el stream.
    */
   urlDeEventos(ultimoEventoId?: string | null): string
+
+  /* --- Spec 003 · el board (`contracts/board-api.md` §2) ---------------- */
+
+  /** `GET /v1/board`. Sin proyecto, el board general. */
+  getBoard(filtro?: FiltroDelBoard, opciones?: OpcionesDePeticion): Promise<Board>
+  /** `POST /v1/projects/:id/runs`. Idempotente: si ya hay run, devuelve ese. */
+  lanzarRun(proyectoId: string, itemId: string): Promise<RespuestaDeLanzamiento>
+  /** `POST /v1/runs/:itemId/approve`. Solo sobre un run con el plan listo. */
+  aprobarRun(itemId: string): Promise<RespuestaDeLanzamiento>
+  /** `POST /v1/runs/:itemId/retry`. Retoma desde el disco, sin perder lo integrado. */
+  reintentarRun(itemId: string): Promise<RespuestaDeLanzamiento>
+  /** `GET /v1/runs`, desenvuelto del sobre. */
+  getRuns(filtro?: FiltroDeRuns, opciones?: OpcionesDePeticion): Promise<RunListado[]>
+  /** `GET /v1/runs/:itemId/tasks/:taskId/diff`. Lo que cambio cada agente (US6). */
+  getDiffDeTarea(itemId: string, taskId: string, opciones?: OpcionesDePeticion): Promise<DiffDeTarea>
+  /** `GET /v1/usage`. */
+  getUsage(periodo?: PeriodoDeUso, opciones?: OpcionesDePeticion): Promise<Uso>
+
+  /** `POST /v1/projects/:id/tasks`. Una tarea propia, sin gestor externo (US7). */
+  crearTarea(proyectoId: string, tarea: TareaNueva): Promise<TareaCreada>
+  /** `PATCH /v1/tasks/:id`. Los mismos campos. */
+  editarTarea(tareaId: string, cambios: Partial<TareaNueva>): Promise<TareaCreada>
+
+  /* --- Modelos: los runtimes de agente ---------------------------------- */
+
+  /** `GET /v1/runtimes`, desenvuelto del sobre. */
+  getRuntimes(opciones?: OpcionesDePeticion): Promise<EstadoDeRuntime[]>
+  /** `POST /v1/runtimes/:runtime/login`. El servicio abre el navegador del sistema. */
+  iniciarSesionDeRuntime(runtime: string): Promise<{ iniciado: boolean }>
+  /** `POST /v1/runtimes/:runtime/api-key`. El valor va al servicio y no vuelve. */
+  guardarClaveDeRuntime(runtime: string, valor: string): Promise<EstadoDeRuntime>
+  /** `DELETE /v1/runtimes/:runtime/api-key`. */
+  quitarClaveDeRuntime(runtime: string): Promise<void>
+}
+
+export interface FiltroDelBoard {
+  proyecto?: string | null
+  incluirTerminados?: boolean
+}
+
+export interface FiltroDeRuns {
+  proyecto?: string | null
+  estado?: string | null
+}
+
+export interface PeriodoDeUso {
+  /** ISO 8601. */
+  desde?: string | null
+  hasta?: string | null
+}
+
+/**
+ * LAS RUTAS DEL BOARD, CONSTRUIDAS EN UN SOLO SITIO.
+ *
+ * Existen aparte de los metodos del cliente por una razon concreta: las
+ * pantallas LEEN con `useLectura`, que necesita la ruta como texto para
+ * releer cuando llega un evento del canal (`run.cambio`, `board.invalidado`),
+ * y ESCRIBEN con `useMutacion`, que ya normaliza el error y apaga el boton
+ * mientras el servicio decide. Si cada pantalla armara su `?project=` a mano,
+ * la primera que se equivoque de nombre de parametro pide el board general
+ * creyendo pedir el de un proyecto, y nadie lo ve porque el general tambien
+ * trae esas tarjetas.
+ *
+ * Los metodos `getBoard`, `lanzarRun`… del cliente usan estas mismas rutas:
+ * dos caminos, una sola forma de escribir la direccion.
+ */
+export const RUTAS = {
+  board(filtro: FiltroDelBoard = {}): string {
+    const parametros = new URLSearchParams()
+    if (filtro.proyecto) parametros.set('project', filtro.proyecto)
+    if (filtro.incluirTerminados) parametros.set('includeDone', '1')
+    const consulta = parametros.toString()
+    return consulta ? `/v1/board?${consulta}` : '/v1/board'
+  },
+  lanzar(proyectoId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/runs`
+  },
+  aprobar(itemId: string): string {
+    return `/v1/runs/${encodeURIComponent(itemId)}/approve`
+  },
+  reintentar(itemId: string): string {
+    return `/v1/runs/${encodeURIComponent(itemId)}/retry`
+  },
+  runs(filtro: FiltroDeRuns = {}): string {
+    const parametros = new URLSearchParams()
+    if (filtro.proyecto) parametros.set('project', filtro.proyecto)
+    if (filtro.estado) parametros.set('estado', filtro.estado)
+    const consulta = parametros.toString()
+    return consulta ? `/v1/runs?${consulta}` : '/v1/runs'
+  },
+  run(itemId: string): string {
+    return `/v1/runs/${encodeURIComponent(itemId)}`
+  },
+  diffDeTarea(itemId: string, taskId: string): string {
+    return `/v1/runs/${encodeURIComponent(itemId)}/tasks/${encodeURIComponent(taskId)}/diff`
+  },
+  uso(periodo: PeriodoDeUso = {}): string {
+    const parametros = new URLSearchParams()
+    if (periodo.desde) parametros.set('desde', periodo.desde)
+    if (periodo.hasta) parametros.set('hasta', periodo.hasta)
+    const consulta = parametros.toString()
+    return consulta ? `/v1/usage?${consulta}` : '/v1/usage'
+  },
+  tareas(proyectoId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/tasks`
+  },
+  tarea(tareaId: string): string {
+    return `/v1/tasks/${encodeURIComponent(tareaId)}`
+  },
+  runtimes(): string {
+    return '/v1/runtimes'
+  },
+  loginDeRuntime(runtime: string): string {
+    return `/v1/runtimes/${encodeURIComponent(runtime)}/login`
+  },
+  claveDeRuntime(runtime: string): string {
+    return `/v1/runtimes/${encodeURIComponent(runtime)}/api-key`
+  },
+} as const
+
+/** Saca `items` de un sobre de coleccion, o deja pasar un array desnudo. */
+function desenvolver<T>(cuerpo: unknown): T[] {
+  if (Array.isArray(cuerpo)) return cuerpo as T[]
+  if (cuerpo && typeof cuerpo === 'object' && Array.isArray((cuerpo as { items?: unknown }).items)) {
+    return (cuerpo as { items: T[] }).items
+  }
+  return []
 }
 
 export function crearCliente(origen: OrigenServicio): ClienteServicio {
@@ -470,8 +607,34 @@ export function crearCliente(origen: OrigenServicio): ClienteServicio {
     }
   }
 
+  const obtener = <T,>(ruta: string, opciones: OpcionesDePeticion = {}) =>
+    pedir<T>('GET', ruta, undefined, opciones)
+  const enviar = <T,>(metodo: 'POST' | 'PUT' | 'PATCH' | 'DELETE', ruta: string, cuerpo?: unknown) =>
+    pedir<T>(metodo, ruta, cuerpo, {})
+
   return {
     origen,
+    getBoard: (filtro = {}, opciones = {}) => obtener<Board>(RUTAS.board(filtro), opciones),
+    lanzarRun: (proyectoId, itemId) =>
+      enviar<RespuestaDeLanzamiento>('POST', RUTAS.lanzar(proyectoId), { itemId }),
+    aprobarRun: (itemId) => enviar<RespuestaDeLanzamiento>('POST', RUTAS.aprobar(itemId)),
+    reintentarRun: (itemId) => enviar<RespuestaDeLanzamiento>('POST', RUTAS.reintentar(itemId)),
+    getRuns: async (filtro = {}, opciones = {}) =>
+      desenvolver<RunListado>(await obtener<unknown>(RUTAS.runs(filtro), opciones)),
+    getDiffDeTarea: (itemId, taskId, opciones = {}) =>
+      obtener<DiffDeTarea>(RUTAS.diffDeTarea(itemId, taskId), opciones),
+    getUsage: (periodo = {}, opciones = {}) => obtener<Uso>(RUTAS.uso(periodo), opciones),
+    crearTarea: (proyectoId, tarea) => enviar<TareaCreada>('POST', RUTAS.tareas(proyectoId), tarea),
+    editarTarea: (tareaId, cambios) => enviar<TareaCreada>('PATCH', RUTAS.tarea(tareaId), cambios),
+    getRuntimes: async (opciones = {}) =>
+      desenvolver<EstadoDeRuntime>(await obtener<unknown>(RUTAS.runtimes(), opciones)),
+    iniciarSesionDeRuntime: (runtime) =>
+      enviar<{ iniciado: boolean }>('POST', RUTAS.loginDeRuntime(runtime)),
+    guardarClaveDeRuntime: (runtime, valor) =>
+      enviar<EstadoDeRuntime>('POST', RUTAS.claveDeRuntime(runtime), { valor }),
+    quitarClaveDeRuntime: async (runtime) => {
+      await enviar<unknown>('DELETE', RUTAS.claveDeRuntime(runtime))
+    },
     obtener: <T,>(ruta: string, opciones: OpcionesDePeticion = {}) =>
       pedir<T>('GET', ruta, undefined, opciones),
     enviar: <T,>(

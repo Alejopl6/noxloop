@@ -69,16 +69,18 @@ export function PasoFinal({
           transicion, el principal es lo que la completa. */}
       <div className="flex flex-wrap items-center gap-2">
         {activo ? (
-          <Button onClick={() => navegar({ seccion: 'runs', id: proyecto.id })}>
-            Ir a los ciclos
+          // AL LLEGAR A ACTIVE, EL BOARD DEL PROYECTO (FR-023): un proyecto es
+          // su board, y es ahi donde se lanza el primer run.
+          <Button onClick={() => navegar({ seccion: 'board', id: proyecto.id })}>
+            Ir al board del proyecto
           </Button>
         ) : (
           <Button onClick={() => navegar({ seccion: 'flota', id: proyecto.id })}>
             Volver a la flota
           </Button>
         )}
-        <Button variant="secondary" onClick={() => navegar({ seccion: 'inicio', id: null })}>
-          Volver al inicio
+        <Button variant="secondary" onClick={() => navegar({ seccion: 'board', id: null })}>
+          Ver todos los proyectos
         </Button>
       </div>
 

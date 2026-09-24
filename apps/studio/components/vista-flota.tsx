@@ -976,10 +976,10 @@ export function PanelDeFlota({
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => navegar({ seccion: 'runs', id: proyectoId })}
+              onClick={() => navegar({ seccion: 'board', id: proyectoId })}
             >
               <Rocket />
-              Lanzar un ciclo
+              Ir al board
             </Button>
           }
         >
