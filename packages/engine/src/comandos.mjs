@@ -175,6 +175,7 @@ async function hito(itemId, config, opts) {
     runItem: (id, d) => runItem(id, d),
     skip: opts.skip, only: opts.only, repo: opts.repo,
     maxItems: opts.maxItems, maxCostUsd: opts.maxCostUsd,
+    projectId: opts.projectId,
   };
 
   if (!opts.go) {
@@ -329,6 +330,10 @@ async function planificar(itemId, config, opts) {
     ...deps,
     workdir: integrationPath,
     materialize: opts.materialize !== false,
+    // El proyecto del servicio que lanza, si lo hay. `planItem` lo pasa a
+    // `createRun`; sin el, el run se declara sin proyecto y el board tiene que
+    // atribuirlo por la ruta del repositorio, que es un rodeo.
+    projectId: opts.projectId,
   });
 
   const humano = [];

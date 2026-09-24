@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { CATALOGO, deExcepcion } from "../src/errores.mjs";
 import { arrancar } from "../src/servidor.mjs";
 import { carpetaDePrueba, homeTemporal, ORIGEN, repoDePrueba, TOKEN } from "./ayuda.mjs";
+import { proyectoActivo, repoConRemoto, runEnDisco } from "./ayuda-motor.mjs";
 
 /**
  * Como se provoca cada error del catalogo, de verdad. No se fabrica el objeto:
@@ -172,6 +173,43 @@ const PROVOCADORES = {
   // devolveria los 1012 proveedores con 200 y quien lo mira creeria que filtro.
   parametro_invalido: async (svc) =>
     (await (await pedirJson(svc, "/v1/connections/catalog?clase=trackr", "GET")).json()).error,
+
+  // ---- El puente proyecto-motor (spec 003) --------------------------------
+  // Los cuatro por la ruta de verdad: un proyecto ACTIVE al que le falta UNA
+  // cosa, y `POST /runs`. Ninguno llega a lanzar el motor: la validacion va
+  // antes, que es justo lo que se afirma.
+  sin_repo: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Remoto", ruta: repoConRemoto({ remoto: null }).repo });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  sin_gate: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Runner", runner: null });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  sin_gestor: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Gestor", conexiones: [] });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  // Un gestor que pide token (el de la forja, por la cuenta de codigo) y una
+  // conexion sin credencial en la boveda: el motor NO se lanza a morir en
+  // `loadProvider` con «falta la variable».
+  sin_credencial_del_gestor: async (svc) => {
+    const proyecto = await proyectoActivo(svc, {
+      nombre: "Sin Token",
+      ruta: repoConRemoto({ remoto: "https://forja.test/acme/app.git" }).repo,
+      conexiones: [{ clase: "scm", proveedor: "github" }],
+    });
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  // Aprobar un run que ya tiene PR: no hay plan que aprobar.
+  run_sin_esa_accion: async (svc) => {
+    runEnDisco(svc.home, "con-pr", { item: { id: "con-pr", title: "t", pr: "https://forja.test/pr/1" } });
+    return (await (await pedirJson(svc, "/v1/runs/con-pr/approve", "POST")).json()).error;
+  },
 
   fallo_interno: async () => deExcepcion(new Error("una excepcion que nadie previo")).error,
 };

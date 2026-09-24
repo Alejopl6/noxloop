@@ -22,6 +22,7 @@ import * as credenciales from "./credenciales.mjs";
 import * as catalogo from "./catalogo-de-conexiones.mjs";
 import * as flota from "./flota.mjs";
 import * as runs from "./runs.mjs";
+import * as board from "./board.mjs";
 import * as carpetas from "./carpetas.mjs";
 import * as opciones from "./opciones.mjs";
 import * as asistencia from "./asistencia.mjs";
@@ -150,6 +151,18 @@ export const TABLA = crearTabla([
   // motor: hay una prueba que mide el disco antes y despues de un `GET`.
   { patron: "/v1/projects/:id/runs", metodos: ["GET", "POST"], manejar: runs.runsDelProyecto },
   { patron: "/v1/runs/:id", metodos: ["GET"], manejar: runs.unRun },
+
+  // ---- El board (spec 003) ------------------------------------------------
+  // Lanzar es `POST /v1/projects/:id/runs`, arriba: desde la spec 003 arranca
+  // el motor en vez de contestar `pieza_ausente`. Aprobar y reintentar son
+  // `POST` sobre el run, y la interfaz no escribe nada: pide (principio VIII).
+  { patron: "/v1/runs/:id/approve", metodos: ["POST"], manejar: runs.aprobarRun },
+  { patron: "/v1/runs/:id/retry", metodos: ["POST"], manejar: runs.reintentarRun },
+  // Las tres lecturas del board. `GET` y nada mas, y las tres miden el disco
+  // antes y despues en su test: construir el board no escribe (SC-007).
+  { patron: "/v1/runs", metodos: ["GET"], manejar: runs.listaDeRuns },
+  { patron: "/v1/usage", metodos: ["GET"], manejar: runs.uso },
+  { patron: "/v1/board", metodos: ["GET"], manejar: board.board },
 
   // ---- Asistencia con IA --------------------------------------------------
   // El catalogo contesta SIEMPRE, tambien sin clave: es con lo que la pantalla

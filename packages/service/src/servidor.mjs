@@ -29,6 +29,8 @@ import { TABLA } from "./tabla.mjs";
 import { emparejar } from "./rutas.mjs";
 import { abrirDependencias, VARIABLE_DE_FRASE } from "./dependencias.mjs";
 import { vigilarAlPadre } from "./watchdog.mjs";
+import { BIN_DEL_MOTOR, crearLanzador } from "./lanzador.mjs";
+import { MAX_PARALELO_POR_DEFECTO, RAIZ_DE_PROVEEDORES, cargarGestor } from "./motor.mjs";
 
 /** Version de la forma de las respuestas. Un cambio incompatible la sube. */
 export { ESQUEMA } from "./esquema-de-respuesta.mjs";
@@ -103,7 +105,7 @@ function leerCuerpo(req) {
 }
 
 /**
- * @param {{home: string, token: string, arranque: string, origenes: readonly string[], raicesDeExploracion: readonly string[], bus: any, dep: any}} estado
+ * @param {{home: string, token: string, arranque: string, origenes: readonly string[], raicesDeExploracion: readonly string[], bus: any, dep: any, motor?: any}} estado
  */
 export function crearServidor(estado) {
   return createServer((req, res) => {
@@ -250,6 +252,12 @@ function escribirSesion(home, datos) {
  *   frase?: string|null, backendDeSecretos?: any, proveedorDeConexiones?: any,
  *   adaptadores?: any, fabricaDeModelo?: ((conf: {clave: string, modelo?: string}) => any)|null,
  *   reloj?: () => number,
+ *   motor?: {
+ *     spawn?: (comando: string, args: string[], opciones: any) => any, binDelMotor?: string, nodo?: string,
+ *     entornoBase?: Record<string, string>, intervaloMs?: number, raizDeProveedores?: string,
+ *     cargarGestor?: (nombre: string) => Promise<any>, maxParalelo?: number, ttlDelBoardMs?: number,
+ *     reloj?: () => number,
+ *   },
  * }} opts
  */
 export async function arrancar(opts) {
@@ -312,7 +320,36 @@ export async function arrancar(opts) {
     emitir: (tipo, datos, extra) => bus.emitir(tipo, dep.redactarSalida(datos ?? {}), extra),
   };
 
-  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, raicesDeExploracion, bus: canal, dep });
+  // EL MOTOR, MONTADO SOBRE EL MISMO HOME (spec 003). El lanzador arranca la
+  // CLI del motor como subproceso y lleva la cola de cada proyecto en memoria;
+  // lo demas es lo que las rutas del board necesitan para componer la
+  // configuracion y leer los tickets del gestor. Todo inyectable: los tests
+  // cambian el `spawn` y el cargador del proveedor, nunca la politica.
+  const m = opts.motor ?? {};
+  const raizDeProveedores = m.raizDeProveedores ?? RAIZ_DE_PROVEEDORES;
+  const motor = {
+    lanzador: crearLanzador({
+      home,
+      spawn: m.spawn,
+      binDelMotor: m.binDelMotor,
+      nodo: m.nodo,
+      entornoBase: m.entornoBase,
+      intervaloMs: m.intervaloMs,
+      emitir: canal.emitir,
+    }),
+    binDelMotor: m.binDelMotor ?? BIN_DEL_MOTOR,
+    raizDeProveedores,
+    cargarGestor: m.cargarGestor ?? ((/** @type {string} */ n) => cargarGestor(n, raizDeProveedores)),
+    maxParalelo: m.maxParalelo ?? MAX_PARALELO_POR_DEFECTO,
+    // El board cachea lo que el gestor contesta, por proyecto: SC-004 pide el
+    // board en menos de dos segundos con diez proyectos, y diez viajes al
+    // gestor en cada pintada no caben ahi.
+    ttlDelBoardMs: m.ttlDelBoardMs ?? 30_000,
+    cacheDelBoard: new Map(),
+    reloj: m.reloj ?? (() => Date.now()),
+  };
+
+  const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, raicesDeExploracion, bus: canal, dep, motor });
 
   try {
     await new Promise((resolve, reject) => {
@@ -336,6 +373,10 @@ export async function arrancar(opts) {
     if (cerrando) return cerrando;
     cerrando = (async () => {
       if (perro) perro.detener();
+
+      // Los runs dependen del servicio que los lanzo: se matan ANTES de cerrar
+      // la base, y lo que quedo a medias se retoma desde el disco con Retry.
+      await motor.lanzador.detener();
 
       // Los escaneos EN VUELO se matan ANTES que nada. Cada uno corre en su
       // hilo y termina escribiendo el snapshot en el almacen: si el almacen se
@@ -406,6 +447,7 @@ export async function arrancar(opts) {
     srv,
     bus,
     dep,
+    motor,
     emitir: (tipo, datos, extra) => bus.emitir(tipo, datos, extra),
     ultimoId: () => bus.ultimoId(),
     detener,

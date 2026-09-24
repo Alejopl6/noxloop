@@ -256,6 +256,75 @@ export const CATALOGO = {
     accion: (d) => d.comoConseguirlo,
   },
 
+  // ---- El puente proyecto-motor (spec 003) --------------------------------
+  //
+  // TRES CODIGOS Y NO UNO, porque cada uno manda a un sitio distinto. Un
+  // `no_se_puede_lanzar` generico obligaria a la pantalla a leer la causa para
+  // decidir a que pantalla de Settings mandar al operador, y leer prosa para
+  // decidir es como se rompe una interfaz el dia que alguien reescribe la frase.
+  // Los tres son 409: la peticion esta bien escrita, lo que falta es un dato del
+  // proyecto.
+  sin_repo: {
+    estado: 409,
+    causa: (d) =>
+      `El proyecto \`${d.nombre}\` no tiene un repositorio remoto: ni el proyecto declara \`remoto\` ni ` +
+      `\`${d.ruta}\` tiene un \`origin\`. El motor trabaja en ramas que empuja al remoto y abre el PR contra el; ` +
+      "sin remoto no hay donde dejar el trabajo.",
+    accion: (d) =>
+      `Declara el remoto del proyecto con \`PATCH /v1/projects/${d.id}\` (\`{"remoto": "..."}\`) desde Settings del ` +
+      "proyecto, o agrega un `origin` al repositorio local, y vuelve a pulsar Run.",
+  },
+
+  sin_gate: {
+    estado: 409,
+    causa: (d) =>
+      `El proyecto \`${d.nombre}\` no tiene un gate: el comando cuyo exit code decide si una tarea cumple. ` +
+      `${d.hallado}. Un run sin gate integraria codigo que nadie verifico, y el motor no lo arranca.`,
+    accion: (d) =>
+      `Vuelve a escanear el proyecto (\`POST /v1/projects/${d.id}/scan\`) despues de declarar el script \`test\` ` +
+      "en el manifiesto, o corrige el hallazgo `testing.runner` del snapshot en Settings del proyecto.",
+  },
+
+  sin_gestor: {
+    estado: 409,
+    causa: (d) =>
+      `El proyecto \`${d.nombre}\` no tiene un gestor de tickets que el motor sepa usar: ${d.hallado}. El motor ` +
+      "lee el ticket, escribe su estado y deja el enlace al PR a traves de un proveedor; sin uno no hay ticket " +
+      "que ejecutar.",
+    accion: () =>
+      "Conecta el gestor del proyecto —uno con proveedor en `providers/`— en Settings del proyecto -> Conexiones, " +
+      "y vuelve a pulsar Run.",
+  },
+
+  // Principio IX: la credencial del gestor viaja al subproceso por el entorno y
+  // solo con grant. Si no hay de donde sacarla, el motor NO se lanza: lanzarlo
+  // igual lo haria morir en `loadProvider` con «falta la variable», que es un
+  // mensaje del motor en el stderr de un proceso que nadie mira.
+  sin_credencial_del_gestor: {
+    estado: 409,
+    causa: (d) =>
+      `El gestor \`${d.gestor}\` del proyecto \`${d.nombre}\` necesita ${d.variables} en el entorno del motor, ` +
+      `y no se puede entregar: ${d.porque}. La credencial solo llega al subproceso desde la boveda y con un ` +
+      "grant vigente; nunca por la linea de comandos.",
+    accion: () =>
+      "Guarda el token del gestor en Settings -> Credenciales y concede un grant sobre ella a un agente del " +
+      "proyecto (`POST /v1/grants`); despues vuelve a pulsar Run.",
+  },
+
+  // Aprobar un plan que no esta esperando aprobacion, o reintentar un run que
+  // no fallo. UN codigo con la accion pedida y el estado adentro, porque lo que
+  // el operador necesita saber es lo mismo en los dos casos: en que esta el run
+  // y que acciones tiene de verdad.
+  run_sin_esa_accion: {
+    estado: 409,
+    causa: (d) =>
+      `El run del ticket \`${d.itemId}\` esta en \`${d.estado}\`, y \`${d.accion}\` solo tiene sentido ` +
+      `${d.cuando}. Hacerlo igual ${d.riesgo}.`,
+    accion: (d) =>
+      `Pide \`GET /v1/runs?project=${d.projectId ?? ""}\` para ver el estado actual del run; ` +
+      `${d.disponible ? `lo que si se puede hacer ahora es \`${d.disponible}\`.` : "ahora no tiene ninguna accion pendiente."}`,
+  },
+
   // Principio X aplicado a las costuras que todavia no estan montadas. UN
   // codigo, con la pieza adentro: declarar el hueco es el contrato, y un
   // `fallo_interno` en su lugar manda al operador a leer una traza que no es suya.
