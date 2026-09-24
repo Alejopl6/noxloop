@@ -142,6 +142,21 @@ Desde «Abrir run», el operador ve las tareas del run y, por cada una, el diff 
 2. **Given** una tarea, **When** la abre, **Then** ve el diff del commit de test y el del commit de implementación por separado, con el mensaje de cada commit.
 3. **Given** una tarea en curso, **When** la abre, **Then** ve el diff de lo que lleva hecho en su worktree respecto a su base, marcado como «sin commitear».
 
+### User Story 7 - Crear tareas propias, sin gestor externo (Priority: P1)
+
+El operador pulsa **Nueva tarea**, elige proyecto y repo, escribe título, plan en markdown, criterios de aceptación, prioridad y etiquetas, y la tarea aparece en Todo con su clave (`PAY-12`). Puede empezar a trabajar sin conectar Linear ni GitHub Issues. Referente: Nodal (ver `research-nodal.md`).
+
+**Why this priority**: sin esto, el board está vacío hasta conectar un gestor, y el operador no puede empezar hoy.
+
+**Independent Test**: sin ningún gestor conectado, crear una tarea desde el board, pulsar Run, y ver el run del motor sobre ella hasta el PR.
+
+**Acceptance Scenarios**:
+
+1. **Given** un proyecto `ACTIVE` sin gestor, **When** el operador crea una tarea, **Then** aparece en Todo con la clave `<PREFIJO>-<n>` del proyecto.
+2. **Given** una tarea local sin criterios, **When** se pulsa Run, **Then** se pide un criterio verificable antes de gastar una ejecución (igual que con un ticket externo).
+3. **Given** una tarea local, **When** el motor la mueve de estado, **Then** el board lo refleja: el gestor local implementa el mismo contrato que Linear.
+4. **Given** una tarea, **When** el operador elige su ejecutor (runtime y agente) y cómo termina (sin commitear, commit o PR), **Then** el run usa esa elección y, si no la hay, la del repo, luego la del proyecto y luego la general.
+
 ### Edge Cases
 
 - **Gestor que no sabe listar tickets.** Si un proveedor no declara la capacidad de listar, Backlog y Todo muestran lo que el motor sí conoce de ese proyecto —tickets asignados o mencionados y los que ya tienen run— y una nota en la columna que nombra el proveedor y la capacidad que le falta. Nunca un board vacío sin explicación.
@@ -161,7 +176,7 @@ Desde «Abrir run», el operador ve las tareas del run y, por cada una, el diff 
 
 **El board**
 
-- **FR-001**: El board MUST ser la pantalla de inicio de la aplicación y mostrar cuatro columnas en este orden: Backlog, Todo, En curso, En revisión, cada una con su contador.
+- **FR-001**: El board MUST ser la pantalla de inicio de la aplicación y mostrar estas columnas en orden: Todo, En curso, En revisión, Bloqueado, Hecho, cada una con su contador, más Backlog plegable a la izquierda. (Revisado el 2026-09-24 sobre el referente Nodal; antes eran cuatro, con bloqueado como chip.)
 - **FR-002**: El board MUST poder mostrarse para un proyecto o para todos los proyectos `ACTIVE`, y el proyecto elegido MUST quedar en la dirección de la pantalla.
 - **FR-003**: La columna de cada tarjeta MUST derivarse con esta precedencia: un run con PR abierto → En revisión; un run en vuelo, en cola o detenido → En curso; si no hay run, el estado canónico del gestor (backlog → Backlog, todo → Todo, en curso → En curso, en revisión → En revisión).
 - **FR-004**: Bloqueado, fallido, interrumpido, en cola, necesita permiso, necesita criterios, plan listo y sin repo MUST mostrarse como **chips** en la tarjeta, nunca como columnas.
@@ -196,6 +211,12 @@ Desde «Abrir run», el operador ve las tareas del run y, por cada una, el diff 
 - **FR-024**: Settings del proyecto MUST reunir constitution, guidelines, diseño, bootstrap, conexiones del proyecto, flota y autonomía. Settings general MUST reunir herramientas y conexiones, credenciales, flota por defecto y auditoría.
 - **FR-025**: Toda pantalla existente de la spec 002 MUST seguir alcanzable desde Settings o desde ⌘K; ninguna MUST quedar alcanzable solo por dirección.
 - **FR-026**: La bandeja deja de ser un destino: sus entradas MUST aparecer como el chip «te necesita» de su tarjeta, en los runs activos y en el resumen superior, con la causa textual completa al abrirlas.
+
+**Tareas locales**
+
+- **FR-030**: El producto MUST incluir un gestor de tareas local que implemente el contrato de proveedor, cuyo único escritor es el servicio, con tareas de clave `<PREFIJO>-<n>` por proyecto, plan markdown, criterios, prioridad, etiquetas, ejecutor y modo de término.
+- **FR-031**: El ejecutor de una tarea MUST resolverse en cascada tarea → repo → proyecto → general, y MUST poder ser cualquier runtime conectado (Claude o OpenAI) con un agente opcional.
+- **FR-032**: El modo de término MUST ser uno de sin commitear, commit o PR; ninguno mergea (principio IV).
 
 **Runs y costos**
 
