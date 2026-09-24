@@ -25,6 +25,9 @@ import { crearAdaptadorFake } from "../../../adapters/src/adaptadores/fake.mjs";
 
 const argv = process.argv.slice(2);
 const [comando, itemId] = argv;
+// `node --test` tambien corre los `.mjs` bajo `test/`: sin orden no hay nada
+// que simular, y sin esta salida el runner lo contaba como un test fallido.
+if (!comando) process.exit(0);
 const flag = (/** @type {string} */ n) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 ? argv[i + 1] : undefined;

@@ -8,6 +8,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [verbo, ...resto] = process.argv.slice(2);
+// `node --test` tambien corre los `.mjs` bajo `test/`, y sin orden este
+// archivo esperaba la entrada estandar para siempre: colgaba la suite entera.
+if (!verbo) process.exit(0);
 const refIdx = resto.indexOf("--ref");
 const ref = refIdx >= 0 ? resto[refIdx + 1] : null;
 const archivo = join(process.env.LLAVERO_FALSO_DIR ?? ".", "llavero.json");
