@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { CicloDeVida, LoQueFalta } from '@/components/ui/ciclo-de-vida'
@@ -8,6 +8,7 @@ import { Description, ListaDeDescripciones } from '@/components/ui/descripcion'
 import { Note } from '@/components/ui/nota'
 import { Segmentado } from '@/components/ui/segmentado'
 import { Encabezado, EsqueletoDeLista, FalloDeLectura } from '@/components/pantalla'
+import { ResumenDeDiagnosticoDelProyecto } from '@/components/ajustes/vista-diagnostico'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import { useLectura } from '@/lib/lectura'
 import { useMutacion } from '@/lib/mutacion'
@@ -54,6 +55,7 @@ export function PanelDeAjustesDeProyecto({
   guardando,
   alGuardarAutonomia,
   navegar,
+  diagnostico = null,
 }: {
   proyectoId: string
   detalle: DetalleDeProyecto | null
@@ -64,6 +66,12 @@ export function PanelDeAjustesDeProyecto({
   guardando: boolean
   alGuardarAutonomia: (autonomia: string) => void
   navegar: Navegar
+  /**
+   * El resumen del diagnostico (spec 004): si algo impide pulsar Run en este
+   * proyecto, se ve aqui sin ir a Settings general. Hueco para que el
+   * catalogo lo pinte con datos de ejemplo.
+   */
+  diagnostico?: ReactNode
 }) {
   const proyecto = detalle?.proyecto ?? null
   const actual = proyecto?.autonomia ?? null
@@ -104,6 +112,8 @@ export function PanelDeAjustesDeProyecto({
               </div>
             ) : null}
           </section>
+
+          {diagnostico}
 
           <section className="flex flex-col gap-4">
             <h3 className="text-heading-16 text-ds-gray-1000">Autonomia</h3>
@@ -200,6 +210,7 @@ export function VistaDeAjustesDeProyecto({
       guardando={mutacion.trabajando}
       alGuardarAutonomia={(autonomia) => void guardar(autonomia)}
       navegar={navegar}
+      diagnostico={<ResumenDeDiagnosticoDelProyecto proyectoId={proyectoId} />}
     />
   )
 }

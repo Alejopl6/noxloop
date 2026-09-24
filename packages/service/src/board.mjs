@@ -33,6 +33,7 @@
 
 import { accionDelEstado, avanceDe, gastoDe, EN_VUELO, TE_NECESITAN } from "./estado-del-run.mjs";
 import { exigirProyecto } from "./comun.mjs";
+import { bloqueoPara, bloqueosParaElBoard } from "./diagnostico.mjs";
 import { ejecutorDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ejecutor.mjs";
 import { datosDelProyecto, diagnosticar, secretosDelGestor } from "./motor.mjs";
 import { estadosDeRuntimes } from "./runtimes.mjs";
@@ -187,7 +188,9 @@ function tarjetaDe(ticket, run, parte, runtimes) {
   // aprobar, reintentar— se deshabilitan con el MISMO motivo que la ruta daria
   // al pulsarlas: el boton dice que falta en vez de fallar. En orden: el
   // proyecto (sin repo, sin gate...), el ejecutor o el termino que el motor no
-  // sabe cumplir, y el runtime sin sesion ni key.
+  // sabe cumplir, el runtime sin sesion ni key, y lo bloqueante del
+  // diagnostico (spec 004, FR-003) que afecta a ESTE runtime: git ausente
+  // apaga todo, la confianza de Claude Code solo lo que corre con Claude.
   const ejecucion = ejecucionDeTarjeta(ticket, parte);
   const tipo = run ? accionDelEstado(run.estado) : "run";
   const lanza = tipo === "run" || tipo === "approve" || tipo === "retry";
@@ -200,6 +203,9 @@ function tarjetaDe(ticket, run, parte, runtimes) {
       else if (runtimes?.get(ejecucion.ejecutor.runtime)?.conectado === false) {
         const e = runtimes.get(ejecucion.ejecutor.runtime);
         motivo = `${MOTIVO_SIN_MODELO}: ${e.detalle ?? `${ejecucion.ejecutor.runtime} no tiene sesion ni API key`}.`;
+      } else {
+        const bloqueo = bloqueoPara(parte.bloqueos, ejecucion.ejecutor.runtime);
+        if (bloqueo) motivo = bloqueo.motivo;
       }
     }
   }
@@ -240,7 +246,8 @@ function tarjetaDe(ticket, run, parte, runtimes) {
  * @param {{
  *   partes: Array<{proyecto: any, gestor: string|null, listItems: boolean|null, tickets: any[], runs: any[],
  *                  nota: string|null, lanzable: boolean, tieneRepo: boolean, motivo: string|null,
- *                  ejecutorDelProyecto?: {runtime: string, agente: null}|null}>,
+ *                  ejecutorDelProyecto?: {runtime: string, agente: null}|null,
+ *                  bloqueos?: import("./diagnostico.mjs").Problema[]}>,
  *   includeDone?: boolean,
  *   proyectos?: any[],
  *   avisos?: any[],
@@ -559,6 +566,14 @@ export async function board(p) {
     usados.add(resolverEjecutor(null, parte.ejecutorDelProyecto).runtime);
   }
   const runtimes = await estadosDeRuntimes(p, [...usados]);
+
+  // Lo bloqueante del diagnostico, por proyecto, con su cache: sin ella cada
+  // pintada lanzaria `git --version` y compañia.
+  const bloqueos = await bloqueosParaElBoard(
+    p,
+    partes.map((parte) => proyectos.find((x) => String(x.id) === String(parte.proyecto.id))).filter(Boolean),
+  );
+  for (const parte of partes) /** @type {any} */ (parte).bloqueos = bloqueos.get(String(parte.proyecto.id)) ?? [];
 
   return { cuerpo: construirBoard({ partes, includeDone, proyectos: lista, avisos, runtimes }) };
 }

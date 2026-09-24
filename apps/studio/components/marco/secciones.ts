@@ -26,6 +26,7 @@ export const ETIQUETA_DE_SECCION: Record<Seccion, string> = {
   costos: 'Costos',
   settings: 'Settings',
   modelos: 'Modelos',
+  diagnostico: 'Diagnostico',
   'flota-por-defecto': 'Flota por defecto',
   inicio: 'Indicadores',
   asistente: 'Asistente',

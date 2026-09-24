@@ -30,7 +30,9 @@ import * as tareas from "./tareas.mjs";
 import * as runtimes from "./runtimes.mjs";
 import * as gestor from "./gestor.mjs";
 import * as diff from "./diff.mjs";
+import * as transcript from "./transcript.mjs";
 import * as modoRapido from "./modo-rapido.mjs";
+import * as diagnostico from "./diagnostico.mjs";
 
 export const TABLA = crearTabla([
   // ---- Salud y sesion -----------------------------------------------------
@@ -162,6 +164,10 @@ export const TABLA = crearTabla([
   // Lo que cambio cada agente (US6, FR-029): `git log`/`git diff` sobre la rama
   // y el worktree de la tarea, SIN escribir (ni el indice: ver `diff.mjs`).
   { patron: "/v1/runs/:id/tasks/:taskId/diff", metodos: ["GET"], manejar: diff.diffDeTarea },
+  // Lo que el agente fue diciendo y haciendo en cada fase (spec 004, FR-005):
+  // lee los transcripts que el motor escribio, redactados, paginados. `GET` y
+  // nada mas; crecer lo avisa el evento `run.transcript` (ver `transcript.mjs`).
+  { patron: "/v1/runs/:id/tasks/:taskId/transcript", metodos: ["GET"], manejar: transcript.transcriptDeTarea },
 
   // ---- El board (spec 003) ------------------------------------------------
   // Lanzar es `POST /v1/projects/:id/runs`, arriba: desde la spec 003 arranca
@@ -198,6 +204,12 @@ export const TABLA = crearTabla([
   { patron: "/v1/runtimes", metodos: ["GET"], manejar: runtimes.runtimes },
   { patron: "/v1/runtimes/:id/login", metodos: ["POST"], manejar: runtimes.iniciarSesion },
   { patron: "/v1/runtimes/:id/api-key", metodos: ["POST", "DELETE"], manejar: runtimes.claveDeRuntime },
+
+  // ---- Diagnostico (spec 004) ---------------------------------------------
+  // `GET` y nada mas, y un test mide el disco antes y despues: diagnosticar
+  // LEE `~/.claude.json`, el repo y el home, y no escribe en ninguno (FR-002).
+  // La confianza de Claude Code se dice como aceptarla; no se acepta desde aqui.
+  { patron: "/v1/diagnostics", metodos: ["GET"], manejar: diagnostico.diagnostico },
 
   // ---- Asistencia con IA --------------------------------------------------
   // El catalogo contesta SIEMPRE, tambien sin clave: es con lo que la pantalla

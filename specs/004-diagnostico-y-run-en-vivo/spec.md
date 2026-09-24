@@ -30,13 +30,15 @@ La spec 003 dejó el board lanzando el motor. Lo que falta para usarlo a diario 
 
 El operador abre Settings → Diagnóstico y ve, para la máquina, las versiones de `git`, `claude`, `codex` y `node`, y para cada proyecto: si su carpeta es un repositorio, si Claude Code confía en él, si el gate se puede correr y si el runtime de cada rol está conectado. Cada problema trae la acción exacta. La tarjeta de un proyecto con un problema bloqueante muestra Run deshabilitado con ese motivo.
 
-**Why this priority**: la confianza de Claude Code es un diálogo interactivo que se acepta una vez por repo; un run lanzado sobre un repo no aceptado falla o se cuelga sin decir por qué. Es el fallo más probable del primer run real.
+**Why this priority**: un run que no puede arrancar —sin git, sin gate, sin modelo— tiene que decirlo antes de pulsar Run, no después.
 
-**Independent Test**: con un repo cuya confianza no está aceptada, el diagnóstico lo marca con la acción «abre `claude` en esa carpeta una vez y acepta», y Run en ese proyecto sale deshabilitado con ese motivo; al aceptarla, el diagnóstico lo refleja sin reiniciar.
+> **Corregido el 2026-09-24 con el binario delante.** La primera versión decía que un repo sin la confianza de Claude Code aceptada hacía fallar o colgarse el run. En `claude` 2.1.281 no es así: con `-p`, como el motor lanza cada fase, se da por confiado. Lo que sí pasa es que **ignora la configuración propia del repo** (`.claude/settings.json`, sus hooks y sus MCP). Los hooks de noxloop llegan por `--settings` y siguen. Por eso la confianza pendiente es un **aviso**, no un bloqueo.
+
+**Independent Test**: con git ausente, Run sale deshabilitado en todas las tarjetas con cómo instalarlo; con un repo cuya confianza no está aceptada, el diagnóstico lo avisa con la acción «abre `claude` en esa carpeta una vez y acepta», sin deshabilitar Run.
 
 **Acceptance Scenarios**:
 
-1. **Given** `claude` instalado y un repo sin la confianza aceptada, **When** se abre el diagnóstico, **Then** el repo figura «confianza pendiente» con la acción textual, y Run se deshabilita para las tareas cuyo implementador sea Claude.
+1. **Given** `claude` instalado y un repo sin la confianza aceptada, **When** se abre el diagnóstico, **Then** el repo figura «confianza pendiente» como aviso, con lo que se pierde (la configuración propia del repo) y la acción textual; Run sigue habilitado.
 2. **Given** un binario ausente (`codex`, `git`), **When** se abre el diagnóstico, **Then** figura ausente con cómo instalarlo, y solo se deshabilita lo que lo necesita.
 3. **Given** el diagnóstico, **When** se consulta, **Then** no escribe nada: ni en `~/.claude.json`, ni en el repo, ni en el home.
 
@@ -109,7 +111,7 @@ Con un tag `v*`, el CI publica un release con un `.dmg` universal (Apple Silicon
 
 ## Success Criteria _(mandatory)_
 
-- **SC-001**: El primer run real sobre un repo nuevo no falla por confianza no aceptada: el diagnóstico lo avisó antes, en el 100% de los casos con `claude` instalado.
+- **SC-001**: Todo lo que impide un run (git ausente, carpeta que no es repo, sin gate, modelo sin conectar) se ve en el diagnóstico y en la tarjeta antes de pulsar Run, en el 100% de los casos.
 - **SC-002**: Desde que el agente emite un mensaje hasta que se ve en el detalle pasan menos de 3 segundos.
 - **SC-003**: Ningún transcript en disco contiene un secreto de la bóveda (test centinela).
 - **SC-004**: El `.dmg` publicado arranca en Apple Silicon e Intel.

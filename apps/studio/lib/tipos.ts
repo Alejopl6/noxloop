@@ -1711,3 +1711,158 @@ export interface TareaCreada {
     [campo: string]: unknown
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Spec 004 · Diagnostico (`GET /v1/diagnostics`, FR-001..003)                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `bloqueante` apaga Run en las tarjetas a las que afecta; `aviso` solo se
+ * dice. La confianza `desconocida` es aviso a proposito: no saber no es
+ * motivo para bloquear (principio X).
+ */
+export type NivelDeProblema = 'bloqueante' | 'aviso'
+
+export interface ProblemaDeDiagnostico {
+  codigo: string
+  nivel: NivelDeProblema
+  /** El runtime al que afecta, o `null` si a todas las tareas. */
+  afecta: string | null
+  causa: string
+  accion: string
+  /** La frase corta que el board pone bajo el boton apagado. */
+  motivo: string
+  binario?: string
+}
+
+export type EstadoDeBinario = 'presente' | 'ausente' | 'fallo'
+
+export interface BinarioDiagnosticado {
+  nombre: string
+  estado: EstadoDeBinario
+  version: string | null
+  causa?: string
+  accion?: string
+}
+
+export type EstadoDeConfianza = 'aceptada' | 'pendiente' | 'desconocida'
+
+export interface ConfianzaDeClaude {
+  estado: EstadoDeConfianza
+  /** El `~/.claude.json` que se leyo. */
+  archivo: string
+  /** La ruta real (canonica) por la que se pregunto. */
+  clave: string | null
+  /** Lo que se leyo: la clave y el booleano, nada mas del archivo. */
+  evidencia: string
+  causa?: string
+  accion?: string
+  /** Donde corren de verdad las fases: worktrees bajo el home de noxloop. */
+  rutaDeFase: string
+  notaDeFase: string
+}
+
+export interface RuntimeDeRol {
+  rol: 'implementador' | 'revisor' | 'planificador'
+  runtime: string
+  agente: string | null
+  /** `null`: noxloop no sabe preguntarle a ese runtime. */
+  conectado: boolean | null
+  detalle: string | null
+  causa?: string
+  accion?: string
+}
+
+export interface DiagnosticoDeProyecto {
+  id: string
+  nombre: string
+  estadoDelProyecto: string
+  estado: 'ok' | 'aviso' | 'bloqueado'
+  repositorio: { estado: 'ok' | 'problema'; ruta: string; rutaReal: string | null; detalle: string }
+  confianza: ConfianzaDeClaude
+  gate: { declarado: boolean; comando: string | null; de: string | null }
+  runtimes: RuntimeDeRol[]
+  problemas: ProblemaDeDiagnostico[]
+}
+
+export interface Diagnostico {
+  /** ISO 8601. */
+  generado: string
+  maquina: { binarios: BinarioDiagnosticado[]; problemas: ProblemaDeDiagnostico[] }
+  proyectos: DiagnosticoDeProyecto[]
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 004 · Run en vivo: el transcript de cada fase                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Los cinco tipos del transcript, y ni uno mas (contrato de adaptadores,
+ * `TIPOS_DE_EVENTO`). La interfaz no sabe que runtime corrio: pinta estos.
+ */
+export type TipoDeEventoDeTranscript = 'texto' | 'herramienta' | 'resultado_herramienta' | 'resultado' | 'error'
+
+/** Los tokens de UNA invocacion, tal como el runtime los reporto. Lo que no da, en `null`. */
+export interface TokensDeInvocacion {
+  entrada: number
+  salida: number
+  cacheLectura: number | null
+  cacheEscritura: number | null
+}
+
+export interface EventoDeTranscript {
+  /** ISO 8601: cuando el adaptador lo vio. */
+  t: string
+  tipo: TipoDeEventoDeTranscript
+  /** Siempre texto, ya redactado por el motor. La entrada de una herramienta viene como JSON. */
+  contenido: string
+  herramienta?: string
+  tokens?: TokensDeInvocacion
+}
+
+/**
+ * Los tokens de una fase (o de la tarea). `medido: false` es «sin medir» y
+ * lleva los numeros en `null`: NO es cero, y la interfaz no lo pinta como cero.
+ */
+export interface TokensDeFase {
+  medido: boolean
+  entrada: number | null
+  salida: number | null
+  cacheLectura: number | null
+  cacheEscritura: number | null
+}
+
+/** Una fase (RED, GREEN, REVIEW con su lente...) con un tramo de su transcript. */
+export interface FaseDeTranscript {
+  fase: string
+  lente?: string
+  eventos: EventoDeTranscript[]
+  tokens: TokensDeFase
+  /** Lineas que tiene la fase en disco ahora. */
+  total: number
+  /** La linea desde la que empieza este tramo. */
+  desde: number
+  /** Desde donde pedir lo que sigue (`?desde=`). */
+  siguiente: number
+  /** Hay mas lineas de las que vinieron: lo cortado se dice. */
+  cortado: boolean
+}
+
+/** `GET /v1/runs/:itemId/tasks/:taskId/transcript` */
+export interface TranscriptDeTarea {
+  itemId: string
+  tareaId: string
+  fases: FaseDeTranscript[]
+  /** La suma de las fases; sin medir si alguna no lo esta. */
+  total: TokensDeFase
+  limite: number
+}
+
+/** Los datos del evento SSE `run.transcript`: que transcript crecio. */
+export interface AvisoDeTranscript {
+  projectId: string | null
+  itemId: string
+  taskId: string
+  fase: string
+  lente?: string
+}

@@ -54,6 +54,7 @@ export type Seccion =
   | 'costos'
   | 'settings'
   | 'modelos'
+  | 'diagnostico'
   | 'flota-por-defecto'
   | 'inicio'
   | 'asistente'
@@ -136,6 +137,7 @@ export function esAjusteDeProyecto(seccion: Seccion): seccion is SeccionDeAjuste
 export const SECCIONES_DE_AJUSTES_GENERALES = [
   'settings',
   'modelos',
+  'diagnostico',
   'credenciales',
   'flota-por-defecto',
   'auditoria',
@@ -198,6 +200,7 @@ const SECCIONES: readonly Seccion[] = [
   'costos',
   'settings',
   'modelos',
+  'diagnostico',
   'flota-por-defecto',
   'inicio',
   'asistente',

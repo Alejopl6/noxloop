@@ -26,10 +26,12 @@ import { PanelDeBoard } from '@/components/vista-board'
 import { PanelDeListaDeRuns } from '@/components/vista-lista-de-runs'
 import { PanelDeCostos } from '@/components/vista-costos'
 import { PanelDeDetalleDeRun, ResumenDeDiff } from '@/components/runs/detalle-de-run'
+import { PanelDeTranscript } from '@/components/runs/transcript-de-tarea'
 import { FormularioDeTareaNueva } from '@/components/board/tarea-nueva'
 import { EstadoDeGestores, PanelLateral } from '@/components/marco/navegacion-lateral'
 import { PanelDeModelos } from '@/components/ajustes/vista-modelos'
 import { PanelDeFlotaPorDefecto } from '@/components/ajustes/vista-flota-por-defecto'
+import { PanelDeDiagnostico, ResumenDeDiagnostico } from '@/components/ajustes/vista-diagnostico'
 import { ErrorDelServicio } from '@/lib/daemon'
 import type { Lectura } from '@/lib/lectura'
 import type {
@@ -38,7 +40,9 @@ import type {
   AlcanceDeCredencial,
   ArtefactosDeProyecto,
   Board,
+  Diagnostico,
   DiffDeTarea,
+  TranscriptDeTarea,
   EstadoDeRuntime,
   ProyectoDelBoard,
   RunListado,
@@ -1335,6 +1339,116 @@ const RUNTIMES_DE_EJEMPLO: EstadoDeRuntime[] = [
   },
 ]
 
+/**
+ * El diagnostico de la spec 004 con lo que mas se va a ver: codex sin
+ * instalar (solo afecta a lo que corre con codex), un repo con la confianza
+ * de Claude Code pendiente y otro sin gate. Las rutas son de ejemplo.
+ */
+const PROBLEMA_DE_CONFIANZA = {
+  codigo: 'confianza_pendiente',
+  nivel: 'bloqueante' as const,
+  afecta: 'claude-agent-sdk',
+  causa:
+    'Claude Code no ha aceptado la confianza de /Users/ana/code/pagos. El motor lo lanza sin terminal (`-p`): no pregunta, pero ignora la configuracion del proyecto —`.claude/settings.json`, sus hooks y servidores MCP— y el run corre sin ella.',
+  accion: 'abre `claude` una vez en /Users/ana/code/pagos y acepta el dialogo; despues pulsa «Volver a comprobar».',
+  motivo: 'Claude Code no confia todavia en /Users/ana/code/pagos: abre `claude` una vez en /Users/ana/code/pagos y acepta el dialogo.',
+}
+
+const DIAGNOSTICO_DE_EJEMPLO: Diagnostico = {
+  generado: '2026-09-24T10:00:00.000Z',
+  maquina: {
+    binarios: [
+      { nombre: 'git', estado: 'presente', version: '2.50.1' },
+      { nombre: 'claude', estado: 'presente', version: '2.1.281' },
+      {
+        nombre: 'codex',
+        estado: 'ausente',
+        version: null,
+        causa: '`codex` no esta en el PATH del servicio.',
+        accion: 'Instala Codex (`npm install -g @openai/codex`) y dejalo en el PATH del servicio.',
+      },
+      { nombre: 'node', estado: 'presente', version: '22.11.0' },
+    ],
+    problemas: [
+      {
+        codigo: 'binario_ausente',
+        nivel: 'bloqueante',
+        afecta: 'codex',
+        binario: 'codex',
+        causa: '`codex` no esta en el PATH del servicio.',
+        accion: 'Instala Codex (`npm install -g @openai/codex`) y dejalo en el PATH del servicio.',
+        motivo: 'Falta `codex` en esta maquina.',
+      },
+    ],
+  },
+  proyectos: [
+    {
+      id: 'prj_pagos',
+      nombre: 'Pagos',
+      estadoDelProyecto: 'ACTIVE',
+      estado: 'bloqueado',
+      repositorio: { estado: 'ok', ruta: '/Users/ana/code/pagos', rutaReal: '/Users/ana/code/pagos', detalle: '/Users/ana/code/pagos es un repositorio git.' },
+      confianza: {
+        estado: 'pendiente',
+        archivo: '/Users/ana/.claude.json',
+        clave: '/Users/ana/code/pagos',
+        evidencia: '/Users/ana/.claude.json → projects["/Users/ana/code/pagos"].hasTrustDialogAccepted = false',
+        causa: PROBLEMA_DE_CONFIANZA.causa,
+        accion: PROBLEMA_DE_CONFIANZA.accion,
+        rutaDeFase: '/Users/ana/.noxloop/worktrees/pagos',
+        notaDeFase:
+          'Las fases corren en worktrees bajo /Users/ana/.noxloop/worktrees/pagos/, uno nuevo por tarea: nunca tienen entrada propia en /Users/ana/.claude.json. Claude Code juzga un worktree por su repositorio canonico (/Users/ana/code/pagos), asi que esa es la confianza que cuenta.',
+      },
+      gate: { declarado: true, comando: 'npm test', de: '`testing.runner = vitest`, leido de `scripts.test` en package.json' },
+      runtimes: [
+        { rol: 'implementador', runtime: 'claude-agent-sdk', agente: null, conectado: true, detalle: 'Claude Code tiene sesion iniciada con una suscripcion de claude.ai' },
+        { rol: 'revisor', runtime: 'codex', agente: 'revisor', conectado: false, detalle: 'el binario `codex` no esta instalado' },
+      ],
+      problemas: [
+        PROBLEMA_DE_CONFIANZA,
+        {
+          codigo: 'runtime_desconectado',
+          nivel: 'bloqueante',
+          afecta: null,
+          causa: 'El revisor (codex) no tiene con que invocar al modelo: el binario `codex` no se encontro en el PATH.',
+          accion: 'Instala `codex` y dejalo en el PATH de la maquina del servicio; despues, `codex login`.',
+          motivo: 'Conecta un modelo en Settings → Modelos: el revisor usa codex y no tiene sesion ni API key.',
+        },
+      ],
+    },
+    {
+      id: 'prj_portal',
+      nombre: 'Portal',
+      estadoDelProyecto: 'ACTIVE',
+      estado: 'bloqueado',
+      repositorio: { estado: 'ok', ruta: '/Users/ana/code/portal', rutaReal: '/Users/ana/code/portal', detalle: '/Users/ana/code/portal es un repositorio git.' },
+      confianza: {
+        estado: 'aceptada',
+        archivo: '/Users/ana/.claude.json',
+        clave: '/Users/ana/code/portal',
+        evidencia: '/Users/ana/.claude.json → projects["/Users/ana/code/portal"].hasTrustDialogAccepted = true',
+        rutaDeFase: '/Users/ana/.noxloop/worktrees/portal',
+        notaDeFase:
+          'Las fases corren en worktrees bajo /Users/ana/.noxloop/worktrees/portal/, uno nuevo por tarea. Claude Code juzga un worktree por su repositorio canonico (/Users/ana/code/portal).',
+      },
+      gate: { declarado: false, comando: null, de: 'el snapshot busco el runner de tests y no encontro ninguno (`testing.runner = null`)' },
+      runtimes: [
+        { rol: 'implementador', runtime: 'claude-agent-sdk', agente: null, conectado: true, detalle: 'Claude Code tiene sesion iniciada con una suscripcion de claude.ai' },
+      ],
+      problemas: [
+        {
+          codigo: 'sin_gate',
+          nivel: 'bloqueante',
+          afecta: null,
+          causa: 'El proyecto `Portal` no tiene gate: el snapshot busco el runner de tests y no encontro ninguno.',
+          accion: 'Declara el runner de tests en Settings del proyecto → Snapshot y vuelve a comprobar.',
+          motivo: 'El proyecto `Portal` no tiene gate.',
+        },
+      ],
+    },
+  ],
+}
+
 const RUNS_LISTADOS: RunListado[] = [
   { itemId: 'PAY-142', proyecto: REF.pagos, titulo: 'Validar el IBAN antes de crear el mandato SEPA', estado: 'corriendo', avance: { hechas: 3, total: 9, fase: 'Test' }, pr: null, gasto: gasto(1.84, 22), creado: '2026-09-20T09:10:00.000Z', actualizado: '2026-09-20T11:58:00.000Z' },
   { itemId: '103', proyecto: REF.portal, titulo: 'Cabeceras de cache en los assets estaticos', estado: 'pr_abierto', avance: { hechas: 4, total: 4, fase: null }, pr: 'https://github.com/org/portal/pull/43', gasto: gasto(2.05, 30), creado: '2026-09-19T15:00:00.000Z', actualizado: '2026-09-20T08:20:00.000Z' },
@@ -1352,6 +1466,82 @@ const RUN_DETALLE: Run = {
     { id: 'T004', title: 'Documentar el nuevo codigo de error', status: 'pending' },
   ],
   spent: { usd: 1.84, calls: 22 },
+}
+
+/**
+ * El transcript de T001 como lo deja el motor (spec 004, US2): RED con un
+ * runtime que no reporta tokens («sin medir», no cero), GREEN medido con un
+ * reintento que fallo, y la revision en dos lentes. Los eventos son los cinco
+ * tipos del contrato, ya redactados.
+ */
+const TRANSCRIPT_DE_EJEMPLO: TranscriptDeTarea = {
+  itemId: 'PAY-142',
+  tareaId: 'T001',
+  limite: 200,
+  total: { medido: false, entrada: null, salida: null, cacheLectura: null, cacheEscritura: null },
+  fases: [
+    {
+      fase: 'RED',
+      eventos: [
+        { t: '2026-09-20T09:12:00.000Z', tipo: 'texto', contenido: 'Empiezo por el test del criterio: un IBAN con el **checksum mod 97** mal tiene que rechazarse.' },
+        { t: '2026-09-20T09:12:04.000Z', tipo: 'herramienta', herramienta: 'Write', contenido: '{"file_path":"test/iban.test.mjs","content":"import { validarIban } from ..."}' },
+        { t: '2026-09-20T09:12:05.000Z', tipo: 'resultado_herramienta', herramienta: 'Write', contenido: 'File created successfully at: test/iban.test.mjs' },
+        { t: '2026-09-20T09:12:09.000Z', tipo: 'herramienta', herramienta: 'Bash', contenido: '{"command":"node --test test/iban.test.mjs"}' },
+        { t: '2026-09-20T09:12:11.000Z', tipo: 'resultado_herramienta', herramienta: 'Bash', contenido: "✖ rechaza un IBAN con checksum invalido\n  Error: Cannot find module '../src/iban.mjs'\n[salio con 1]" },
+        { t: '2026-09-20T09:12:14.000Z', tipo: 'resultado', contenido: 'El test falla por la razon correcta: `validarIban` todavia no existe.' },
+      ],
+      tokens: { medido: false, entrada: null, salida: null, cacheLectura: null, cacheEscritura: null },
+      total: 6,
+      desde: 0,
+      siguiente: 6,
+      cortado: false,
+    },
+    {
+      fase: 'GREEN',
+      eventos: [
+        { t: '2026-09-20T09:14:00.000Z', tipo: 'texto', contenido: 'Implemento `validarIban` en `src/iban.mjs`:\n\n- quito espacios y paso a mayusculas\n- muevo los cuatro primeros caracteres al final\n- calculo el resto mod 97 por trozos' },
+        { t: '2026-09-20T09:14:20.000Z', tipo: 'herramienta', herramienta: 'Edit', contenido: '{"file_path":"src/iban.mjs","old_string":"","new_string":"export function validarIban(iban) {..."}' },
+        { t: '2026-09-20T09:14:21.000Z', tipo: 'resultado_herramienta', herramienta: 'Edit', contenido: 'The file src/iban.mjs has been updated.' },
+        { t: '2026-09-20T09:14:40.000Z', tipo: 'error', contenido: 'stream_incompleto: el runtime salio con 143 sin dejar un resultado legible.' },
+        { t: '2026-09-20T09:16:02.000Z', tipo: 'herramienta', herramienta: 'Bash', contenido: '{"command":"node --test"}' },
+        { t: '2026-09-20T09:16:06.000Z', tipo: 'resultado_herramienta', herramienta: 'Bash', contenido: '✔ rechaza un IBAN con checksum invalido\n✔ acepta ES91 2100 0418 4502 0005 1332\nℹ pass 2' },
+        { t: '2026-09-20T09:16:09.000Z', tipo: 'resultado', contenido: 'Verde: los dos casos del criterio pasan.', tokens: { entrada: 18_400, salida: 2_150, cacheLectura: 96_000, cacheEscritura: 4_100 } },
+      ],
+      tokens: { medido: true, entrada: 18_400, salida: 2_150, cacheLectura: 96_000, cacheEscritura: 4_100 },
+      total: 7,
+      desde: 0,
+      siguiente: 7,
+      cortado: false,
+    },
+    {
+      fase: 'REVIEW',
+      lente: 'seguridad',
+      eventos: [
+        { t: '2026-09-20T09:18:00.000Z', tipo: 'texto', contenido: 'Miro el diff: no hay entrada externa sin validar ni secretos. El valor de `[redactado:ANTHROPIC_API_KEY]` no aparece en el codigo.' },
+        { t: '2026-09-20T09:18:30.000Z', tipo: 'resultado', contenido: 'Sin hallazgos bloqueantes.', tokens: { entrada: 6_200, salida: 410, cacheLectura: null, cacheEscritura: null } },
+      ],
+      tokens: { medido: true, entrada: 6_200, salida: 410, cacheLectura: null, cacheEscritura: null },
+      total: 2,
+      desde: 0,
+      siguiente: 2,
+      cortado: false,
+    },
+    {
+      fase: 'REVIEW',
+      lente: 'correccion',
+      eventos: Array.from({ length: 3 }, (_, i) => ({
+        t: `2026-09-20T09:18:0${i}.000Z`,
+        tipo: 'herramienta' as const,
+        herramienta: 'Read',
+        contenido: `{"file_path":"src/iban.mjs","offset":${i * 40}}`,
+      })),
+      tokens: { medido: true, entrada: 9_800, salida: 1_020, cacheLectura: 40_000, cacheEscritura: null },
+      total: 412,
+      desde: 0,
+      siguiente: 3,
+      cortado: true,
+    },
+  ],
 }
 
 const DIFF_DE_EJEMPLO: DiffDeTarea = {
@@ -1556,7 +1746,27 @@ function CatalogoDelBoard({ navegar }: { navegar: Navegar }) {
           alAbrirExterno={SIN_EFECTO}
           resumenDeTarea={(tarea) => <ResumenDeDiff diff={tarea.id === 'T001' ? DIFF_DE_EJEMPLO : null} />}
           diff={{ datos: DIFF_DE_EJEMPLO, error: null }}
+          transcript={() => (
+            <PanelDeTranscript
+              transcript={TRANSCRIPT_DE_EJEMPLO}
+              error={null}
+              cargando={false}
+              alCargarMas={SIN_EFECTO}
+              faseInicial="GREEN"
+            />
+          )}
         />
+      </Pantalla>
+
+      <Pantalla
+        titulo="Transcript de una tarea"
+        nota="Por fase, con sus tokens; RED dice «sin medir» (el runtime no los reporto), no cero. Una lente de REVIEW con 412 eventos se pagina y lo dice. Las herramientas van plegadas con su entrada en una linea."
+      >
+        <div className="flex flex-col gap-8">
+          <PanelDeTranscript transcript={TRANSCRIPT_DE_EJEMPLO} error={null} cargando={false} alCargarMas={SIN_EFECTO} faseInicial="RED" />
+          <PanelDeTranscript transcript={TRANSCRIPT_DE_EJEMPLO} error={null} cargando={false} alCargarMas={SIN_EFECTO} faseInicial="REVIEW·correccion" />
+          <PanelDeTranscript transcript={{ ...TRANSCRIPT_DE_EJEMPLO, fases: [] }} error={null} cargando={false} />
+        </div>
       </Pantalla>
 
       <Pantalla titulo="Costos" nota="Total, por proyecto y los runs mas caros. Los sin medir se cuentan aparte.">
@@ -1587,6 +1797,28 @@ function CatalogoDelBoard({ navegar }: { navegar: Navegar }) {
 
       <Pantalla titulo="Settings → Flota por defecto" nota="El hueco declarado: la flota es de cada proyecto.">
         <PanelDeFlotaPorDefecto proyectos={PROYECTOS_DEL_LATERAL} cargando={false} error={null} navegar={navegar} />
+      </Pantalla>
+
+      <Pantalla
+        titulo="Settings → Diagnostico"
+        nota="Codex ausente (solo apaga lo que corre con Codex), un repo con la confianza de Claude Code pendiente y otro sin gate."
+      >
+        <PanelDeDiagnostico
+          diagnostico={DIAGNOSTICO_DE_EJEMPLO}
+          cargando={false}
+          error={null}
+          comprobando={false}
+          alVolverAComprobar={SIN_EFECTO}
+        />
+      </Pantalla>
+
+      <Pantalla titulo="Settings del proyecto → resumen del diagnostico" nota="Lo que impide Run en este proyecto, sin ir a Settings general.">
+        <ResumenDeDiagnostico
+          diagnostico={{ ...DIAGNOSTICO_DE_EJEMPLO, proyectos: [DIAGNOSTICO_DE_EJEMPLO.proyectos[0]] }}
+          error={null}
+          comprobando={false}
+          alVolverAComprobar={SIN_EFECTO}
+        />
       </Pantalla>
     </>
   )

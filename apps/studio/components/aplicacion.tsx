@@ -15,6 +15,7 @@ import {
   ScrollText,
   Settings2,
   SquareActivity,
+  Stethoscope,
   Users,
   Wrench,
 } from 'lucide-react'
@@ -47,6 +48,7 @@ import { etiquetaDePestana } from '@/components/marco/secciones'
 import { AjustesDelProyecto, AjustesGenerales } from '@/components/ajustes/marco-de-ajustes'
 import { VistaDeAjustesDeProyecto } from '@/components/ajustes/vista-ajustes-de-proyecto'
 import { VistaDeModelos } from '@/components/ajustes/vista-modelos'
+import { VistaDeDiagnostico } from '@/components/ajustes/vista-diagnostico'
 import { VistaDeFlotaPorDefecto } from '@/components/ajustes/vista-flota-por-defecto'
 import { VistaDeBoard } from '@/components/vista-board'
 import { VistaDeListaDeRuns } from '@/components/vista-lista-de-runs'
@@ -201,6 +203,8 @@ function Contenido({
           <VistaDeConexiones proyectoId={null} navegar={navegar} />
         ) : seccion === 'modelos' ? (
           <VistaDeModelos />
+        ) : seccion === 'diagnostico' ? (
+          <VistaDeDiagnostico />
         ) : seccion === 'credenciales' ? (
           <VistaDeCredenciales credencialAbierta={ruta.id} navegar={navegar} />
         ) : seccion === 'flota-por-defecto' ? (
@@ -317,6 +321,7 @@ function comandosDeNavegacion(
   const deSettings: Comando[] = [
     { id: 'ir-herramientas', etiqueta: 'Herramientas y conexiones', grupo: 'Settings', palabrasClave: ['conexiones', 'github', 'linear', 'gestor'], icono: <Plug />, ejecutar: ir({ seccion: 'settings', id: null }) },
     { id: 'ir-modelos', etiqueta: 'Modelos', descripcion: 'Runtimes de agente: iniciar sesion o API key', grupo: 'Settings', palabrasClave: ['runtime', 'claude', 'codex', 'openai', 'api key'], icono: <Cpu />, ejecutar: ir({ seccion: 'modelos', id: null }) },
+    { id: 'ir-diagnostico', etiqueta: 'Diagnostico', descripcion: 'Por que un run no va a arrancar: binarios, confianza de Claude Code, gate y runtimes', grupo: 'Settings', palabrasClave: ['doctor', 'git', 'claude', 'codex', 'confianza', 'trust'], icono: <Stethoscope />, ejecutar: ir({ seccion: 'diagnostico', id: null }) },
     { id: 'ir-credenciales', etiqueta: 'Credenciales', descripcion: 'Inventario, grants y vista inversa', grupo: 'Settings', palabrasClave: ['secreto', 'token', 'grant', 'boveda'], icono: <KeyRound />, ejecutar: ir({ seccion: 'credenciales', id: null }) },
     { id: 'ir-flota-por-defecto', etiqueta: 'Flota por defecto', grupo: 'Settings', palabrasClave: ['agentes', 'flota'], icono: <Users />, ejecutar: ir({ seccion: 'flota-por-defecto', id: null }) },
     { id: 'ir-auditoria', etiqueta: 'Auditoria', descripcion: 'Registro append-only, solo lectura', grupo: 'Settings', palabrasClave: ['registro', 'bitacora', 'append'], icono: <ScrollText />, ejecutar: ir({ seccion: 'auditoria', id: null }) },
