@@ -174,7 +174,7 @@ export function sdkAusente(especificador, detalle) {
       "aplicacion instalada resuelve solo si el paquete viajo como recurso del sidecar, porque el bundle no " +
       "lleva `node_modules`.",
     "Declara el subarbol del paquete en `bundle.resources` de `apps/desktop/src-tauri/tauri.conf.json` " +
-      "(`../../../node_modules/<paquete>/**/*` hacia `node_modules/<paquete>/`) y vuelve a construir la " +
+      "(`../../../node_modules/<paquete>` hacia `app/node_modules/<paquete>`) y vuelve a construir la " +
       "aplicacion. La guarda que ata los imports a los recursos esta en " +
       "`packages/service/test/recursos-del-escritorio.test.mjs`.",
     503,

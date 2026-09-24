@@ -1,52 +1,244 @@
-// Cada paquete que el servicio importa viaja con el al escritorio, y en la
-// posicion exacta que sus imports esperan.
+// Lo que el escritorio empaqueta es un ARBOL QUE FUNCIONA SOLO, no una lista de
+// archivos que casualmente estan.
 //
-// EL FALLO QUE ESTO CIERRA, Y YA OCURRIO. El escritorio empaqueta los recursos
-// que `tauri.conf.json` declara y nada mas. Un paquete importado y no declarado
-// resuelve perfectamente en el repositorio y revienta al abrir la aplicacion
-// instalada, con un `ERR_MODULE_NOT_FOUND` que el operador ve como una ventana
-// que no abre, sin ningun mensaje que lo explique. Paso con el lock, y el
-// arreglo de entonces fue copiar el mecanismo dentro del paquete.
+// EL FALLO QUE ESTO CIERRA, Y YA OCURRIO TRES VECES CON TRES FORMAS DISTINTAS.
+// El escritorio empaqueta los recursos que `tauri.conf.json` declara y nada mas.
+// Cualquier ruta que el codigo resuelva y que no aterrice dentro de lo declarado
+// resuelve perfectamente en el repositorio y revienta en la aplicacion
+// instalada, sin ningun mensaje que el operador pueda relacionar con la causa:
 //
-// Ese arreglo no escala: cablear cuatro paquetes ES el trabajo de este
-// servicio. Asi que en vez de prohibir los imports de fuera, se ata la lista de
-// imports a la lista de recursos, y si se separan falla aqui.
+//   1. Un paquete importado y no declarado: `ERR_MODULE_NOT_FOUND` y una ventana
+//      que no abre. Paso con el lock.
+//   2. Un especificador desnudo (`import("ai")`) que resuelve por el
+//      `node_modules` de la raiz del repo, que el bundle no lleva.
+//   3. Una ruta relativa que asume la forma del REPOSITORIO: `motor.mjs` busca
+//      `../../../providers/`, `lanzador.mjs` busca `../../engine/bin/`, y el
+//      motor importa `../../../providers/contract.mjs`. El bundle mapeaba cada
+//      paquete a la raiz de recursos (`servicio/`, `engine/`...), asi que esas
+//      rutas salian del arbol empaquetado — y ademas `providers/` y
+//      `engine/bin/` ni viajaban. El servicio arrancaba, el board se pintaba, y
+//      Run devolvia `pieza_ausente` en el `.app`.
 //
-// LA SEGUNDA MITAD IMPORTA TANTO COMO LA PRIMERA: no basta con que el paquete
-// viaje, tiene que aterrizar donde el import lo busca. El servicio hace
-// `../../store/src/...` desde `servicio/src/`, que en el bundle resuelve a la
-// RAIZ de recursos — no a `packages/`. Declararlo en `packages/store/src/`
-// empaqueta el archivo correcto en el sitio equivocado, y el sintoma es
-// identico al de no empaquetarlo: exactamente igual de mudo.
+// Y UN CUARTO QUE NINGUNA GUARDA VEIA: en la forma de mapa, Tauri APLANA los
+// globs. `"src/**/*": "servicio/src/"` copia `src/adaptadores/codex.mjs` a
+// `servicio/src/codex.mjs` (tauri-utils `resources.rs`: para un glob el destino
+// es `dest.join(file_name)`). Todo import a un subdirectorio se rompia igual de
+// mudo. Solo la forma de DIRECTORIO (clave sin `*`) conserva la estructura.
+//
+// LA REGLA QUE SALE DE LAS CUATRO: el bundle REPLICA la estructura del
+// repositorio bajo un prefijo (`app/`). Con eso cada ruta relativa del codigo
+// significa exactamente lo mismo en el repo y en el `.app`, y la guarda deja de
+// tener que saber como importa cada paquete: basta con emular el mapeo de Tauri
+// y comprobar que toda referencia relativa de lo empaquetado cae DENTRO de lo
+// empaquetado.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { constants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { constants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 
 const RAIZ = new URL("../../../", import.meta.url).pathname;
-const CONFIG = join(RAIZ, "apps/desktop/src-tauri/tauri.conf.json");
+const SRC_TAURI = join(RAIZ, "apps/desktop/src-tauri");
+const CONFIG = join(SRC_TAURI, "tauri.conf.json");
 
-/** Todos los `.mjs` de un directorio, recursivo. */
-function fuentes(dir, acc = []) {
+/** Todo lo que viaja cuelga de aca dentro de los recursos del `.app`. */
+const PREFIJO = "app/";
+/** Las claves de `bundle.resources` son relativas a `src-tauri`, tres niveles bajo la raiz. */
+const SUBIR = "../../../";
+
+const leerRecursos = () => JSON.parse(readFileSync(CONFIG, "utf8")).bundle?.resources ?? {};
+
+/** Todos los archivos de un directorio, recursivo. */
+function archivos(dir, acc = []) {
   for (const entrada of readdirSync(dir)) {
     const p = join(dir, entrada);
-    if (statSync(p).isDirectory()) fuentes(p, acc);
-    else if (entrada.endsWith(".mjs")) acc.push(p);
+    if (statSync(p).isDirectory()) archivos(p, acc);
+    else acc.push(p);
   }
   return acc;
 }
+
+const fuentes = (dir) => archivos(dir).filter((p) => p.endsWith(".mjs"));
+
+/**
+ * El arbol empaquetado, emulando a tauri-utils (`resources.rs`): destino
+ * relativo a la raiz de recursos -> archivo de origen en disco.
+ *
+ * - Clave con `*` (glob): cada coincidencia va a `dest/<nombre>` — APLANADA.
+ *   Solo se emula `<dir>/**\/*`, que es la forma que se uso; cualquier otra hace
+ *   fallar la guarda de mas abajo antes de llegar aca.
+ * - Clave que es un directorio: se recorre y se conserva la estructura.
+ * - Clave que es un archivo: va exactamente a `dest`.
+ */
+function arbolEmpaquetado(recursos) {
+  const arbol = new Map();
+  for (const [clave, destino] of Object.entries(recursos)) {
+    const dest = destino.replace(/\/+$/, "");
+    if (clave.includes("*")) {
+      const base = join(SRC_TAURI, clave.replace(/\/\*\*\/\*$/, ""));
+      if (!existsSync(base)) continue;
+      for (const p of archivos(base)) arbol.set(posix.join(dest, p.split("/").pop()), p);
+      continue;
+    }
+    const origen = join(SRC_TAURI, clave);
+    if (!existsSync(origen)) continue;
+    if (statSync(origen).isDirectory()) {
+      for (const p of archivos(origen)) arbol.set(posix.join(dest, p.slice(origen.length + 1)), p);
+    } else {
+      arbol.set(dest, origen);
+    }
+  }
+  return arbol;
+}
+
+/** Quita comentarios de linea y de bloque, para no leer ejemplos como codigo. */
+const sinComentarios = (texto) => texto.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+/**
+ * Las referencias RELATIVAS que un modulo resuelve en runtime: imports
+ * estaticos, imports dinamicos, y `new URL("...", import.meta.url)`, que es como
+ * se nombran el motor, los proveedores, el worker del escaneo y los esquemas.
+ */
+function referenciasRelativas(texto) {
+  const limpio = sinComentarios(texto);
+  const refs = [];
+  for (const m of limpio.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*["'](\.\.?\/[^"']*)["']/g)) refs.push(m[1]);
+  for (const m of limpio.matchAll(/new URL\(\s*["'](\.\.?\/[^"']*)["']\s*,\s*import\.meta\.url/g)) refs.push(m[1]);
+  return refs;
+}
+
+/** La constante `ENTRADA_SERVICIO` de `lib.rs`, que es lo que la cascara resuelve en el `.app`. */
+function entradaDelServicio() {
+  const lib = readFileSync(join(SRC_TAURI, "src/lib.rs"), "utf8");
+  const m = lib.match(/const ENTRADA_SERVICIO: &str = "([^"]+)";/);
+  assert.ok(m, "no se encontro `ENTRADA_SERVICIO` en lib.rs: esta guarda dejo de mirar donde tiene que mirar");
+  return m[1];
+}
+
+// ---------------------------------------------------------------------------
+// LA FORMA: una replica del repositorio bajo `app/`
+// ---------------------------------------------------------------------------
+
+test("ningun recurso se declara con glob: en la forma de mapa Tauri APLANA los subdirectorios", () => {
+  const conGlob = Object.keys(leerRecursos()).filter((k) => k.includes("*"));
+  assert.deepEqual(
+    conGlob,
+    [],
+    "estas entradas usan un glob, y Tauri copia cada coincidencia a `<destino>/<nombre>` sin su subdirectorio:\n" +
+      conGlob.map((k) => `  ${k}`).join("\n") +
+      "\nDeclara el directorio sin `*` (`\"../../../packages/x/src\": \"app/packages/x/src\"`), que se recorre conservando la estructura.",
+  );
+});
+
+test("cada recurso aterriza en `app/` + su ruta en el repositorio, sin excepciones", () => {
+  // Con la identidad bajo un prefijo, `../../engine/bin/` desde
+  // `app/packages/service/src/` es `app/packages/engine/bin/`, igual que en el
+  // repo. Una entrada que se desvie de la regla vuelve a hacer que una ruta
+  // relativa signifique otra cosa en el `.app`.
+  const recursos = leerRecursos();
+  const desviados = [];
+  for (const [clave, destino] of Object.entries(recursos)) {
+    if (!clave.startsWith(SUBIR)) {
+      desviados.push(`${clave}: no parte de la raiz del repositorio (${SUBIR})`);
+      continue;
+    }
+    const esperado = PREFIJO + clave.slice(SUBIR.length);
+    if (destino !== esperado) desviados.push(`${clave} -> ${destino} (tenia que ser ${esperado})`);
+  }
+  assert.deepEqual(desviados, [], `recursos que no replican la estructura del repositorio:\n${desviados.join("\n")}`);
+});
+
+test("la entrada del servicio que resuelve lib.rs esta en el arbol empaquetado", () => {
+  const entrada = entradaDelServicio();
+  const arbol = arbolEmpaquetado(leerRecursos());
+  assert.ok(
+    arbol.has(entrada),
+    `lib.rs lanza \`${entrada}\` desde los recursos y ese archivo no se empaqueta: la aplicacion abre sin servicio`,
+  );
+});
+
+test("ningun archivo de pruebas viaja: `node --test` los encontraria en `target/` y en el `.app`", () => {
+  // No es solo peso. `tauri-build` copia los recursos a `target/<perfil>/app/`
+  // y el `.app` queda en `target/release/bundle/`, ambos DENTRO del repo: la
+  // suite de la raiz (`node --test`) recogia esas copias y las corria desde un
+  // sitio donde sus rutas no significan nada. Paso con `providers/` recorrido
+  // entero.
+  // `node_modules/` se excluye: `node --test` no entra ahi, y los paquetes de
+  // terceros viajan enteros a proposito (ver la prueba de lo declarado basta).
+  const pruebas = [...arbolEmpaquetado(leerRecursos()).keys()]
+    .filter((d) => !d.startsWith(`${PREFIJO}node_modules/`))
+    .filter((d) => /\.test\.[cm]?js$|(^|\/)test\//.test(d));
+  assert.deepEqual(pruebas, [], `archivos de prueba empaquetados:\n${pruebas.join("\n")}`);
+});
+
+test("todo proveedor del motor viaja: cada `providers/<slug>/index.mjs` esta declarado", () => {
+  // El motor carga los proveedores POR RUTA (`providers/<slug>/index.mjs`,
+  // `motor.mjs`), no por import: la guarda de referencias no los ve. Agregar un
+  // gestor sigue siendo agregar un directorio (principio VI) — mas una linea en
+  // `bundle.resources`, que esta prueba exige para que no falte solo en el `.app`.
+  const arbol = arbolEmpaquetado(leerRecursos());
+  const dir = join(RAIZ, "providers");
+  const slugs = readdirSync(dir).filter((d) => existsSync(join(dir, d, "index.mjs")));
+  assert.ok(slugs.length >= 3, `solo ${slugs.length} proveedores en providers/: la forma del directorio cambio`);
+  const faltan = slugs.filter((s) => !arbol.has(`${PREFIJO}providers/${s}/index.mjs`));
+  assert.deepEqual(faltan, [], `proveedores que no viajan al escritorio: ${faltan.join(", ")}.\nDeclara \`${SUBIR}providers/<slug>/index.mjs\`.`);
+});
+
+// ---------------------------------------------------------------------------
+// LA GUARDA QUE FALTABA: ninguna ruta relativa sale de lo empaquetado
+// ---------------------------------------------------------------------------
+
+test("LA GUARDA QUE FALTABA: toda referencia relativa de lo empaquetado cae dentro de lo empaquetado", () => {
+  // Se razona en el espacio del BUNDLE, no en el del repo: cada modulo se ubica
+  // donde Tauri lo va a dejar y cada `../` se resuelve desde ahi. Asi la guarda
+  // sirve para cualquier forma de `bundle.resources`, y no solo para la que se
+  // eligio: si alguien vuelve a mapear a la raiz, cae aqui.
+  //
+  // Los `*.test.mjs` no se miran: viajan con `providers/` pero nadie los ejecuta
+  // en el `.app`, y sus fixtures apuntan a donde quieran.
+  const arbol = arbolEmpaquetado(leerRecursos());
+  const destinos = [...arbol.keys()];
+  const hayDirectorio = (d) => destinos.some((x) => x.startsWith(d.endsWith("/") ? d : `${d}/`));
+
+  const rotas = [];
+  let miradas = 0;
+  for (const [destino, origen] of arbol) {
+    if (!destino.endsWith(".mjs") || destino.endsWith(".test.mjs")) continue;
+    if (destino.startsWith(`${PREFIJO}node_modules/`)) continue;
+    for (const ref of referenciasRelativas(readFileSync(origen, "utf8"))) {
+      miradas++;
+      const resuelta = posix.normalize(posix.join(posix.dirname(destino), ref));
+      if (resuelta.startsWith("../") || resuelta === "..") {
+        rotas.push(`${destino}: \`${ref}\` sale de la carpeta de recursos (${resuelta})`);
+      } else if (ref.endsWith("/") ? !hayDirectorio(resuelta) : !arbol.has(resuelta)) {
+        rotas.push(`${destino}: \`${ref}\` apunta a \`${resuelta}\`, que no se empaqueta`);
+      }
+    }
+  }
+
+  // Sin esto el test es vacio: si el arbol quedara a cero, no miraria nada.
+  assert.ok(miradas > 50, `solo ${miradas} referencias relativas miradas: la configuracion o los imports cambiaron de forma`);
+  assert.deepEqual(
+    rotas,
+    [],
+    "hay rutas que resuelven en el repositorio y NO en la aplicacion instalada:\n" +
+      rotas.join("\n") +
+      "\nEn el `.app` lo que no se declara no existe, y el sintoma es `ERR_MODULE_NOT_FOUND` o `pieza_ausente`.",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Los paquetes del monorepo: ni de menos, ni de mas
+// ---------------------------------------------------------------------------
 
 /** Los paquetes del monorepo que el servicio importa de verdad, leidos del codigo. */
 function paquetesImportados() {
   const encontrados = new Set();
   for (const base of ["src", "bin"]) {
     for (const archivo of fuentes(join(RAIZ, "packages/service", base))) {
-      const texto = readFileSync(archivo, "utf8");
-      // `../../<paquete>/` desde `packages/service/<base>/` es `packages/<paquete>/`.
-      for (const m of texto.matchAll(/from\s+["']\.\.\/\.\.\/([a-z-]+)\//g)) {
+      for (const m of readFileSync(archivo, "utf8").matchAll(/from\s+["']\.\.\/\.\.\/([a-z-]+)\//g)) {
         encontrados.add(m[1]);
       }
     }
@@ -54,300 +246,176 @@ function paquetesImportados() {
   return encontrados;
 }
 
-test("todo paquete que el servicio importa esta declarado como recurso del escritorio", () => {
-  const recursos = JSON.parse(readFileSync(CONFIG, "utf8")).bundle?.resources ?? {};
-  const importados = paquetesImportados();
-
-  // Sin esta guarda el test es vacio: si los imports cambiaran de forma, el
-  // conjunto quedaria a cero y el bucle no comprobaria nada.
-  assert.ok(
-    importados.size > 0,
-    "el servicio no importa ningun paquete del monorepo, o cambio la forma de sus imports y este test dejo de mirar donde tiene que mirar",
-  );
-
-  const faltan = [];
-  for (const paquete of importados) {
-    const origen = `../../../packages/${paquete}/src/**/*`;
-    if (!(origen in recursos)) {
-      faltan.push(`${paquete}: falta la entrada ${origen} en bundle.resources`);
-      continue;
-    }
-    // Y aterriza donde el import lo busca: raiz de recursos, no `packages/`.
-    const destino = recursos[origen];
-    assert.equal(
-      destino,
-      `${paquete}/src/`,
-      `el recurso de '${paquete}' viaja a '${destino}', pero el servicio lo importa como '../../${paquete}/src/...', que en el bundle resuelve a '${paquete}/src/'`,
-    );
-    const manifiesto = `../../../packages/${paquete}/package.json`;
-    if (!(manifiesto in recursos)) {
-      faltan.push(`${paquete}: falta su package.json, y sin el Node no resuelve el paquete como modulo ES`);
-    }
-  }
-
-  assert.deepEqual(faltan, [], `paquetes que el servicio importa y no viajan al escritorio:\n${faltan.join("\n")}`);
-});
-
-test("no se declara como recurso ningun paquete que el servicio no importa", () => {
-  // La direccion contraria, y no es simetria por gusto: un recurso declarado de
-  // mas engorda el instalador con codigo muerto y, peor, hace creer que ese
-  // paquete forma parte de la superficie del escritorio. Quien lea la
-  // configuracion para saber que viaja obtendria una respuesta falsa.
-  const recursos = JSON.parse(readFileSync(CONFIG, "utf8")).bundle?.resources ?? {};
-  const importados = paquetesImportados();
-
-  const sobran = [];
-  for (const origen of Object.keys(recursos)) {
-    const m = origen.match(/^\.\.\/\.\.\/\.\.\/packages\/([a-z-]+)\/src\/\*\*\/\*$/);
-    if (!m) continue;
-    // El propio servicio viaja siempre; es el sidecar.
-    if (m[1] === "service") continue;
-    if (!importados.has(m[1])) sobran.push(m[1]);
-  }
-
-  assert.deepEqual(
-    sobran,
-    [],
-    `declarados como recursos y no importados por el servicio: ${sobran.join(", ")}.\n` +
-      "Si se anadieron previendo un cableado futuro, el orden correcto es al reves: primero el import, despues el recurso.",
-  );
-});
-
-// ---------------------------------------------------------------------------
-// LA MITAD QUE FALTABA: los especificadores DESNUDOS
-// ---------------------------------------------------------------------------
-//
-// EL AGUJERO QUE ESTO CIERRA, Y ESTABA ABIERTO DE PAR EN PAR. Todo lo de arriba
-// mira imports RELATIVOS: `../../store/src/...`. Un especificador desnudo
-// —`import { generateObject } from "ai"`— no empareja con ninguna de esas
-// expresiones y pasaba sin que nadie lo mirara. Y es exactamente el mismo fallo
-// que todo este archivo existe para impedir, con una forma distinta: resuelve
-// perfectamente en el repositorio, donde hay un `node_modules` en la raiz, y
-// muere con `ERR_MODULE_NOT_FOUND` en la aplicacion instalada, donde no lo hay.
-// El operador lo ve como una ventana que no abre.
-//
-// POR QUE LA GUARDA DISTINGUE LO DECLARADO DE LO COLADO EN VEZ DE PROHIBIR. Se
-// penso en prohibir los desnudos y no sirve: la asistencia con IA ES una
-// llamada a un SDK, asi que la prohibicion habria que romperla el primer dia.
-// Lo que se hace es lo mismo que con los paquetes del monorepo — atar la lista
-// de imports a la lista de recursos — y sumarle una prueba que NO se puede
-// pasar por descuido: se monta el subarbol declarado en un directorio de usar y
-// tirar FUERA del repositorio, y se importa desde ahi con un Node limpio. Si lo
-// declarado no basta, el import falla ahi y no en la maquina del operador.
-//
-// EL COSTE ESTA DECLARADO Y NO ESCONDIDO: cada paquete de terceros que entre
-// aqui engorda el instalador con su subarbol entero, y la prueba de mas abajo
-// lo mide y lo dice.
-
-/** Los paquetes del monorepo que viajan, leidos de la propia configuracion. */
+/** Los paquetes del monorepo cuyo `src` viaja, leidos de la propia configuracion. */
 function paquetesQueViajan(recursos) {
   const encontrados = new Set();
   for (const origen of Object.keys(recursos)) {
-    const m = origen.match(/^\.\.\/\.\.\/\.\.\/packages\/([a-z-]+)\/src\/\*\*\/\*$/);
+    const m = origen.match(/^\.\.\/\.\.\/\.\.\/packages\/([a-z-]+)\/src$/);
     if (m) encontrados.add(m[1]);
   }
   return encontrados;
 }
 
-/**
- * El nombre del paquete de un especificador desnudo: `ai/test` es `ai`, y
- * `@ai-sdk/anthropic/internal` es `@ai-sdk/anthropic`.
- */
+test("todo paquete que el servicio importa viaja con su package.json", () => {
+  const recursos = leerRecursos();
+  const importados = paquetesImportados();
+  assert.ok(importados.size > 0, "el servicio no importa ningun paquete del monorepo, o cambio la forma de sus imports");
+
+  const faltan = [];
+  for (const paquete of importados) {
+    if (!(`${SUBIR}packages/${paquete}/src` in recursos)) faltan.push(`${paquete}: falta ${SUBIR}packages/${paquete}/src`);
+    if (!(`${SUBIR}packages/${paquete}/package.json` in recursos)) {
+      faltan.push(`${paquete}: falta su package.json, y sin el Node no resuelve el paquete como modulo ES`);
+    }
+  }
+  assert.deepEqual(faltan, [], `paquetes que el servicio importa y no viajan al escritorio:\n${faltan.join("\n")}`);
+});
+
+test("no se declara como recurso ningun paquete del monorepo que nadie importa", () => {
+  // Un recurso de mas engorda el instalador con codigo muerto y hace creer que
+  // ese paquete es parte de la superficie del escritorio. Los que el motor
+  // importa por su cuenta (`adapters`, `vault`) tambien los importa el servicio.
+  const sobran = [...paquetesQueViajan(leerRecursos())].filter((p) => p !== "service" && !paquetesImportados().has(p));
+  assert.deepEqual(
+    sobran,
+    [],
+    `declarados como recursos y no importados por el servicio: ${sobran.join(", ")}.\n` +
+      "El orden correcto es al reves: primero el import, despues el recurso.",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Los especificadores DESNUDOS: lo de terceros tambien tiene que viajar
+// ---------------------------------------------------------------------------
+
+/** `ai/test` es `ai`, y `@ai-sdk/anthropic/internal` es `@ai-sdk/anthropic`. */
 function paqueteDe(especificador) {
   const partes = especificador.split("/");
   return especificador.startsWith("@") ? `${partes[0]}/${partes[1]}` : partes[0];
 }
 
 /**
- * Los especificadores desnudos de un paquete que viaja, con el archivo donde
- * estan. Mira imports ESTATICOS Y DINAMICOS: la frontera con el SDK usa
- * `await import("ai")` a proposito —para poder declarar su ausencia en vez de
- * reventar al cargar— y una guarda que solo mirase los estaticos no veria
- * ninguno de los dos paquetes que de verdad tienen que viajar.
+ * Los especificadores desnudos de todo lo empaquetado del monorepo, estaticos y
+ * dinamicos: la frontera con el SDK usa `await import("ai")` a proposito.
  */
-function desnudosDe(paquete) {
+function desnudosEmpaquetados(arbol) {
   const encontrados = [];
-  for (const base of ["src", "bin"]) {
-    const dir = join(RAIZ, "packages", paquete, base);
-    if (!existsSync(dir)) continue;
-    for (const archivo of fuentes(dir)) {
-      const texto = readFileSync(archivo, "utf8")
-        .replace(/^\s*\/\/.*$/gm, "")
-        .replace(/\/\*[\s\S]*?\*\//g, "");
-      for (const m of texto.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
-        if (m[1].startsWith(".") || m[1].startsWith("node:")) continue;
-        encontrados.push({ archivo: archivo.slice(RAIZ.length), especificador: m[1] });
-      }
+  for (const [destino, origen] of arbol) {
+    if (!destino.endsWith(".mjs") || destino.endsWith(".test.mjs")) continue;
+    if (destino.startsWith(`${PREFIJO}node_modules/`)) continue;
+    const texto = sinComentarios(readFileSync(origen, "utf8"));
+    for (const m of texto.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*["']([^"']+)["']/g)) {
+      if (m[1].startsWith(".") || m[1].startsWith("node:")) continue;
+      encontrados.push({ archivo: destino, especificador: m[1] });
     }
   }
   return encontrados;
 }
 
-/** La entrada de recurso que le corresponde a un paquete de `node_modules`. */
-const origenDeTercero = (paquete) => `../../../node_modules/${paquete}/**/*`;
-const destinoDeTercero = (paquete) => `node_modules/${paquete}/`;
-
-/** Los paquetes de terceros declarados como recursos, leidos de la configuracion. */
+/** Los paquetes de terceros declarados como recursos. */
 function tercerosDeclarados(recursos) {
   const encontrados = new Set();
   for (const origen of Object.keys(recursos)) {
-    const m = origen.match(/^\.\.\/\.\.\/\.\.\/node_modules\/(.+)\/\*\*\/\*$/);
+    const m = origen.match(/^\.\.\/\.\.\/\.\.\/node_modules\/(.+)$/);
     if (m) encontrados.add(m[1]);
   }
   return encontrados;
 }
 
-test("EL AGUJERO: un especificador desnudo en un paquete que viaja tiene que estar declarado como recurso", () => {
-  const recursos = JSON.parse(readFileSync(CONFIG, "utf8")).bundle?.resources ?? {};
-  const viajan = paquetesQueViajan(recursos);
+test("un especificador desnudo en lo empaquetado tiene que estar declarado como recurso", () => {
+  const recursos = leerRecursos();
   const declarados = tercerosDeclarados(recursos);
+  const desnudos = desnudosEmpaquetados(arbolEmpaquetado(recursos));
 
-  // Sin esto el test es vacio: si `paquetesQueViajan` dejara de emparejar, no
-  // habria donde buscar y el bucle no comprobaria nada.
-  assert.ok(viajan.size >= 5, `solo ${viajan.size} paquetes viajan al escritorio: la configuracion cambio de forma`);
+  const faltan = desnudos
+    .filter(({ especificador }) => !declarados.has(paqueteDe(especificador)))
+    .map(
+      ({ archivo, especificador }) =>
+        `${archivo}: importa \`${especificador}\` y \`${paqueteDe(especificador)}\` no viaja.\n` +
+        `  Declara \`${SUBIR}node_modules/${paqueteDe(especificador)}\` hacia \`${PREFIJO}node_modules/${paqueteDe(especificador)}\`.`,
+    );
+  assert.deepEqual(faltan, [], `especificadores desnudos que no resuelven en la aplicacion instalada:\n${faltan.join("\n")}`);
 
-  const faltan = [];
-  let mirados = 0;
-  for (const paquete of viajan) {
-    for (const { archivo, especificador } of desnudosDe(paquete)) {
-      mirados++;
-      const tercero = paqueteDe(especificador);
-      if (declarados.has(tercero)) continue;
-      faltan.push(
-        `${archivo}: importa \`${especificador}\` y \`${tercero}\` no viaja al escritorio.\n` +
-          `  Declara \`${origenDeTercero(tercero)}\` hacia \`${destinoDeTercero(tercero)}\` en bundle.resources, ` +
-          "o saca el import del paquete que viaja.",
-      );
-    }
-  }
-
-  assert.deepEqual(
-    faltan,
-    [],
-    "hay especificadores desnudos que resuelven en el repositorio y no en la aplicacion instalada:\n" +
-      faltan.join("\n") +
-      "\nEn el bundle no hay `node_modules`: lo que no se declara no viaja, y el sintoma es " +
-      "`ERR_MODULE_NOT_FOUND` al abrir la aplicacion, que el operador ve como una ventana que no abre.",
-  );
-
-  // El contador se afirma DESPUES de la comprobacion util, y solo si hay algun
-  // tercero declarado: mientras no haya ninguno, cero desnudos es la verdad.
   if (declarados.size > 0) {
-    assert.ok(
-      mirados > 0,
-      "hay paquetes de terceros declarados como recursos y ningun import desnudo que los justifique: " +
-        "o esta guarda dejo de encontrar los imports, o el instalador esta engordando con codigo muerto",
-    );
+    assert.ok(desnudos.length > 0, "hay terceros declarados y ningun import desnudo que los justifique");
   }
 });
 
-test("cada tercero declarado aterriza donde el import lo busca: la RAIZ de recursos, no `packages/`", () => {
-  // La misma mitad que ya costo algo con los paquetes del monorepo. Node
-  // resuelve un especificador desnudo subiendo directorios desde el archivo que
-  // lo importa: desde `<recursos>/asistencia/src/` sube a
-  // `<recursos>/asistencia/node_modules`, luego a `<recursos>/node_modules`.
-  // Declararlo en cualquier otro destino empaqueta el archivo correcto en el
-  // sitio equivocado, y el sintoma es identico al de no empaquetarlo.
-  const recursos = JSON.parse(readFileSync(CONFIG, "utf8")).bundle?.resources ?? {};
-  for (const paquete of tercerosDeclarados(recursos)) {
-    assert.equal(
-      recursos[origenDeTercero(paquete)],
-      destinoDeTercero(paquete),
-      `el recurso de \`${paquete}\` no aterriza en \`${destinoDeTercero(paquete)}\`, que es donde Node lo busca`,
-    );
-  }
-});
+// ---------------------------------------------------------------------------
+// LA PRUEBA QUE NO SE PUEDE PASAR POR DESCUIDO: el arbol, fuera del repo
+// ---------------------------------------------------------------------------
 
-test("LO DECLARADO BASTA: el subarbol declarado se importa FUERA del repositorio, con un Node limpio", () => {
-  // Esta es la unica prueba de este archivo que no se puede pasar por descuido.
-  // Todo lo demas compara dos listas; esto monta el bundle y lo ejercita. La
-  // diferencia importa porque la dependencia de un paquete de terceros no se
-  // lee de su `package.json` y ya: `ai` importa `zod/v4`, que es un `peer` y no
-  // aparece en `dependencies`. Una guarda que caminara los manifiestos daria
-  // por cerrada una lista a la que le falta un paquete de ocho megas, y el
-  // fallo volveria a aparecer solo en la aplicacion instalada.
-  const recursos = JSON.parse(readFileSync(CONFIG, "utf8")).bundle?.resources ?? {};
-  const declarados = [...tercerosDeclarados(recursos)];
-  const viajan = paquetesQueViajan(recursos);
-
-  const especificadores = new Set();
-  for (const paquete of viajan) for (const d of desnudosDe(paquete)) especificadores.add(d.especificador);
-
-  if (declarados.length === 0 && especificadores.size === 0) {
-    // Nada que probar todavia, y eso es un estado legitimo: hasta la
-    // asistencia con IA, al escritorio no viajaba ni una linea de terceros.
-    return;
-  }
-  assert.ok(especificadores.size > 0, "hay terceros declarados y ningun import que los use");
-
-  // El banco de pruebas va en `tmpdir` a proposito: dentro del repositorio,
-  // Node subiria hasta `<repo>/node_modules` y encontraria TODO, con lo que la
-  // prueba pasaria siempre y no probaria nada.
-  const banco = mkdtempSync(join(tmpdir(), "noxloop-bundle-"));
+test("EL ARBOL EMPAQUETADO FUNCIONA SOLO: montado fuera del repositorio, importa, encuentra el motor y los proveedores", () => {
+  // Todo lo de arriba compara listas. Esto monta el arbol tal como Tauri lo
+  // deja y lo ejercita con un Node limpio, en `tmpdir`: dentro del repo, Node
+  // subiria hasta `<repo>/node_modules` y encontraria TODO. La diferencia
+  // importa porque `ai` importa `zod/v4`, que es un `peer` y no esta en
+  // `dependencies`: una guarda que caminara manifiestos daria por cerrada una
+  // lista a la que le falta un paquete.
+  const recursos = leerRecursos();
+  const arbol = arbolEmpaquetado(recursos);
+  // `realpath` porque en macOS `tmpdir` es un enlace (`/var` -> `/private/var`)
+  // y `import.meta.url` devuelve la ruta real: sin esto, comparar prefijos falla.
+  const banco = realpathSync(mkdtempSync(join(tmpdir(), "noxloop-bundle-")));
   try {
-    for (const paquete of declarados) {
-      const origen = join(RAIZ, "node_modules", paquete);
-      assert.ok(existsSync(origen), `\`${paquete}\` esta declarado como recurso y no esta en node_modules`);
-      const destino = join(banco, "node_modules", paquete);
-      mkdirSync(dirname(destino), { recursive: true });
-      // `COPYFILE_FICLONE` para que copiar veintitantos megas en cada `npm test`
-      // no se note: en APFS y en btrfs es copia en escritura.
-      cpSync(origen, destino, { recursive: true, mode: constants.COPYFILE_FICLONE });
+    // Directorios enteros con `cpSync` (clon en escritura en APFS/btrfs) y no
+    // archivo por archivo: son miles en `node_modules`.
+    for (const [clave, destino] of Object.entries(recursos)) {
+      const origen = join(SRC_TAURI, clave);
+      assert.ok(existsSync(origen), `\`${clave}\` esta declarado como recurso y no existe`);
+      mkdirSync(dirname(join(banco, destino)), { recursive: true });
+      cpSync(origen, join(banco, destino), { recursive: true, mode: constants.COPYFILE_FICLONE });
     }
+    const app = join(banco, PREFIJO);
 
-    // El archivo que importa vive donde vivira en el bundle: un paquete del
-    // monorepo colgando de la raiz de recursos, no dentro de `node_modules`.
-    const comoEnElBundle = join(banco, "asistencia", "src");
-    mkdirSync(comoEnElBundle, { recursive: true });
-    const importador = join(comoEnElBundle, "importa.mjs");
-    writeFileSync(
-      importador,
-      [...especificadores].map((e) => `await import(${JSON.stringify(e)});`).join("\n") + "\nconsole.log('ok');\n",
-    );
+    const especificadores = [...new Set(desnudosEmpaquetados(arbol).map((d) => d.especificador))];
+    const guion = `
+      import { existsSync } from "node:fs";
+      const app = ${JSON.stringify(app)};
+      for (const e of ${JSON.stringify(especificadores)}) await import(e);
+      const motor = await import(app + "packages/service/src/motor.mjs");
+      const lanzador = await import(app + "packages/service/src/lanzador.mjs");
+      if (!motor.RAIZ_DE_PROVEEDORES.startsWith(app)) throw new Error("proveedores fuera del arbol: " + motor.RAIZ_DE_PROVEEDORES);
+      if (!existsSync(motor.RAIZ_DE_PROVEEDORES + "contract.mjs")) throw new Error("sin providers/contract.mjs en " + motor.RAIZ_DE_PROVEEDORES);
+      if (!existsSync(lanzador.BIN_DEL_MOTOR)) throw new Error("sin el binario del motor en " + lanzador.BIN_DEL_MOTOR);
+      for (const p of ["fake", "local"]) await import(motor.RAIZ_DE_PROVEEDORES + p + "/index.mjs");
+      await import(app + "packages/engine/src/wiring.mjs");
+      console.log("ok");
+    `;
+    // El importador vive donde vivira en el bundle, para que los desnudos se
+    // resuelvan subiendo desde un paquete del monorepo hasta `app/node_modules`.
+    const importador = join(app, "packages/asistencia/src/__prueba-del-arbol.mjs");
+    mkdirSync(dirname(importador), { recursive: true });
+    writeFileSync(importador, guion);
 
-    let salida;
-    try {
-      salida = execFileSync(process.execPath, [importador], { encoding: "utf8", stdio: "pipe" });
-    } catch (e) {
-      assert.fail(
-        "lo declarado en `bundle.resources` NO basta para importar lo que el sidecar importa.\n" +
-          `Especificadores: ${[...especificadores].join(", ")}\n` +
-          `Declarados: ${declarados.join(", ")}\n` +
-          `Node dijo:\n${String(e.stderr || e.message).slice(0, 1500)}\n` +
-          "Declara tambien el paquete que falta. No lo busques en `dependencies`: los `peer` no estan ahi.",
-      );
-    }
-    assert.match(salida, /ok/);
+    // Devuelve stdout + stderr: la ayuda del motor sale por stderr (su stdout
+    // es solo para el JSON del resultado).
+    const correr = (args) => {
+      const r = spawnSync(process.execPath, args, { encoding: "utf8", cwd: banco });
+      if (r.status !== 0) {
+        assert.fail(`el arbol empaquetado no funciona solo (${args.join(" ")}):\n${String(r.stderr || r.error).slice(0, 2000)}`);
+      }
+      return r.stdout + r.stderr;
+    };
+    assert.match(correr([importador]), /ok/);
+    // Y el motor arranca como lo arranca el lanzador: su bin, que importa estatico
+    // `doctor.mjs` y con el `providers/contract.mjs`. (`help` y no `--help`: el
+    // segundo sale con 1 por ser una opcion desconocida.)
+    assert.match(correr([join(app, "packages/engine/bin/noxloop.mjs"), "help"]), /noxloop/i);
   } finally {
     rmSync(banco, { recursive: true, force: true });
   }
 });
 
 test("el coste del subarbol de terceros esta medido y acotado, no descubierto en el instalador", () => {
-  // Un paquete de terceros que viaja no cuesta una linea de configuracion:
-  // cuesta su subarbol entero dentro del instalador que el operador descarga.
-  // El tope no es un numero bonito — es lo que obliga a que la proxima
-  // dependencia sea una decision con su cuenta delante, en vez de una entrada
-  // mas en una lista que ya nadie lee.
-  // 30 MB sobre los 19.7 que pesan hoy los doce paquetes del AI SDK. El margen
-  // es para una version que crezca, no para una dependencia mas: la siguiente
-  // tiene que tocar este numero, y tocarlo es la conversacion.
+  // Cada paquete de terceros que viaja cuesta su subarbol entero en el
+  // instalador. 30 MB sobre los ~20 que pesan hoy los paquetes del AI SDK: el
+  // margen es para una version que crezca, no para una dependencia mas.
   const TOPE_MB = 30;
-  const recursos = JSON.parse(readFileSync(CONFIG, "utf8")).bundle?.resources ?? {};
-  const declarados = [...tercerosDeclarados(recursos)];
+  const declarados = [...tercerosDeclarados(leerRecursos())];
   if (declarados.length === 0) return;
 
-  /** @param {string} dir */
-  const pesar = (dir) => {
-    let total = 0;
-    for (const entrada of readdirSync(dir)) {
-      const p = join(dir, entrada);
-      const st = statSync(p);
-      total += st.isDirectory() ? pesar(p) : st.size;
-    }
-    return total;
-  };
-
+  const pesar = (dir) => archivos(dir).reduce((s, p) => s + statSync(p).size, 0);
   const detalle = declarados
     .map((p) => ({ p, mb: pesar(join(RAIZ, "node_modules", p)) / 1024 / 1024 }))
     .sort((a, b) => b.mb - a.mb);
@@ -355,9 +423,8 @@ test("el coste del subarbol de terceros esta medido y acotado, no descubierto en
 
   assert.ok(
     total <= TOPE_MB,
-    `el subarbol de terceros que viaja al escritorio pesa ${total.toFixed(1)} MB y el tope declarado es ` +
-      `${TOPE_MB} MB.\n${detalle.map((d) => `  ${d.p}: ${d.mb.toFixed(1)} MB`).join("\n")}\n` +
-      "Si la dependencia nueva hace falta, sube el tope EN ESTE TEST y di por que en el informe: lo que no " +
-      "puede pasar es que el instalador crezca sin que nadie lo decida.",
+    `el subarbol de terceros que viaja al escritorio pesa ${total.toFixed(1)} MB y el tope es ${TOPE_MB} MB.\n` +
+      detalle.map((d) => `  ${d.p}: ${d.mb.toFixed(1)} MB`).join("\n") +
+      "\nSi la dependencia nueva hace falta, sube el tope EN ESTE TEST y di por que.",
   );
 });
