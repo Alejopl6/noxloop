@@ -26,6 +26,10 @@ import * as board from "./board.mjs";
 import * as carpetas from "./carpetas.mjs";
 import * as opciones from "./opciones.mjs";
 import * as asistencia from "./asistencia.mjs";
+import * as tareas from "./tareas.mjs";
+import * as runtimes from "./runtimes.mjs";
+import * as gestor from "./gestor.mjs";
+import * as diff from "./diff.mjs";
 
 export const TABLA = crearTabla([
   // ---- Salud y sesion -----------------------------------------------------
@@ -151,6 +155,9 @@ export const TABLA = crearTabla([
   // motor: hay una prueba que mide el disco antes y despues de un `GET`.
   { patron: "/v1/projects/:id/runs", metodos: ["GET", "POST"], manejar: runs.runsDelProyecto },
   { patron: "/v1/runs/:id", metodos: ["GET"], manejar: runs.unRun },
+  // Lo que cambio cada agente (US6, FR-029): `git log`/`git diff` sobre la rama
+  // y el worktree de la tarea, SIN escribir (ni el indice: ver `diff.mjs`).
+  { patron: "/v1/runs/:id/tasks/:taskId/diff", metodos: ["GET"], manejar: diff.diffDeTarea },
 
   // ---- El board (spec 003) ------------------------------------------------
   // Lanzar es `POST /v1/projects/:id/runs`, arriba: desde la spec 003 arranca
@@ -163,6 +170,30 @@ export const TABLA = crearTabla([
   { patron: "/v1/runs", metodos: ["GET"], manejar: runs.listaDeRuns },
   { patron: "/v1/usage", metodos: ["GET"], manejar: runs.uso },
   { patron: "/v1/board", metodos: ["GET"], manejar: board.board },
+
+  // ---- Tareas propias: el gestor local (spec 003, FR-030) -----------------
+  // El servicio es su UNICO escritor (principio VIII). Las usan la interfaz
+  // (crear, editar), el board (en proceso, por `puertoDeTareas`) y el MOTOR,
+  // que corre como subproceso y mueve el estado de la tarea y deja el enlace al
+  // PR por estas mismas rutas, con el token de sesion. DELETE solo sin run.
+  { patron: "/v1/projects/:id/tasks", metodos: ["GET", "POST"], manejar: tareas.tareasDelProyecto },
+  { patron: "/v1/tasks/:id", metodos: ["GET", "PATCH", "DELETE"], manejar: tareas.unaTarea },
+  { patron: "/v1/tasks/:id/comments", metodos: ["POST"], manejar: tareas.comentariosDeTarea },
+
+  // Las opciones y el mapa de estados del gestor externo del proyecto, que
+  // `motor.mjs` lee de la conexion y nadie escribia (ADO y Linear quedaban en
+  // `sin_gestor`). Validadas contra el `optionsSchema` del proveedor.
+  { patron: "/v1/projects/:id/tracker", metodos: ["PATCH"], manejar: gestor.opcionesDelGestor },
+
+  // ---- Settings -> Modelos: los runtimes de agente ------------------------
+  // El parametro se llama `:id` y no `:runtime` A PROPOSITO: la prueba del
+  // centinela concreta cada patron con ids de proyecto o inventados, y un
+  // `:runtime` le dejaria el literal «runtime» — con `:id` nunca nombra un
+  // runtime real, asi que recorrer la tabla no lanza `claude auth login` en la
+  // maquina de quien corre los tests.
+  { patron: "/v1/runtimes", metodos: ["GET"], manejar: runtimes.runtimes },
+  { patron: "/v1/runtimes/:id/login", metodos: ["POST"], manejar: runtimes.iniciarSesion },
+  { patron: "/v1/runtimes/:id/api-key", metodos: ["POST", "DELETE"], manejar: runtimes.claveDeRuntime },
 
   // ---- Asistencia con IA --------------------------------------------------
   // El catalogo contesta SIEMPRE, tambien sin clave: es con lo que la pantalla

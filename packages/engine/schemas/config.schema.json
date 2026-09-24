@@ -67,6 +67,11 @@
         "mention": { "type": "string" }
       }
     },
+    "runtime": {
+      "type": "string",
+      "minLength": 1,
+      "description": "El id del runtime que corre las fases (`claude-agent-sdk`, `codex`...). Lo escribe el servicio de control con el ejecutor resuelto en cascada (tarea -> proyecto -> general). Sin el, el motor monta el runtime de referencia. Un id que el registro no conoce falla al cargar."
+    },
     "repos": {
       "type": "object",
       "description": "Un repositorio de trabajo por clave. La clave es como lo nombran las tareas del plan.",

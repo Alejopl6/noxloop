@@ -25,6 +25,11 @@ const TABLAS_ESPERADAS = [
   "grant",
   "guideline",
   "inbox_entry",
+  // Las tareas propias (spec 003, FR-030): el gestor local vive aqui, con su
+  // numeracion por proyecto y sus comentarios.
+  "local_task",
+  "local_task_comment",
+  "local_task_sequence",
   "project",
   "project_snapshot",
   "recommendation",

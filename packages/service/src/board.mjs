@@ -33,41 +33,61 @@
 
 import { accionDelEstado, avanceDe, gastoDe, EN_VUELO, TE_NECESITAN } from "./estado-del-run.mjs";
 import { exigirProyecto } from "./comun.mjs";
+import { ejecutorDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ejecutor.mjs";
 import { datosDelProyecto, diagnosticar, secretosDelGestor } from "./motor.mjs";
+import { estadosDeRuntimes } from "./runtimes.mjs";
 import { runsConProyecto } from "./runs.mjs";
+import { puertoDeTareas } from "./tareas.mjs";
 
-/** Las columnas, en el orden en que una persona las lee (FR-001). */
+/**
+ * Las columnas, en el orden en que una persona las lee (FR-001, REVISADO el
+ * 2026-09-24 sobre el referente Nodal). Backlog va primero porque la interfaz
+ * la pinta plegada a la izquierda.
+ *
+ * POR QUE BLOQUEADO PASO DE CHIP A COLUMNA. La primera version decia «una
+ * columna por cada forma de estar detenido parte el board en nueve». Sigue
+ * siendo verdad para las nueve; no para UNA: lo que el motor ya no puede
+ * avanzar sin el operador (bloqueado o fallido) es la pregunta que el operador
+ * se hace al abrir el board, y enterrarlo en En curso con un chip ambar lo
+ * mezclaba con lo que si esta corriendo. Los demas detenidos (en cola, plan
+ * listo, permiso, criterios, interrumpido) siguen siendo chips en En curso.
+ *
+ * Y HECHO SALE SIEMPRE, con los ultimos cerrados: sin ella el operador no ve
+ * que lo que lanzo ayer termino. Acotada (`HECHOS_POR_DEFECTO`) para que un
+ * proyecto con quinientos tickets cerrados no entierre el resto.
+ */
 export const COLUMNAS = Object.freeze([
   { id: "backlog", titulo: "Backlog" },
   { id: "todo", titulo: "Todo" },
   { id: "in_progress", titulo: "En curso" },
   { id: "in_review", titulo: "En revisión" },
+  { id: "blocked", titulo: "Bloqueado" },
+  { id: "done", titulo: "Hecho" },
 ]);
+
+/** Cuantos cerrados muestra Hecho sin `includeDone`: los mas recientes. */
+export const HECHOS_POR_DEFECTO = 20;
+
+/** El motivo del boton cuando el runtime del ejecutor no tiene con que invocar al modelo. */
+export const MOTIVO_SIN_MODELO = "Conecta un modelo en Settings → Modelos";
 
 /** Cuantos tickets se piden al gestor por proyecto. El resto se DICE, no se corta en silencio. */
 export const TICKETS_POR_PROYECTO = 100;
 
-/** Los estados de run que dejan la tarjeta en En curso: en vuelo, en cola o detenido. */
-const EN_CURSO = [
-  "en_cola",
-  "planificando",
-  "corriendo",
-  "plan_listo",
-  "necesita_criterios",
-  "necesita_permiso",
-  "bloqueado",
-  "fallido",
-  "interrumpido",
-];
+/** Los estados de run que dejan la tarjeta en En curso: en vuelo, en cola o detenido esperando algo. */
+const EN_CURSO = ["en_cola", "planificando", "corriendo", "plan_listo", "necesita_criterios", "necesita_permiso", "interrumpido"];
+
+/** Los que la mandan a Bloqueado: el motor ya no la avanza sin el operador. */
+const EN_BLOQUEADO = ["bloqueado", "fallido"];
 
 /** De estado canonico del gestor a columna, cuando no hay run. */
 const COLUMNA_DEL_GESTOR = Object.freeze({
   backlog: "backlog",
   todo: "todo",
   in_progress: "in_progress",
-  blocked: "in_progress",
+  blocked: "blocked",
   in_review: "in_review",
-  done: "in_review",
+  done: "done",
 });
 
 /** @param {string} nombre */
@@ -131,35 +151,68 @@ function chipDe(run, ticket, parte) {
 }
 
 /**
- * Una tarjeta. `null` si no va en el board (un terminado sin `includeDone`).
+ * Quien ejecuta un ticket y como termina, resuelto en cascada (FR-031/032).
+ * Solo una tarea LOCAL declara los suyos (en `raw`, que es de su proveedor);
+ * un ticket de un gestor externo hereda del proyecto y termina en PR.
+ *
+ * @param {any} ticket
+ * @param {any} parte
+ */
+export function ejecucionDeTarjeta(ticket, parte) {
+  const propia = parte.gestor === "local" ? ticket?.raw ?? null : null;
+  const ejecutor = resolverEjecutor(propia?.ejecutor ?? null, parte.ejecutorDelProyecto ?? null);
+  const termino = typeof propia?.termino === "string" ? propia.termino : "pr";
+  return { ejecutor, termino, clave: String(ticket?.key ?? ticket?.id ?? "") };
+}
+
+/**
+ * Una tarjeta.
  *
  * @param {any} ticket el `ListedItem` del gestor, o uno sintetizado desde el run
  * @param {any} run el run derivado, o `null`
  * @param {any} parte
- * @param {boolean} includeDone
+ * @param {Map<string, any>} runtimes el estado de cada runtime, si se sabe
  */
-function tarjetaDe(ticket, run, parte, includeDone) {
+function tarjetaDe(ticket, run, parte, runtimes) {
   let columna;
   if (run && run.estado === "pr_abierto") columna = "in_review";
+  else if (run && EN_BLOQUEADO.includes(run.estado)) columna = "blocked";
   else if (run && EN_CURSO.includes(run.estado)) columna = "in_progress";
   else {
     const canonico = ticket?.canonicalState ?? "todo";
-    if (canonico === "done" && !includeDone) return null;
     columna = /** @type {any} */ (COLUMNA_DEL_GESTOR)[canonico] ?? "todo";
   }
 
   // La accion principal: UNA (FR-005). Todas las que lanzan el motor —Run,
-  // aprobar, reintentar— se deshabilitan con el MISMO motivo si el proyecto no
-  // se puede lanzar: el boton dice que falta en vez de fallar al pulsarlo.
+  // aprobar, reintentar— se deshabilitan con el MISMO motivo que la ruta daria
+  // al pulsarlas: el boton dice que falta en vez de fallar. En orden: el
+  // proyecto (sin repo, sin gate...), el ejecutor o el termino que el motor no
+  // sabe cumplir, y el runtime sin sesion ni key.
+  const ejecucion = ejecucionDeTarjeta(ticket, parte);
   const tipo = run ? accionDelEstado(run.estado) : "run";
   const lanza = tipo === "run" || tipo === "approve" || tipo === "retry";
-  const habilitada = !lanza || parte.lanzable;
-  const accion = { tipo, habilitada, motivo: habilitada ? null : parte.motivo ?? "el proyecto no se puede lanzar" };
+  let motivo = null;
+  if (lanza) {
+    if (!parte.lanzable) motivo = parte.motivo ?? "el proyecto no se puede lanzar";
+    else {
+      const problema = problemaDeEjecucion(ejecucion);
+      if (problema) motivo = problema.causa;
+      else if (runtimes?.get(ejecucion.ejecutor.runtime)?.conectado === false) {
+        const e = runtimes.get(ejecucion.ejecutor.runtime);
+        motivo = `${MOTIVO_SIN_MODELO}: ${e.detalle ?? `${ejecucion.ejecutor.runtime} no tiene sesion ni API key`}.`;
+      }
+    }
+  }
+  const accion = { tipo, habilitada: motivo === null, motivo };
 
   const quien = ticket?.assignee;
   return {
     id: `${parte.proyecto.id}:${ticket.id}`,
     proyecto: { id: parte.proyecto.id, nombre: parte.proyecto.nombre, color: null },
+    // De donde viene el ticket: el nombre del proveedor (`local` para las
+    // tareas propias, que la interfaz pinta con el chip «Local»).
+    origen: parte.gestor ?? null,
+    ejecutor: { runtime: ejecucion.ejecutor.runtime, agente: ejecucion.ejecutor.agente },
     ticket: {
       id: String(ticket.id),
       key: ticket.key ?? null,
@@ -186,16 +239,21 @@ function tarjetaDe(ticket, run, parte, includeDone) {
  *
  * @param {{
  *   partes: Array<{proyecto: any, gestor: string|null, listItems: boolean|null, tickets: any[], runs: any[],
- *                  nota: string|null, lanzable: boolean, tieneRepo: boolean, motivo: string|null}>,
+ *                  nota: string|null, lanzable: boolean, tieneRepo: boolean, motivo: string|null,
+ *                  ejecutorDelProyecto?: {runtime: string, agente: null}|null}>,
  *   includeDone?: boolean,
  *   proyectos?: any[],
  *   avisos?: any[],
+ *   runtimes?: Map<string, any>,
  * }} e
  */
 export function construirBoard(e) {
   const includeDone = Boolean(e.includeDone);
+  const runtimes = e.runtimes ?? new Map();
   /** @type {any[]} */
-  const tarjetas = [];
+  let tarjetas = [];
+  /** La fecha de cada tarjeta cerrada, para quedarse con las ultimas. */
+  const cerradaEn = new Map();
   /** @type {string[]} */
   const notas = [];
 
@@ -209,8 +267,9 @@ export function construirBoard(e) {
       const id = String(t.id);
       if (vistos.has(id)) continue;
       vistos.add(id);
-      const tarjeta = tarjetaDe(t, porItem.get(id) ?? null, parte, includeDone);
-      if (tarjeta) tarjetas.push(tarjeta);
+      const tarjeta = tarjetaDe(t, porItem.get(id) ?? null, parte, runtimes);
+      if (tarjeta.columna === "done") cerradaEn.set(tarjeta.id, String(t.updatedAt ?? ""));
+      tarjetas.push(tarjeta);
     }
     // Los runs cuyo ticket el gestor no devolvio —porque se cayo, porque no
     // sabe listar, o porque el ticket ya no esta abierto— siguen en el board:
@@ -220,8 +279,24 @@ export function construirBoard(e) {
       if (vistos.has(id)) continue;
       vistos.add(id);
       const sintetico = { id, key: r.key ?? null, title: r.titulo ?? null, url: r.url ?? null, canonicalState: "todo" };
-      const tarjeta = tarjetaDe(sintetico, r, parte, includeDone);
-      if (tarjeta) tarjetas.push(tarjeta);
+      tarjetas.push(tarjetaDe(sintetico, r, parte, runtimes));
+    }
+  }
+
+  // HECHO, ACOTADA: sin `includeDone`, los ultimos cerrados por fecha, y la
+  // columna DICE cuantos hay de verdad. Cortar en silencio se lee como «no
+  // hay mas», que es justo lo que SC-004 prohibe.
+  let notaDeHechos = null;
+  if (!includeDone) {
+    const hechas = tarjetas
+      .filter((t) => t.columna === "done")
+      .sort((a, b) => String(cerradaEn.get(b.id) ?? "").localeCompare(String(cerradaEn.get(a.id) ?? "")));
+    if (hechas.length > HECHOS_POR_DEFECTO) {
+      const fuera = new Set(hechas.slice(HECHOS_POR_DEFECTO).map((t) => t.id));
+      tarjetas = tarjetas.filter((t) => !fuera.has(t.id));
+      notaDeHechos =
+        `Se muestran los ${HECHOS_POR_DEFECTO} de ${hechas.length} cerrados mas recientes; ` +
+        "«incluir terminados» (`includeDone=1`) los trae todos.";
     }
   }
 
@@ -231,8 +306,8 @@ export function construirBoard(e) {
     titulo: c.titulo,
     total: tarjetas.filter((t) => t.columna === c.id).length,
     // Backlog y Todo son las que salen del gestor: si esta incompleto, son
-    // esas las que lo dicen.
-    nota: c.id === "backlog" || c.id === "todo" ? nota : null,
+    // esas las que lo dicen. Hecho dice su propio corte.
+    nota: c.id === "backlog" || c.id === "todo" ? nota : c.id === "done" ? notaDeHechos : null,
   }));
 
   const conRun = tarjetas.filter((t) => t.run);
@@ -320,6 +395,10 @@ async function pedirTickets(p, proyecto, diag, includeDone) {
       env,
       log: SILENCIO,
       fetch: globalThis.fetch,
+      // EL GESTOR LOCAL, DENTRO DEL SERVICIO: recibe el almacen a traves de
+      // la interfaz de tareas. Es la misma que usa por HTTP desde el motor, y
+      // aqui no hace falta el viaje: el board ya corre en el unico escritor.
+      ...(gestor.origen === "local" ? { tareas: puertoDeTareas(p.dep) } : {}),
     };
     const caps = typeof mod.capabilities === "function" ? mod.capabilities() : {};
 
@@ -382,6 +461,10 @@ async function pedirTickets(p, proyecto, diag, includeDone) {
 export async function board(p) {
   const pedido = p.url.searchParams.get("project");
   const includeDone = p.url.searchParams.get("includeDone") === "1";
+  // Al gestor se le piden SIEMPRE los cerrados: Hecho sale siempre (con los
+  // ultimos, ver `construirBoard`). Lo que cambia con `includeDone` es cuantos
+  // se muestran, no que se pidan. Una sola entrada de cache por proyecto.
+  const pedirCerrados = true;
   if (pedido) exigirProyecto(p.dep, pedido);
 
   const motor = p.estado.motor;
@@ -437,7 +520,7 @@ export async function board(p) {
     });
     if (pedido && pedido !== proyecto.id) continue;
 
-    const { tickets, nota, aviso } = await ticketsDe(p, proyecto, diag, includeDone);
+    const { tickets, nota, aviso } = await ticketsDe(p, proyecto, diag, pedirCerrados);
     if (aviso) avisos.push(aviso);
 
     partes.push({
@@ -463,8 +546,19 @@ export async function board(p) {
       lanzable: diag.lanzable,
       tieneRepo: diag.tieneRepo,
       motivo: diag.problema ? diag.problema.causa : null,
+      ejecutorDelProyecto: ejecutorDelProyecto(p.dep, proyecto.id),
     });
   }
 
-  return { cuerpo: construirBoard({ partes, includeDone, proyectos: lista, avisos }) };
+  // El estado de los runtimes que las tarjetas van a usar, UNA pregunta por
+  // runtime (con la cache del board): sin sesion ni key, Run se deshabilita
+  // con el motivo en vez de lanzar un motor que muere en la primera fase.
+  const usados = new Set();
+  for (const parte of partes) {
+    for (const t of parte.tickets) usados.add(ejecucionDeTarjeta(t, parte).ejecutor.runtime);
+    usados.add(resolverEjecutor(null, parte.ejecutorDelProyecto).runtime);
+  }
+  const runtimes = await estadosDeRuntimes(p, [...usados]);
+
+  return { cuerpo: construirBoard({ partes, includeDone, proyectos: lista, avisos, runtimes }) };
 }

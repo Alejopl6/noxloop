@@ -27,8 +27,8 @@
 // LO QUE NO SE SABE NO SE RELLENA (principio X)
 // -----------------------------------------------------------------------------
 //
-// Sin remoto, `sin_repo`. Sin runner detectado, `sin_gate`. Sin gestor que el
-// motor sepa usar, `sin_gestor`. Cada uno con lo que se busco y lo que se
+// Sin remoto, `sin_repo`. Sin runner detectado, `sin_gate`. Con un gestor
+// DECLARADO que el motor no sabe usar, `sin_gestor`. Cada uno con lo que se busco y lo que se
 // encontro. La tentacion es poner `npm test` porque casi todos los proyectos de
 // Node lo tienen: el dia que no, el gate falla en cada tarea, el run entero se
 // bloquea, y la causa aparece tres pantallas despues como «tests rotos».
@@ -76,7 +76,16 @@ export const MAX_PARALELO_POR_DEFECTO = 2;
  */
 const ESTADOS_POR_DEFECTO = Object.freeze({
   fake: Object.freeze({ todo: "Nuevo", in_progress: "En curso", blocked: "Bloqueado", in_review: null, done: null }),
+  // El gestor local: su nativo ES el canonico. `done` en `null` a proposito:
+  // el motor no cierra tareas, la autonomia termina en el PR (principio IV).
+  local: Object.freeze({ todo: "todo", in_progress: "in_progress", blocked: "blocked", in_review: "in_review", done: null }),
 });
+
+/**
+ * El nombre del gestor local (`providers/local/`). Es el gestor de un proyecto
+ * que no conecto ninguno: sus tareas viven en el almacen de este servicio.
+ */
+export const GESTOR_LOCAL = "local";
 
 /**
  * De la conexion del almacen al proveedor del motor.
@@ -289,7 +298,7 @@ function gateDelSnapshot(dep, proyecto) {
  * @param {any} dep
  * @param {any} proyecto
  * @param {string} raiz donde estan los proveedores
- * @returns {{gestor: {nombre: string, slug: string, conexion: string, origen: string, credencial: string|null, stateMap?: any, opciones?: any}|null, hallado: string}}
+ * @returns {{gestor: {nombre: string, slug: string, conexion: string|null, origen: string, credencial: string|null, stateMap?: any, opciones?: any}|null, hallado: string}}
  */
 function gestorDelProyecto(dep, proyecto, raiz) {
   const vivas = dep.almacen.base.consultar(
@@ -348,12 +357,38 @@ function gestorDelProyecto(dep, proyecto, raiz) {
     };
   }
 
+  // SIN GESTOR EXTERNO, EL LOCAL (spec 003, FR-030). Hasta aqui un proyecto
+  // sin tracker ni forja con issues era `sin_gestor` y su board quedaba vacio
+  // hasta conectar Linear. Ahora sus tareas son las que el operador crea en
+  // noxloop. Solo aqui, al final: si el operador DECLARO un tracker —aunque el
+  // motor no sepa usarlo— se le dice arriba, y no se cambia por el local sin
+  // avisar: serian tickets de otro sitio del que declaro.
+  if (gestorDelSlug(GESTOR_LOCAL, raiz)) {
+    return {
+      gestor: {
+        nombre: GESTOR_LOCAL,
+        slug: GESTOR_LOCAL,
+        conexion: null,
+        origen: "local",
+        credencial: null,
+        stateMap: /** @type {any} */ (ESTADOS_POR_DEFECTO)[GESTOR_LOCAL],
+        // Las opciones del gestor local las sabe el servicio: de que proyecto
+        // son las tareas. No hay conexion de la que leerlas.
+        opciones: { projectId: String(proyecto.id) },
+      },
+      hallado: vivas.length
+        ? `ninguna de las conexiones vivas (${vivas.map((/** @type {any} */ c) => `${c.clase}:${c.proveedor}`).join(", ")}) ` +
+          "es un gestor de tickets: se usan las tareas propias del proyecto"
+        : "el proyecto no conecto ningun gestor: se usan sus tareas propias",
+    };
+  }
+
   return {
     gestor: null,
     hallado: vivas.length
       ? `las conexiones vivas del proyecto (${vivas.map((/** @type {any} */ c) => `${c.clase}:${c.proveedor}`).join(", ")}) ` +
-        "no incluyen un gestor de tickets con proveedor en el motor"
-      : "el proyecto no tiene ninguna conexion viva",
+        "no incluyen un gestor de tickets con proveedor en el motor, y el gestor local no esta instalado"
+      : "el proyecto no tiene ninguna conexion viva, y el gestor local no esta instalado",
   };
 }
 
@@ -431,7 +466,8 @@ export function opcionesDelGestor({ proyecto, remoto, gestor, esquemaDeOpciones 
  *   gestor: any, gestorHallado?: string,
  *   raizDeProveedores?: string, maxParallelItems?: number,
  *   esquemaDeOpciones?: any,
- * }} e el `optionsSchema` del proveedor va en `esquemaDeOpciones`
+ *   ejecutor?: {runtime: string, agente: string|null, de?: string}|null,
+ * }} e el `optionsSchema` del proveedor va en `esquemaDeOpciones`; `ejecutor`, el ya resuelto en cascada
  */
 export function componerConfig(e) {
   const { proyecto } = e;
@@ -465,6 +501,10 @@ export function componerConfig(e) {
   return {
     version: 1,
     home: e.home,
+    // EL EJECUTOR RESUELTO (FR-031) llega al motor por aqui: el motor monta ese
+    // runtime y no el primero de su registro. Sin ejecutor, el motor decide
+    // (el de referencia), y la configuracion no finge una eleccion.
+    ...(e.ejecutor?.runtime ? { runtime: e.ejecutor.runtime } : {}),
     provider: {
       name: e.gestor.nombre,
       module: join(raiz, e.gestor.nombre, "index.mjs"),
@@ -486,6 +526,16 @@ export function componerConfig(e) {
           ...(e.gate.suelto
             ? []
             : ["sin runner para un test suelto: el runner detectado no tiene una forma conocida de correr un archivo"]),
+          // EL AGENTE QUE EL MOTOR NO SABE ENTREGAR, DICHO (principio X). La
+          // tarea eligio un agente con nombre y el motor todavia no tiene por
+          // donde pasarselo al runtime: corre con el runtime a secas. El PR lo
+          // repite, en vez de que el operador crea que lo hizo ese agente.
+          ...(e.ejecutor?.agente
+            ? [
+                `la tarea pidio el agente \`${e.ejecutor.agente}\` y el motor todavia no sabe entregarle un agente al ` +
+                  `runtime: corrio con \`${e.ejecutor.runtime}\` sin ese agente`,
+              ]
+            : []),
         ],
       },
     },
@@ -571,7 +621,7 @@ export async function diagnosticar(dep, proyecto, opts = {}) {
  *
  * @param {any} dep
  * @param {any} proyecto
- * @param {OpcionesDelMotor & {home: string}} opts
+ * @param {OpcionesDelMotor & {home: string, ejecutor?: {runtime: string, agente: string|null}|null}} opts
  */
 export async function prepararMotor(dep, proyecto, opts) {
   const datos = datosDelProyecto(dep, proyecto, opts);
@@ -585,6 +635,7 @@ export async function prepararMotor(dep, proyecto, opts) {
     raizDeProveedores: opts.raizDeProveedores,
     maxParallelItems: opts.maxParallelItems,
     esquemaDeOpciones: modulo?.optionsSchema,
+    ejecutor: opts.ejecutor ?? null,
   });
   const dir = join(opts.home, "motor");
   mkdirSync(dir, { recursive: true });
@@ -627,6 +678,10 @@ export async function cargarGestor(nombre, raiz = RAIZ_DE_PROVEEDORES) {
  * @returns {Promise<Record<string, string>>}
  */
 export async function secretosDelGestor(dep, proyecto, gestor, requeridas, proposito) {
+  // El gestor local no tiene credencial en la boveda: dentro del servicio
+  // recibe la interfaz del almacen, y dentro del motor el token de sesion que
+  // le pone el lanzador (ver `runs.mjs`). No hay nada que sacar de aqui.
+  if (gestor?.origen === "local") return {};
   if (!requeridas || requeridas.length === 0) return {};
   const variables = requeridas.map((n) => `\`${n}\``).join(", ");
   const negar = (/** @type {string} */ porque) =>

@@ -15,6 +15,7 @@
 // este paquete implementa la interfaz que declara `packages/vault`.
 
 export { abrirAlmacen } from "./almacen.mjs";
+export { prefijoDe } from "./tareas.mjs";
 export { ErrorDeAlmacen, CATALOGO, fallar } from "./errores.mjs";
 export { MIGRACIONES, aplicarMigraciones, versionDeEsquema } from "./migraciones.mjs";
 export { TABLAS, ENUMS } from "./esquema.mjs";

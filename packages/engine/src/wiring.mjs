@@ -357,8 +357,12 @@ export async function buildDeps(item, config, opts = {}) {
   // test dejaria de probar el cableado.
   const overrides = opts.inject || {};
 
+  // EL RUNTIME: el que pide quien llama, y si no, el que dice la configuracion
+  // (spec 003, FR-031). El servicio resuelve el ejecutor de la tarea en cascada
+  // y lo escribe en `config.runtime`: sin esta linea esa eleccion no llegaba, y
+  // el motor montaba siempre el primero del registro sin avisar.
   const { registro, adaptador } = montarRuntime(config, {
-    home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, runtime: opts.runtime, env: opts.env,
+    home, log, engineRoot: opts.engineRoot, adaptadores: opts.adaptadores, runtime: opts.runtime ?? config.runtime, env: opts.env,
   });
 
   // EL ENTORNO VIAJA COMO FUNCION, no como objeto ya hecho. Es lo que hace que

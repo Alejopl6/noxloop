@@ -188,9 +188,54 @@ const PROVOCADORES = {
     return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
   },
 
+  // Desde la spec 003 un proyecto SIN conexiones usa el gestor local (sus
+  // tareas propias), asi que `sin_gestor` es ahora un tracker DECLARADO que el
+  // motor no sabe usar: no se cambia por el local sin avisar.
   sin_gestor: async (svc) => {
-    const proyecto = await proyectoActivo(svc, { nombre: "Sin Gestor", conexiones: [] });
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Gestor", conexiones: [{ clase: "tracker", proveedor: "jira" }] });
     return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+  },
+
+  // Borrar una tarea local que ya tiene run en disco.
+  tarea_con_run: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Tarea Con Run", conexiones: [] });
+    const tarea = (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "con run" })).json()).tarea;
+    runEnDisco(svc.home, tarea.id, { projectId: proyecto.id });
+    return (await (await pedirJson(svc, `/v1/tasks/${tarea.id}`, "DELETE")).json()).error;
+  },
+
+  // Run sobre una tarea local cuyo ejecutor el motor no monta como implementador.
+  ejecutor_sin_soporte: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Con Codex", conexiones: [] });
+    const tarea = (
+      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", ejecutor: { runtime: "codex" } })).json()
+    ).tarea;
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
+  },
+
+  // Run sobre una tarea local que pide terminar sin PR.
+  termino_sin_soporte: async (svc) => {
+    const proyecto = await proyectoActivo(svc, { nombre: "Solo Commit", conexiones: [] });
+    const tarea = (
+      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", termino: "commit" })).json()
+    ).tarea;
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
+  },
+
+  // Las opciones del gestor sobre una conexion del ESPACIO de trabajo. Va en
+  // un servicio propio: la conexion del espacio alcanzaria a los proyectos de
+  // los demas provocadores y les cambiaria el gestor.
+  gestor_compartido: async () => {
+    const otro = await arrancar({ home: homeTemporal(), token: TOKEN });
+    try {
+      const proyecto = await proyectoActivo(otro, {
+        nombre: "Del Espacio",
+        conexiones: [{ clase: "tracker", proveedor: "linear", delEspacio: true }],
+      });
+      return (await (await pedirJson(otro, `/v1/projects/${proyecto.id}/tracker`, "PATCH", { opciones: {} })).json()).error;
+    } finally {
+      await otro.detener();
+    }
   },
 
   // Un gestor que pide token (el de la forja, por la cuenta de codigo) y una

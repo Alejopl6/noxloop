@@ -257,6 +257,8 @@ function escribirSesion(home, datos) {
  *     entornoBase?: Record<string, string>, intervaloMs?: number, raizDeProveedores?: string,
  *     cargarGestor?: (nombre: string) => Promise<any>, maxParalelo?: number, ttlDelBoardMs?: number,
  *     reloj?: () => number,
+ *     ejecutarAutenticacion?: (argv: string[], o: {env: Record<string, string>}) => Promise<{code: number|null, stdout: string, stderr: string}>,
+ *     lanzarLogin?: (argv: string[], env: Record<string, string>) => void,
  *   },
  * }} opts
  */
@@ -347,6 +349,18 @@ export async function arrancar(opts) {
     ttlDelBoardMs: m.ttlDelBoardMs ?? 30_000,
     cacheDelBoard: new Map(),
     reloj: m.reloj ?? (() => Date.now()),
+    // Settings -> Modelos (`runtimes.mjs`). Inyectables: la pregunta de verdad
+    // lanza `claude auth status`, y el login abre el navegador del operador.
+    // Un test que no los inyecta pregunta a los binarios reales de la maquina.
+    ejecutarAutenticacion: m.ejecutarAutenticacion,
+    lanzarLogin: m.lanzarLogin,
+    entornoBase: m.entornoBase,
+    cacheDeRuntimes: new Map(),
+    // La direccion en la que escucha ESTE servicio. Se rellena al escuchar:
+    // el gestor local la necesita dentro del motor para pedirle las tareas al
+    // unico escritor del almacen en vez de abrirlo por su cuenta.
+    /** @type {string|null} */
+    url: null,
   };
 
   const srv = crearServidor({ home, token, arranque: arranqueISO, origenes, raicesDeExploracion, bus: canal, dep, motor });
@@ -364,6 +378,7 @@ export async function arrancar(opts) {
 
   const direccion = /** @type {any} */ (srv.address());
   const url = `http://127.0.0.1:${direccion.port}`;
+  motor.url = url;
   const sesion = escribirSesion(home, { url, token, pid: process.pid, arranque: arranqueISO });
 
   let cerrando = null;

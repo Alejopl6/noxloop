@@ -31,7 +31,9 @@ import { join } from "node:path";
 
 import { coleccion, exigir, exigirProyecto, noEsta } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
-import { prepararMotor, secretosDelGestor } from "./motor.mjs";
+import { datosDelProyecto, prepararMotor, secretosDelGestor } from "./motor.mjs";
+import { ejecutorDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ejecutor.mjs";
+import { claveDelModelo } from "./runtimes.mjs";
 import { lockVivo } from "./lanzador.mjs";
 import { ESTADOS_DEL_RUN, accionDelEstado, avanceDe, estadoDelRun, gastoDe } from "./estado-del-run.mjs";
 
@@ -191,8 +193,10 @@ async function lanzar(p, proyecto) {
   // La PRIMERA preparacion se hace aqui, en la peticion: `sin_repo`,
   // `sin_gate`, `sin_gestor` y la credencial que falta salen como el error de
   // ESTA respuesta, con su accion, y no como un run fallido que el operador
-  // descubre despues en una tarjeta.
-  const preparar = preparador(p, proyecto.id);
+  // descubre despues en una tarjeta. Lo mismo el ejecutor y el termino que el
+  // motor no sabe cumplir (FR-031/032): el mismo motivo que el board pone en
+  // el boton deshabilitado.
+  const preparar = preparador(p, proyecto.id, itemId);
   const preparado = await preparar();
   const r = await motor.lanzador.lanzar({
     projectId: proyecto.id,
@@ -221,16 +225,51 @@ function motorDe(p) {
 }
 
 /**
+ * Quien ejecuta el ticket y como termina, resuelto en cascada (FR-031/032), y
+ * el error si el motor no lo sabe cumplir.
+ *
+ * Solo una tarea LOCAL declara ejecutor y termino: un ticket de Linear no tiene
+ * donde, y hereda del proyecto y termina en PR.
+ *
+ * @param {any} dep
+ * @param {any} proyecto
+ * @param {any} gestor el de `datosDelProyecto`
+ * @param {string} itemId
+ */
+export function ejecucionDe(dep, proyecto, gestor, itemId) {
+  const tarea = gestor?.origen === "local" ? dep.almacen.tareas.porId(itemId) : null;
+  const ejecutor = resolverEjecutor(tarea?.ejecutor ?? null, ejecutorDelProyecto(dep, proyecto.id));
+  const termino = tarea ? String(tarea.termino) : "pr";
+  const problema = problemaDeEjecucion({ ejecutor, termino, clave: tarea ? String(tarea.clave) : itemId });
+  return { ejecutor, termino, problema, tarea };
+}
+
+/**
  * Prepara UN paso del motor: compone la configuracion desde el proyecto y saca
  * de la boveda la credencial del gestor. Se llama EN CADA PASO —al pulsar Run,
  * al encadenar el `run` tras el plan, al aprobar, al reintentar— y no una vez:
  * el grant se verifica en el instante del uso (principio IX), y la
  * configuracion se recompone por si el operador corrigio algo entre medias.
  *
+ * EL GESTOR LOCAL, DENTRO DEL MOTOR. Sus tareas viven en el almacen y el motor
+ * no puede abrirlo (seria un segundo escritor, principio VIII): el proveedor
+ * local le habla al servicio por HTTP. Aqui se le pasa COMO: la URL de este
+ * servicio como variable, y el token de sesion como SECRETO —al entorno del
+ * subproceso y nunca a argv (principio IX), con la guarda de
+ * `prepararLanzamiento` mirando que no aparezca en los argumentos—. El token
+ * es el de la sesion entera: acotarlo a las rutas de tareas es un hueco
+ * declarado, no resuelto.
+ *
+ * LA KEY DEL MODELO. Si el operador guardo una API key para el runtime
+ * resuelto (Settings -> Modelos), sale de la boveda con el grant del proyecto,
+ * en cada paso, igual que la del gestor. Sin key, el runtime usa la sesion
+ * local del operador (`claude auth login`, `codex login`).
+ *
  * @param {import("./rutas.mjs").Peticion} p
  * @param {string} projectId
+ * @param {string} itemId
  */
-function preparador(p, projectId) {
+function preparador(p, projectId, itemId) {
   const motor = motorDe(p);
   const dep = p.dep;
   const home = p.estado.home;
@@ -246,14 +285,36 @@ function preparador(p, projectId) {
           "`packages/engine/bin/noxloop.mjs`.",
       });
     }
+    const datos = datosDelProyecto(dep, proyecto, { raizDeProveedores: motor.raizDeProveedores });
+    const { ejecutor, problema } = ejecucionDe(dep, proyecto, datos.gestor, itemId);
+    if (problema) throw problema;
+
     const { ruta, config, gestor, modulo } = await prepararMotor(dep, proyecto, {
       home,
       raizDeProveedores: motor.raizDeProveedores,
       cargarGestor: motor.cargarGestor,
       maxParallelItems: motor.maxParalelo,
+      ejecutor,
     });
-    const secretos = await secretosDelGestor(dep, proyecto, gestor, modulo?.requiredEnv ?? [], "lanzar_runner");
-    return { rutaConfig: ruta, secretos, maxParalelo: config.limits.maxParallelItems };
+    /** @type {Record<string, string>} */
+    const secretos = { ...(await secretosDelGestor(dep, proyecto, gestor, modulo?.requiredEnv ?? [], "lanzar_runner")) };
+    /** @type {Record<string, string>} */
+    const variables = {};
+    if (gestor?.origen === "local") {
+      if (!motor.url) {
+        throw new ErrorDeServicio("pieza_ausente", {
+          pieza: "la direccion del servicio para el gestor local",
+          porque:
+            "el motor lee y escribe las tareas locales pidiendoselas a este servicio, y el servicio todavia no sabe en " +
+            "que direccion escucha (se monto sin `listen`).",
+          comoConseguirlo: "Arranca el servicio con `arrancar()`, que publica su direccion al motor al escuchar.",
+        });
+      }
+      variables.NOXLOOP_SERVICE_URL = String(motor.url);
+      secretos.NOXLOOP_SERVICE_TOKEN = String(p.estado.token);
+    }
+    Object.assign(secretos, await claveDelModelo(dep, proyecto, ejecutor.runtime));
+    return { rutaConfig: ruta, secretos, variables, maxParalelo: config.limits.maxParallelItems };
   };
 }
 
@@ -382,7 +443,7 @@ async function actuar(p, accion) {
   }
   exigirActivo(p.dep, proyecto);
 
-  const preparar = preparador(p, proyecto.id);
+  const preparar = preparador(p, proyecto.id, itemId);
   const preparado = await preparar();
   const pedido = {
     projectId: proyecto.id,

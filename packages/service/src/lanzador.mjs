@@ -235,7 +235,10 @@ export function crearLanzador(opts) {
     let lanzamiento;
     try {
       entorno = construirEntorno({
-        variables: { ...entornoBase, NOXLOOP_HOME: home },
+        // `preparado.variables` son las NO secretas que el paso declara (la
+        // direccion del servicio para el gestor local). Van ANTES de
+        // `NOXLOOP_HOME` para que ningun paso pueda mover el home del motor.
+        variables: { ...entornoBase, ...(preparado.variables ?? {}), NOXLOOP_HOME: home },
         secretos: preparado.secretos ?? {},
       });
       const args = [bin, paso, v.itemId, "--config", preparado.rutaConfig];

@@ -102,16 +102,38 @@ test("FR-003: la columna sale de la precedencia run con PR > run vivo > estado d
   assert.equal(tarjeta(b, "4").columna, "in_review");
   assert.equal(tarjeta(b, "4").chip.tipo, "pr_listo");
   assert.equal(tarjeta(b, "4").run.pr, "https://forja.test/pr/4");
-  assert.equal(tarjeta(b, "5").columna, "in_progress");
-  assert.equal(tarjeta(b, "5").chip.tipo, "bloqueado", "bloqueado es un chip, nunca una columna (FR-004)");
+  assert.equal(tarjeta(b, "5").columna, "blocked", "bloqueado es COLUMNA desde la revision de FR-001 (2026-09-24)");
+  assert.equal(tarjeta(b, "5").chip.tipo, "bloqueado", "y conserva el chip con la causa");
   assert.equal(tarjeta(b, "6").columna, "in_review");
   assert.equal(tarjeta(b, "7").columna, "in_progress");
 
   assert.deepEqual(
     b.columnas.map((c) => [c.id, c.total]),
-    [["backlog", 1], ["todo", 1], ["in_progress", 3], ["in_review", 2]],
+    [["backlog", 1], ["todo", 1], ["in_progress", 2], ["in_review", 2], ["blocked", 1], ["done", 0]],
   );
-  assert.deepEqual(b.columnas.map((c) => c.titulo), ["Backlog", "Todo", "En curso", "En revisión"]);
+  assert.deepEqual(b.columnas.map((c) => c.titulo), ["Backlog", "Todo", "En curso", "En revisión", "Bloqueado", "Hecho"]);
+});
+
+test("FR-001 revisado: un run bloqueado o fallido va a la columna Bloqueado; el resto de los detenidos sigue En curso con su chip", () => {
+  const b = construirBoard({
+    partes: [
+      parte({
+        tickets: ["1", "2", "3", "4"].map((id) => ticket(id, "todo")),
+        runs: [
+          run("1", "bloqueado", { detalle: "T002 agoto sus intentos" }),
+          run("2", "fallido", { detalle: "el gestor devolvio 500" }),
+          run("3", "interrumpido"),
+          run("4", "necesita_permiso"),
+        ],
+      }),
+    ],
+  });
+  assert.equal(tarjeta(b, "1").columna, "blocked");
+  assert.equal(tarjeta(b, "1").chip.detalle, "T002 agoto sus intentos");
+  assert.equal(tarjeta(b, "2").columna, "blocked");
+  assert.equal(tarjeta(b, "3").columna, "in_progress");
+  assert.equal(tarjeta(b, "4").columna, "in_progress");
+  assert.equal(tarjeta(b, "1").accion.tipo, "retry", "desde Bloqueado se reintenta");
 });
 
 test("los chips del run y la accion principal de cada tarjeta", () => {
@@ -211,10 +233,43 @@ test("un run cuyo ticket el gestor no devolvio sigue apareciendo: el disco no de
   assert.equal(t.columna, "in_progress");
 });
 
-test("terminados fuera por defecto; con `includeDone` entran en En revision", () => {
-  const partes = [parte({ tickets: [ticket("1", "done"), ticket("2", "todo")] })];
-  assert.equal(tarjeta(construirBoard({ partes }), "1"), undefined);
-  assert.equal(tarjeta(construirBoard({ partes, includeDone: true }), "1").columna, "in_review");
+test("Hecho sale siempre, con los ULTIMOS 20 cerrados; `includeDone` los trae todos, y el corte se DICE", () => {
+  const cerrados = Array.from({ length: 25 }, (_, i) =>
+    ticket(`d${i}`, "done", { updatedAt: `2026-09-${String(i + 1).padStart(2, "0")}T00:00:00.000Z` }),
+  );
+  const partes = [parte({ tickets: [...cerrados, ticket("abierto", "todo")] })];
+
+  const b = construirBoard({ partes });
+  const hechas = b.tarjetas.filter((t) => t.columna === "done");
+  assert.equal(hechas.length, 20);
+  assert.ok(hechas.some((t) => t.ticket.id === "d24"), "el mas reciente tiene que estar");
+  assert.ok(!hechas.some((t) => t.ticket.id === "d0"), "el mas viejo es el que se corta");
+  const columna = b.columnas.find((c) => c.id === "done");
+  assert.equal(columna.total, 20);
+  assert.match(String(columna.nota), /20 de 25/, "un corte en silencio se lee como «no hay mas»");
+
+  const todas = construirBoard({ partes, includeDone: true });
+  assert.equal(todas.tarjetas.filter((t) => t.columna === "done").length, 25);
+  assert.equal(todas.columnas.find((c) => c.id === "done").nota, null);
+});
+
+test("la tarjeta dice de donde viene el ticket (`origen`) y quien lo ejecuta, resuelto en cascada", () => {
+  const b = construirBoard({
+    partes: [
+      parte({
+        gestor: "local",
+        ejecutorDelProyecto: { runtime: "claude-agent-sdk", agente: null },
+        tickets: [
+          ticket("1", "todo"),
+          ticket("2", "todo", { raw: { ejecutor: { runtime: "claude-agent-sdk", agente: "revisor-api" }, termino: "pr" } }),
+        ],
+      }),
+    ],
+  });
+  assert.equal(tarjeta(b, "1").origen, "local");
+  assert.deepEqual(tarjeta(b, "1").ejecutor, { runtime: "claude-agent-sdk", agente: null });
+  assert.deepEqual(tarjeta(b, "2").ejecutor, { runtime: "claude-agent-sdk", agente: "revisor-api" });
+  assert.equal(construirBoard({ partes: [parte()] }).tarjetas.length, 0);
 });
 
 test("nada te espera: el resumen en cero es cero, y lo dice", () => {
