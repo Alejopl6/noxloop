@@ -1,0 +1,13 @@
+# Artefactos de compilacion de Rust. Pesan cientos de MB y se regeneran.
+src-tauri/target/
+
+# El sidecar es una copia del ejecutable de Node que produce
+# `scripts/preparar-sidecar.mjs` en cada build (~60-90 MB). Versionarlo metria
+# un binario de plataforma en el repositorio y, peor, uno que envejece sin que
+# nadie lo note: el build volveria a empaquetar el Node de quien lo commiteo.
+src-tauri/binaries/
+
+# Esquemas de la ACL que genera `tauri-build` a partir de los plugins
+# registrados. Se derivan del codigo; versionarlos crea conflictos en cada
+# cambio de plugin.
+src-tauri/gen/

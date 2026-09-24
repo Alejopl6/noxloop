@@ -21,10 +21,20 @@
   "include": [
     "packages/engine/src/**/*.mjs",
     "packages/engine/bin/**/*.mjs",
+    "packages/service/src/**/*.mjs",
+    "packages/service/bin/**/*.mjs",
+    "packages/vault/src/**/*.mjs",
+    "packages/scanner/src/**/*.mjs",
+    "packages/connections/src/**/*.mjs",
+    "packages/store/src/**/*.mjs",
+    "packages/core/src/**/*.mjs",
+    "packages/adapters/src/**/*.mjs",
+    "packages/asistencia/src/**/*.mjs",
     "providers/**/*.mjs"
   ],
   "exclude": [
     "**/*.test.mjs",
-    "node_modules"
+    "node_modules",
+    "apps"
   ]
 }

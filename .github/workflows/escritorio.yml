@@ -1,0 +1,100 @@
+name: escritorio
+
+# El empaquetado de la aplicacion de escritorio, en las tres plataformas.
+#
+# POR QUE SOLO EN ETIQUETAS Y A MANO, y no en cada push: `tauri build` compila
+# el crate `tauri` entero y empaqueta un runtime de Node de ~100 MB por
+# plataforma. En cada push serian tres compilados completos por commit para
+# obtener un artefacto que nadie descarga. El CI de siempre ya comprueba lo que
+# importa en cada cambio: que la interfaz compile y su salida siga siendo
+# estatica, y que las pruebas de la cascara pasen.
+#
+# `workflow_dispatch` esta para poder verificar que el empaquetado sigue vivo
+# sin tener que crear una etiqueta falsa.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  empaquetar:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Las dos arquitecturas de macOS por separado y no un binario
+          # universal: el sidecar es un runtime de Node distinto para cada una,
+          # y un universal tendria que empaquetar los dos.
+          - plataforma: macos-14
+            objetivo: aarch64-apple-darwin
+          - plataforma: macos-13
+            objetivo: x86_64-apple-darwin
+          - plataforma: ubuntu-latest
+            objetivo: x86_64-unknown-linux-gnu
+          - plataforma: windows-latest
+            objetivo: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.plataforma }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.objetivo }}
+
+      - name: dependencias de sistema de Tauri
+        if: matrix.plataforma == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: npm ci
+
+      # EL SIDECAR NO PUEDE SER CUALQUIER NODE, y esto ya costo una sesion de
+      # diagnostico. El Node que traen los gestores de paquetes del sistema
+      # suele ser un stub enlazado dinamicamente contra bibliotecas propias:
+      # en macOS, el de Homebrew depende de `@rpath/libnode.dylib` y de veinte
+      # dylibs de `/opt/homebrew`. Tauri copia el sidecar FUERA de ese rpath, y
+      # el proceso muere con SIGABRT antes de ejecutar una linea. El sintoma es
+      # "el servicio no arranca", que no menciona ni el enlazado ni el rpath.
+      #
+      # El de nodejs.org solo depende de `/usr/lib` y `/System` (o del runtime
+      # de C en Windows), asi que es autocontenido. `preparar-sidecar.mjs` lo
+      # comprueba con otool/ldd y CORTA si no lo es, en vez de empaquetar algo
+      # que no arranca.
+      #
+      # `actions/setup-node` instala exactamente ese binario oficial, asi que
+      # basta con apuntarle.
+      - name: preparar el sidecar con el Node oficial
+        shell: bash
+        env:
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.objetivo }}
+        run: |
+          set -euo pipefail
+          NOXLOOP_SIDECAR_NODE="$(node -e 'process.stdout.write(process.execPath)')" \
+            node apps/desktop/scripts/preparar-sidecar.mjs
+
+      - name: empaquetar
+        working-directory: apps/desktop
+        run: npx tauri build --target ${{ matrix.objetivo }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noxloop-${{ matrix.objetivo }}
+          path: |
+            apps/desktop/src-tauri/target/${{ matrix.objetivo }}/release/bundle/**/*
+          # Sin firma ni notarizacion todavia: en macOS, Gatekeeper va a
+          # rechazar estos artefactos en una maquina que no sea la que los
+          # construyo. Se declara aqui en vez de descubrirlo al distribuir.
+          if-no-files-found: error

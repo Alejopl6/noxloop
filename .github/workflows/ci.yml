@@ -11,7 +11,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["20", "22"]
+        # 22 y 24, no 20 y 22.
+        #
+        # Node 20 "Iron" salio de mantenimiento en abril de 2026, asi que probar
+        # contra el era probar contra una version que ya nadie parchea. Y el
+        # almacen consultable usa `node:sqlite`, que no existe antes de 22.5:
+        # declarar `engines: >=20` mientras el codigo importa un modulo que 20 no
+        # tiene es la clase de limite que se lee como puesto y no lo esta.
+        node: ["22", "24"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -182,8 +189,14 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          grep -horE 'node --test packages/engine/test/[A-Za-z0-9_.-]+\.test\.mjs' \
-            docs/*.md README.md CONTRIBUTING.md | sort -u > comandos-doc.txt
+          # El patron era `packages/engine/test/...` y miraba SOLO al motor.
+          # Con seis paquetes mas, la doc de la boveda o la del scanner podia
+          # citar un test renombrado y este paso seguia verde: cubria una
+          # septima parte del repositorio creyendo que lo cubria entero.
+          # Los quickstart de cada spec tambien: son la receta de "como se
+          # verifica" de cada feature, y el de 002 manda correr tests por nombre.
+          grep -horE 'node --test packages/[a-z-]+/test/[A-Za-z0-9_.-]+\.test\.mjs' \
+            docs/*.md README.md CONTRIBUTING.md specs/*/quickstart.md | sort -u > comandos-doc.txt
           if [ ! -s comandos-doc.txt ]; then
             echo '::error::ninguna doc dice como verificar nada: los bloques "Como se verifica" desaparecieron'
             exit 1
@@ -204,3 +217,177 @@ jobs:
           done < comandos-doc.txt
           rm -f comandos-doc.txt
           exit "$falla"
+
+      # Los dos invariantes sin segundo intento, corridos SOLOS y con nombre.
+      #
+      # POR QUE NO ALCANZA QUE `npm test` YA LOS CORRA. Los corre, y entre
+      # otros mil doscientos. Cuando uno de estos dos cae, el fallo tiene que
+      # leerse como lo que es y no como una linea mas en el resumen:
+      #
+      #   - "el scanner escribio en el proyecto de alguien" = nadie vuelve a
+      #     apuntar la herramienta a un repositorio que le importa, y el
+      #     producto se queda sin etapa 01.
+      #   - "un secreto se filtro" = el unico fallo de este producto que no
+      #     tiene segundo intento. Un gate mal configurado se corrige en el
+      #     ciclo siguiente; un secreto filtrado se rota, se audita y se
+      #     explica.
+      #
+      # Los archivos se descubren por su nombre y no se listan a mano: una
+      # lista escrita se queda vieja en cuanto alguien anade una prueba, y
+      # entonces el paso sigue verde mirando menos de lo que cree.
+      - name: el scanner no escribe, y ningun secreto se filtra
+        shell: bash
+        run: |
+          set -uo pipefail
+          archivos=$(
+            ls packages/scanner/test/scanner-no-escribe*.test.mjs \
+               packages/scanner/test/scanner-no-copia-secreto.test.mjs \
+               packages/vault/test/*.test.mjs \
+               packages/store/test/invariantes.test.mjs 2>/dev/null
+          )
+          if [ -z "$archivos" ]; then
+            echo '::error::no se encontro ninguna prueba de no escritura ni de no filtracion: se renombraron y este paso dejo de mirar donde tiene que mirar'
+            exit 1
+          fi
+
+          # Se cuentan para que el paso no pueda quedarse verde mirando dos
+          # archivos cuando antes miraba doce.
+          cuantos=$(echo "$archivos" | wc -l | tr -d ' ')
+          echo "corriendo $cuantos archivos de invariantes criticos"
+          if [ "$cuantos" -lt 10 ]; then
+            echo "::error::solo $cuantos archivos de invariantes criticos: antes habia mas, alguien los quito o los renombro"
+            exit 1
+          fi
+
+          falla=0
+          for a in $archivos; do
+            echo "--- $a"
+            if ! node --test "$a" > /dev/null 2>&1; then
+              echo "::error file=$a::cayo un invariante sin segundo intento"
+              node --test "$a" 2>&1 | tail -40
+              falla=1
+            fi
+          done
+          exit "$falla"
+
+      # La interfaz compila, y lo que sale sigue siendo estatico.
+      #
+      # EL FALLO QUE ESTO EVITA. `output: 'export'` no es una preferencia de
+      # empaquetado: es el mecanismo que hace IMPOSIBLE que la interfaz escriba
+      # estado, porque sin servidor no hay donde escribirlo. El principio VIII
+      # se sostiene sobre esa restriccion.
+      #
+      # Perderla es barato y silencioso: alguien necesita una ruta de API "solo
+      # para una cosa", saca `output: 'export'`, y el build sigue verde. La
+      # guarda de `npm run guard` atrapa que la linea desaparezca de la
+      # configuracion; este paso atrapa el caso en que la linea sigue ahi pero
+      # el build ya no la respeta.
+      #
+      # Dos comprobaciones, porque miden cosas distintas: que `out/` exista con
+      # su `index.html`, y que NO haya quedado un manifiesto de servidor al
+      # lado. Lo primero prueba que el export corrio; lo segundo, que corrio
+      # entero.
+      - name: la interfaz compila y su salida no tiene servidor
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run studio:build
+
+          if [ ! -f apps/studio/out/index.html ]; then
+            echo '::error::apps/studio/out/index.html no existe: el export estatico no produjo nada'
+            exit 1
+          fi
+
+          # `.next/server/` es la marca de un build con servidor. Con
+          # `output: 'export'` Next lo usa como paso intermedio, asi que lo que
+          # se comprueba es que no se haya COLADO en la salida publicada.
+          if [ -d apps/studio/out/_next/server ]; then
+            echo '::error::la salida estatica contiene un directorio de servidor: `output: export` dejo de aplicarse'
+            exit 1
+          fi
+
+          # Un catch-all mal configurado produce un `out/` de un solo archivo o
+          # de ninguno. No es un error del build, y se descubre al abrir la app
+          # de escritorio en blanco.
+          archivos=$(find apps/studio/out -type f | wc -l | tr -d ' ')
+          echo "la salida estatica tiene $archivos archivos"
+          if [ "$archivos" -lt 3 ]; then
+            echo "::error::la salida estatica tiene $archivos archivos: el export no genero la aplicacion"
+            exit 1
+          fi
+
+  # Las pruebas de la cascara de escritorio. Job aparte y no un paso mas del
+  # anterior por dos razones concretas:
+  #
+  #   1. El job de arriba corre DOS veces (Node 22 y 24) y compilar Tauri no
+  #      depende de la version de Node: seria pagar el compilado dos veces para
+  #      obtener el mismo resultado.
+  #   2. En Linux, compilar el crate `tauri` necesita webkit2gtk y gtk del
+  #      sistema. Esas dependencias no pintan nada en el job que prueba el
+  #      motor, que corre con Node y git y nada mas.
+  #
+  # Aqui viven DOS invariantes que no se pueden expresar desde Node:
+  #
+  #   - `ningun_comando_de_boveda_llega_al_webview` comprueba que el llavero no
+  #     tiene ningun `#[tauri::command]` y que la lista de `generate_handler!`
+  #     no crecio. Es el principio IX: el diseno se apoya en que la interfaz NO
+  #     TIENE la ruta para pedir un secreto, y un nombre de mas en esa lista la
+  #     crea. Se intento cubrirlo con una guarda en JavaScript y salio peor:
+  #     sin poder leer la lista de verdad, la expresion regular marcaba
+  #     `lib.rs` por declarar el modulo, y un falso positivo entrena a ignorar
+  #     la guarda.
+  #   - el parseo de `NOXLOOP_READY`, que es como la cascara averigua donde
+  #     escucha el servicio. Si se rompe, la ventana abre en blanco y el
+  #     sintoma no menciona ni el servicio ni la marca.
+  escritorio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Las dependencias de sistema que el crate `tauri` necesita en Linux. Sin
+      # ellas el fallo es un error de enlazado de C, que no menciona Tauri.
+      - name: dependencias de sistema de Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # `tauri-build` aborta si el binario declarado en `externalBin` no esta en
+      # disco (`resource path binaries/noxloop-service-<triple> doesn't exist`),
+      # y ese binario es un runtime de Node de ~100 MB que no se versiona. Lo
+      # deja `preparar-sidecar.mjs`, copiando el Node del runner; la variable le
+      # dice que no hace falta que sea autocontenido para compilar — empaquetarlo
+      # es trabajo del job de release. Sin este paso la variable no la leia
+      # nadie y el job fallaba siempre.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # `bundle.resources` declara los paquetes de terceros que viajan con el
+      # servicio (`node_modules/<paquete>`), y `tauri-build` exige que existan
+      # en disco aunque solo se compile: sin esto, `resource path
+      # ../../../node_modules/form-data doesn't exist`.
+      - name: dependencias de Node
+        run: npm ci
+
+      - name: preparar el sidecar para compilar
+        env:
+          NOXLOOP_SIDECAR_ENLAZADO_OK: "1"
+        run: node apps/desktop/scripts/preparar-sidecar.mjs
+
+      - name: las pruebas de la cascara
+        working-directory: apps/desktop/src-tauri
+        env:
+          NOXLOOP_SIDECAR_ENLAZADO_OK: "1"
+        run: |
+          # `--lib` y no `cargo test` a secas: el binario del llavero habla con
+          # el almacen de secretos del sistema, y un runner de CI no tiene
+          # ninguno. Probarlo ahi exigiria un Secret Service falso, que probaria
+          # el falso y no el llavero.
+          cargo test --lib
+          cargo fmt --check

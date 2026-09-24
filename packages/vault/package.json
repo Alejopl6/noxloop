@@ -1,0 +1,10 @@
+{
+  "name": "@noxloop/vault",
+  "version": "0.1.0",
+  "description": "La boveda de credenciales de noxloop: el valor vive en el backend de secretos y en el entorno del subproceso con grant. En ningun otro sitio.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": { "node": ">=22" },
+  "files": ["src"]
+}

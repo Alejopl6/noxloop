@@ -1,0 +1,14 @@
+{
+  "name": "@noxloop/asistencia",
+  "version": "0.1.0",
+  "description": "Asistencia con IA que propone y nunca decide: lo que sale de un modelo se marca como sugerido, cita los hallazgos en los que se apoya, y no se parece a un detectado.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": { "node": ">=22" },
+  "files": ["src"],
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.58",
+    "ai": "^7.0.107"
+  }
+}

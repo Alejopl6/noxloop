@@ -1,0 +1,297 @@
+// T153 · el adaptador local: tokens personales y claves de API contra el
+// deposito de secretos del sistema operativo.
+//
+// NO ES UN PLAN B. Dos de los proveedores objetivo no usan OAuth: uno se
+// conecta con un token personal y el otro con una clave de API. En esos casos
+// el adaptador alojado no aporta nada que este no haga —no hay flujo de
+// autorizacion que delegar ni token que refrescar— y levantar tres contenedores
+// para guardar un token que cabe en el llavero es coste sin contrapartida.
+//
+// POR QUE EL DEPOSITO LLEGA INYECTADO. Este paquete viaja al escritorio como
+// recurso suelto: un import que salga de aqui resuelve dentro del repositorio y
+// muere en la aplicacion instalada. Lo que se le pide al deposito esta escrito
+// en el typedef de abajo, y el paquete que lo implementa se lo pasa al montar.
+//
+// POR QUE PIDE UN GRANT Y NO SOLO GUARDA EL VALOR. El deposito deniega por
+// defecto: sin un permiso vigente no entrega nada. Si este adaptador guardara
+// el valor sin pedir el permiso, la conexion se crearia bien y fallaria recien
+// al lanzar el primer subproceso, con un "denegado" que no menciona ninguna
+// conexion.
+
+import { fallar } from "../errores.mjs";
+import { crearProveedorDeConexiones } from "../proveedor.mjs";
+import { CATALOGO_POR_DEFECTO, catalogoPorModo } from "../catalogo.mjs";
+
+/** Los modos que este adaptador atiende. El resto no es suyo, y por eso no estan en su catalogo. */
+export const MODOS_DEL_ADAPTADOR_LOCAL = ["pat", "api_key", "basic", "app"];
+
+/**
+ * De la clase de una conexion al tipo de credencial del inventario.
+ *
+ * Son dos vocabularios distintos a proposito y la traduccion vive aqui, en el
+ * adaptador, que es quien conoce los dos. La clase dice que papel juega el
+ * servicio en el proyecto; el tipo dice que clase de secreto es, que es lo que
+ * una politica puede gobernar. `infra` e `integracion` caen en `api_token`
+ * porque, para gobernarlas, lo son: un secreto de API sin mas estructura.
+ */
+const TIPO_POR_CLASE = Object.freeze({
+  tracker: "tracker",
+  scm: "scm",
+  infra: "api_token",
+  integracion: "api_token",
+});
+
+/**
+ * Lo que este adaptador necesita del deposito de secretos. Es la interfaz
+ * minima: nada de esto devuelve un valor salvo `recuperar`, que es la unica
+ * puerta y exige un motivo auditable.
+ *
+ * @typedef {object} DepositoDeSecretos
+ * @property {(datos: {workspace: string, nombre: string, proveedor: string, tipo: string, ambito?: string, project_id?: string|null, alcance_declarado?: string|null, valor: string}) => Promise<{credencial: {id: string, ref_boveda: string}}>} registrar
+ * @property {(datos: {project_id: string, agent_id: string, credential_id: string, concedido_por: string}) => Promise<{id: string}>} otorgar
+ * @property {(ref: string, motivo: {grant_id: string, project_id: string, agent_id: string, proposito: string}) => Promise<string>} recuperar
+ * @property {(ref: string) => Promise<any>} borrar
+ * @property {(grantId: string) => Promise<any>} revocar
+ */
+
+/**
+ * @param {{
+ *   boveda: DepositoDeSecretos,
+ *   workspaceId: string,
+ *   catalogo?: readonly any[],
+ *   agenteId?: string,
+ *   quienConecta?: string,
+ *   peticion?: (url: string, init: any) => Promise<any>,
+ *   repositorio?: any,
+ *   reloj?: () => number,
+ *   dormir?: (ms: number) => Promise<any>,
+ * }} opciones
+ */
+export function crearAdaptadorLocal({
+  boveda,
+  workspaceId,
+  catalogo = catalogoPorModo(CATALOGO_POR_DEFECTO, MODOS_DEL_ADAPTADOR_LOCAL),
+  agenteId = "capa-de-conexiones",
+  // Quien concede el grant. Tiene valor por defecto y es DELIBERADAMENTE
+  // explicito sobre lo que significa: aqui no hay sesion de usuario, asi que lo
+  // unico honesto que se puede decir es que la decision se tomo en la pantalla
+  // de conexiones. Quien monte esto con una identidad real la pasa, y entonces
+  // la auditoria contesta la pregunta entera.
+  quienConecta = "operador (pantalla de conexiones)",
+  peticion = (url, init) => fetch(url, init),
+  ...resto
+}) {
+  if (!boveda || typeof boveda.registrar !== "function" || typeof boveda.recuperar !== "function") {
+    fallar(
+      "deposito_ausente",
+      "el adaptador local se monto sin deposito de secretos",
+      "pasale el deposito al construirlo: este adaptador no implementa uno propio a proposito, porque el valor tiene que quedar donde lo protege el sistema operativo",
+    );
+  }
+  // EL ESPACIO DE TRABAJO SE EXIGE, NO SE ADIVINA, Y ADIVINARLO YA COSTO.
+  //
+  // Esto pasaba el identificador del PROYECTO donde el deposito espera el del
+  // espacio de trabajo. Las pruebas del paquete no lo veian —el repositorio en
+  // memoria de la boveda no comprueba claves foraneas— y contra el almacen real
+  // la primera conexion del operador moria con "FOREIGN KEY constraint failed",
+  // envuelto en un `adaptador_caido` que le decia que revisara su llavero.
+  //
+  // Un proyecto no es un espacio de trabajo: hay muchos proyectos por espacio,
+  // y una credencial de ambito `proyecto` declara los dos. Exigirlo al montar
+  // mueve el fallo al arranque, donde se lee, en vez de al primer token pegado.
+  if (typeof workspaceId !== "string" || workspaceId.length === 0) {
+    fallar(
+      "workspace_ausente",
+      "el adaptador local se monto sin decir a que espacio de trabajo pertenecen las credenciales que va a guardar",
+      "pasale `workspaceId` al construirlo: el deposito indexa por espacio de trabajo, y el identificador del proyecto no vale — sin el, guardar el primer token falla con un error de clave foranea que no menciona ningun espacio de trabajo",
+    );
+  }
+
+  /** Envuelve un fallo del deposito para que salga con causa y accion, y no como una caida. */
+  async function contraElDeposito(que, fn) {
+    try {
+      return await fn();
+    } catch (e) {
+      // Un fallo que YA viene con causa y accion se respeta: es el propio
+      // deposito diciendo que denego, y reescribirlo perderia el motivo.
+      if (e?.name === "ErrorDeConexion" || (e?.codigo && e?.accion)) throw e;
+      fallar(
+        "adaptador_caido",
+        `el deposito de secretos no pudo ${que}: ${e?.message ?? e}`,
+        "comprueba que el llavero del sistema esta desbloqueado y que la sesion tiene acceso; las conexiones que ya existen siguen en el inventario",
+      );
+    }
+  }
+
+  /** @param {any} conexion */
+  function referenciasDe(conexion) {
+    const refs = conexion.deposito?.refs ?? {};
+    if (Object.keys(refs).length === 0) {
+      fallar(
+        "conexion_sin_referencia",
+        `la conexion ${conexion.id} no apunta a ningun valor del deposito`,
+        "vuelve a conectar el proveedor: la fila quedo sin la referencia con la que se pide el valor",
+      );
+    }
+    return refs;
+  }
+
+  const motor = {
+    requisitos: () => [
+      {
+        nombre: "deposito de secretos del sistema operativo",
+        tipo: "deposito",
+        detalle: "el llavero del sistema, o el archivo cifrado si el llavero no esta disponible",
+      },
+    ],
+
+    // Este adaptador no tiene sonda: el deposito del sistema no responde a un
+    // ping barato, y uno falso —devolver siempre `arriba`— seria peor que no
+    // tenerlo. La caida se descubre al usarlo y se declara ahi, con causa.
+    salud: () => ({ arriba: true }),
+
+    async iniciar({ entrada }) {
+      return fallar(
+        "sin_flujo_de_autorizacion",
+        `'${entrada.slug}' se conecta por ${entrada.modo}, que no tiene flujo de autorizacion que abrir`,
+        "conectalo pasando sus campos; si lo que necesitas es oauth2, ese reparto es del adaptador alojado",
+      );
+    },
+
+    async guardar({ entrada, projectId, valores, conexionId }) {
+      const refs = {};
+      const datos = {};
+      for (const campo of entrada.campos ?? []) {
+        const valor = valores[campo.nombre];
+        if (valor === undefined) continue;
+        if (!campo.secreto) {
+          datos[campo.nombre] = valor;
+          continue;
+        }
+        const { credencial } = await contraElDeposito(`guardar '${campo.nombre}' de ${entrada.slug}`, () =>
+          boveda.registrar({
+            workspace: workspaceId,
+            nombre: `${entrada.slug}-${campo.nombre}`,
+            proveedor: entrada.slug,
+            // El tipo sale de la CLASE de la conexion, no del nombre del campo.
+            //
+            // El primer intento pasaba `campo.nombre` —"pat", "api_key"— y la
+            // boveda lo rechazo: su enum es `api_token|tracker|scm|modelo|ssh`.
+            // Y tenia razon en rechazarlo: el tipo de una credencial dice PARA
+            // QUE sirve, que es lo que una politica puede gobernar, no como se
+            // llama la casilla del formulario. Dos proveedores distintos con la
+            // misma casilla "token" no comparten nada gobernable; dos
+            // credenciales de tracker si.
+            tipo: TIPO_POR_CLASE[entrada.clase] ?? "api_token",
+            // EL AMBITO SALE DEL ALCANCE DE LA CONEXION, y es lo que hace que
+            // la cuenta de codigo del espacio de trabajo se pueda guardar.
+            //
+            // Sin esto, una conexion sin proyecto registraba su credencial como
+            // `ambito: "proyecto"` con `project_id: null`, y el almacen la
+            // rechazaba por su propio CHECK —«una credencial 'global' con
+            // proyecto es una credencial que dos pantallas cuentan distinto», y
+            // al reves igual—. El operador pegaba su token en el alta y el
+            // error hablaba de una columna de una tabla.
+            //
+            // El enum `global | proyecto` de la boveda existe exactamente para
+            // esto: una credencial del espacio de trabajo entera, no una de
+            // proyecto a la que le falta el proyecto.
+            ambito: projectId ? "proyecto" : "global",
+            project_id: projectId ?? null,
+            alcance_declarado: campo.alcance ?? null,
+            valor,
+          }),
+        );
+        const grant = await contraElDeposito(`autorizar el uso de '${campo.nombre}'`, () =>
+          // `concedido_por` viaja desde quien conecta. NO se pone aqui un valor
+          // de sistema: el grant es una decision humana, y un autor inventado
+          // convierte la auditoria en una fila que dice que alguien autorizo sin
+          // poder decir quien. Si no hubo persona, no hubo decision.
+          boveda.otorgar({
+            // `null` sobre una credencial global: el permiso no es de ningun
+            // proyecto porque la credencial tampoco lo es. La boveda compara
+            // este campo contra el del motivo al entregar el valor, asi que los
+            // dos lados tienen que decir lo mismo.
+            project_id: projectId ?? null,
+            agent_id: agenteId,
+            credential_id: credencial.id,
+            concedido_por: quienConecta,
+          }),
+        );
+        refs[campo.nombre] = { ref: credencial.ref_boveda, grant_id: grant.id };
+      }
+      return { deposito: { refs, datos, conexionId } };
+    },
+
+    async sondear() {
+      // No hay nada que sondear: la conexion queda lista al guardar el valor.
+      return null;
+    },
+
+    async leer(conexion) {
+      const refs = referenciasDe(conexion);
+      const valores = { ...(conexion.deposito?.datos ?? {}) };
+      for (const [campo, { ref, grant_id }] of Object.entries(refs)) {
+        valores[campo] = await contraElDeposito(`entregar '${campo}'`, () =>
+          boveda.recuperar(ref, {
+            grant_id,
+            // Declarado siempre, `null` incluido: la boveda distingue «esta
+            // credencial no es de ningun proyecto» de «quien llama se olvido de
+            // decirlo», y solo lo primero pasa.
+            project_id: conexion.project_id ?? null,
+            agent_id: agenteId,
+            proposito: "llamar_api",
+          }),
+        );
+      }
+      return { valores };
+    },
+
+    async olvidar(conexion) {
+      const refs = conexion.deposito?.refs ?? {};
+      for (const { ref, grant_id } of Object.values(refs)) {
+        // Primero el permiso y despues el valor: si el borrado fallara, lo que
+        // queda es una credencial que ya no autoriza a nadie, y no al reves.
+        await contraElDeposito("revocar el permiso", () => boveda.revocar(grant_id));
+        await contraElDeposito("borrar el valor", () => boveda.borrar(ref));
+      }
+    },
+
+    async llamar({ entrada, conexion, ruta, metodo, cuerpo, cabeceras }) {
+      const base = String(entrada.api?.base ?? "").replace(/\{(\w+)\}/g, (_, clave) => {
+        const valor = conexion.deposito?.datos?.[clave];
+        if (!valor) {
+          fallar(
+            "dato_ausente_en_la_url",
+            `la direccion de '${entrada.slug}' necesita '${clave}' y la conexion ${conexion.id} no lo tiene`,
+            `vuelve a conectar el proveedor rellenando '${clave}'`,
+          );
+        }
+        return String(valor);
+      });
+
+      const respuesta = await peticion(`${base}${ruta}`, {
+        method: metodo,
+        headers: cabeceras,
+        body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
+      });
+
+      const texto = await respuesta.text();
+      let leido = texto;
+      try {
+        leido = texto ? JSON.parse(texto) : null;
+      } catch {
+        // Un cuerpo que no es JSON se devuelve tal cual: convertirlo en un
+        // error perderia el mensaje del proveedor, que suele ser el unico dato
+        // util cuando algo falla del otro lado.
+      }
+      return {
+        estado: respuesta.status,
+        cuerpo: leido,
+        cabeceras: Object.fromEntries(respuesta.headers ?? []),
+      };
+    },
+  };
+
+  return crearProveedorDeConexiones({ id: "local", catalogo, motor, ...resto });
+}

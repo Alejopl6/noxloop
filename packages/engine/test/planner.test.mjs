@@ -69,6 +69,29 @@ test("de un ticket con criterios sale un plan validado y un recorrido", async ()
   assert.equal(run.tasks[0].status, "pending");
 });
 
+// El motor lanzado por CLI no sabe de que proyecto es el run, y el servicio lo
+// atribuye por la ruta del repositorio de alguna tarea. Sin esa ruta escrita,
+// `GET /v1/projects/:id/runs` devolvia vacio para un run de verdad: lo destapo
+// el recorrido de punta a punta (T205) como costura cruzada a mano.
+test("cada tarea del run lleva la ruta del repositorio que la config declara, resuelta", async () => {
+  const esc = escenario();
+  const ruta = join(esc.raiz, "repo-app");
+  const d = deps(esc);
+  d.config.repos.app.path = ruta;
+  const r = await planItem("42", d);
+  assert.equal(r.ok, true);
+  const run = loadRun("42", { home: esc.home });
+  assert.equal(run.tasks[0].repoPath, ruta);
+});
+
+test("un repositorio sin ruta en la config deja repoPath en null, no una ruta inventada", async () => {
+  const esc = escenario();
+  const r = await planItem("42", deps(esc));
+  assert.equal(r.ok, true);
+  const run = loadRun("42", { home: esc.home });
+  assert.equal(run.tasks[0].repoPath, null);
+});
+
 test("un ticket SIN criterios verificables no produce codigo: se bloquea con la pregunta", async () => {
   const esc = escenario({ item: itemCon({ acceptance: [] }) });
   let invoco = false;

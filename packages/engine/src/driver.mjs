@@ -30,9 +30,71 @@ import { commitPaths, mensajeDeFase } from "./vcs.mjs";
 import { claseDeFallo, huellaDeFallo, noConverge } from "./gate.mjs";
 // El texto ajeno entra al prompt marcado como dato: ver prompt.mjs.
 import { comoDato, recorteQueAvisa } from "./prompt.mjs";
-import { comandosPermitidos } from "./wiring.mjs";
+import { comandosPermitidos, entornoDeFase } from "./wiring.mjs";
+// El marcador con el que el revisor declara un bloqueo: ver `conVeredicto`.
+import { veredictoDeRevision } from "./runner.mjs";
 
 const TIER_POR_DEFECTO = { model: null, effort: "high", gate: "full", review: true, fanout: false };
+
+/**
+ * La peticion de fase COMPLETA, la unica forma que un runtime puede ejecutar.
+ *
+ * EL FALLO QUE CIERRA. Los tres call sites de este archivo construian la
+ * peticion SIN `env`, y `validarPeticion` del contrato de adaptadores la
+ * rechazaba por eso — con el motivo escrito ahi: "heredar el del motor no es un
+ * modo degradado: es la fuga". Mientras faltara, el adaptador `fake` no podia
+ * ser invocado por el motor: el recorrido de punta a punta tenia que interponer
+ * una funcion que rellenaba el campo, o sea que probaba una costura que no
+ * cerraba.
+ *
+ * EL DRIVER NO SABE QUE VARIABLES SON. Pide el entorno a quien lo cableo y lo
+ * pone en la peticion; cuales viajan lo deciden el cableado y el runtime. Que
+ * el motor lo DECLARE en vez de dejar que el subproceso lo herede es todo el
+ * punto: un campo que el llamante no escribe es un campo que alguien rellena
+ * por abajo.
+ *
+ * @param {any} deps
+ * @param {any} campos
+ */
+function peticionDeFase(deps, campos) {
+  return {
+    ...campos,
+    env: typeof deps.entorno === "function" ? deps.entorno(campos) : entornoDeFase(deps.config || {}),
+    // CUALES DE ESAS VARIABLES SON SECRETAS. Si no se sabe, el campo NO se
+    // manda: la ausencia significa "miralas todas" (denegar por defecto), y
+    // mandar una lista vacia seria afirmar que ninguna lo es.
+    ...(deps.secretos ? { secretos: deps.secretos } : {}),
+  };
+}
+
+/**
+ * El veredicto de una revision, derivado AQUI cuando el runtime no lo trae.
+ *
+ * EL CABLE QUE ESTO EVITA CORTAR, y casi se corta al enchufar los adaptadores.
+ * El driver decide con `r.findings === "blocking"`, y ese campo lo producia
+ * `reduceMessages` de `runner.mjs` — que era quien invocaba al modelo. Un
+ * `PhaseResult` del contrato de adaptadores NO lo lleva, asi que en cuanto el
+ * cableado monto el runtime por contrato la comparacion habria vuelto a ser
+ * siempre falsa: la revision deja de poder bloquear nada y nadie se entera. Es
+ * exactamente el fallo que `veredicto-y-fanout.test.mjs` existe para que no
+ * vuelva, y los tests no lo habrian visto porque sus dobles rellenan el campo
+ * a mano.
+ *
+ * SE DERIVA EN EL MOTOR Y NO EN CADA ADAPTADOR. El marcador es el protocolo
+ * del motor con su propio revisor —lo exige `reviewer.md`, que es del motor—,
+ * no una capacidad de un runtime. Pedirselo a cada adaptador seria duplicarlo
+ * en todos y darle a cada uno la oportunidad de interpretarlo distinto, que es
+ * la regla 3 del contrato al reves.
+ *
+ * SE RESPETA EL QUE YA VIENE. `null` es un veredicto ("no se sabe") distinto de
+ * no haberlo declarado, asi que se mira si el campo ESTA, no si tiene valor.
+ *
+ * @param {any} r
+ */
+function conVeredicto(r) {
+  if (!r || typeof r !== "object") return r;
+  return Object.hasOwn(r, "findings") ? r : { ...r, findings: veredictoDeRevision(r.text) };
+}
 
 /** Tope de vueltas de la maquina de estados por tarea. Sin esto, un estado que
  * no avanza y no consume presupuesto seria un bucle infinito silencioso. */
@@ -40,6 +102,20 @@ const MAX_VUELTAS_POR_TAREA = 40;
 
 function politicaDeTier(config, tier) {
   return { ...TIER_POR_DEFECTO, ...(config.tiers?.[tier] || {}) };
+}
+
+/**
+ * Si una fase es de revision. Cubre `REVIEW` y `REVIEW-SINTESIS`.
+ *
+ * Se compara por prefijo y no por igualdad para que una fase de revision nueva
+ * —otra lente, otra sintesis— herede la regla sin que nadie se acuerde de
+ * anadirla a una lista. Una lista de nombres exactos es justo lo que dejo el
+ * agujero que esto cierra.
+ *
+ * @param {string} nombre
+ */
+export function esRevision(nombre) {
+  return /^REVIEW(\b|[-_])/i.test(String(nombre));
 }
 
 /**
@@ -551,7 +627,7 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
   // pasada larga con mas pasos.
   const informes = await Promise.all(
     LENTES.map((lente) =>
-      deps.runPhase({
+      deps.runPhase(peticionDeFase(deps, {
         phase: "REVIEW",
         lens: lente,
         taskId,
@@ -563,7 +639,7 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
         effort: politica.effort,
         tier: t.tier,
         prompt: `/noxloop-task ${run.item.id} ${taskId} --phase REVIEW --lens ${lente}`,
-      }).then((r) => ({ lente, r: r || { ok: false, text: "la lente no devolvio nada", findings: null } })),
+      })).then((r) => ({ lente, r: conVeredicto(r) || { ok: false, text: "la lente no devolvio nada", findings: null } })),
     ),
   );
 
@@ -588,7 +664,7 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
       comoDato(recorteQueAvisa(String(r.text || ""), 4000), `informe de la lente ${lente}`))
     .join("\n\n");
 
-  return deps.runPhase({
+  return conVeredicto(await deps.runPhase(peticionDeFase(deps, {
     phase: "REVIEW-SINTESIS",
     taskId,
     task: t,
@@ -602,7 +678,7 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
       `/noxloop-task ${run.item.id} ${taskId} --phase REVIEW --sintesis\n\n` +
       `Cuatro lentes miraron este diff por separado. Decidi vos, con los cuatro ` +
       `informes delante, y escribi el marcador solo si de verdad corresponde.\n\n${resumen}`,
-  });
+  })));
 }
 
 export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
@@ -630,7 +706,7 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
     };
   }
 
-  const r = await deps.runPhase({
+  const r = await deps.runPhase(peticionDeFase(deps, {
     phase: nombre,
     taskId,
     task: t,
@@ -639,12 +715,29 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
     // Sesion NUEVA en la primera fase de la tarea, RETOMADA en las siguientes.
     // Retomar reusa el contexto que sirve; abrir nueva entre tareas evita la
     // degradacion por compactacion.
-    resume: t.sessionId || null,
+    //
+    // PERO NUNCA EN UNA REVISION, y esto era un agujero. Si el revisor retoma
+    // la sesion del implementador hereda su razonamiento entero, y la revision
+    // deja de romper para confirmar: el modelo que acaba de defender una
+    // solucion no la ataca en el turno siguiente. Es el riesgo que la
+    // definicion de producto nombra explicitamente para esta etapa, y el que
+    // hace que la metrica sea "proporcion de hallazgos que resultaron reales".
+    //
+    // El motor ya lo hacia bien por un lado: el camino de abanico
+    // (`revisionEnAbanico`) construye su peticion con `resume: null` a
+    // proposito. Este camino —la revision simple, que es la que corre con la
+    // configuracion por defecto— pasaba la sesion. Dos caminos para lo mismo y
+    // solo uno correcto; habia ademas un test que afirmaba el comportamiento
+    // equivocado, asi que nada lo delataba.
+    //
+    // Lo encontro el trabajo del contrato de adaptadores, al escribir la regla
+    // "el revisor no hereda el transcript" y comprobar contra que la cumplia.
+    resume: esRevision(nombre) ? null : (t.sessionId || null),
     model: politica.model,
     effort: politica.effort,
     prompt: promptDeFase(nombre, run, t, opts.extra),
     tier: t.tier,
-  });
+  }));
   if (r?.sessionId && r.sessionId !== t.sessionId) {
     setTaskFields(loadRun(run.item.id, { home: deps.home }), taskId, { sessionId: r.sessionId }, { home: deps.home });
   }
@@ -660,7 +753,10 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
     (deps.log || consolaMuda()).warn(`no se pudo anotar el gasto de la fase: ${e.message}`);
   }
 
-  return r || { ok: false, budgetExhausted: false, text: "la fase no devolvio nada" };
+  // Con el veredicto derivado si el runtime no lo trajo: un `PhaseResult` del
+  // contrato de adaptadores no lleva `findings`, y sin esto la revision no
+  // puede bloquear nada. Ver `conVeredicto`.
+  return conVeredicto(r) || { ok: false, budgetExhausted: false, findings: null, text: "la fase no devolvio nada" };
 }
 
 export function promptDeFase(nombre, run, t, extra) {

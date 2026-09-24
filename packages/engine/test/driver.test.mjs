@@ -148,9 +148,42 @@ test("retoma la sesion entre fases de la misma tarea, y no entre tareas", async 
   const deT1 = registro.filter((x) => x.tarea === "T1");
   assert.equal(deT1[0].resume, null, "la primera fase abre sesion nueva");
   assert.equal(deT1[1].resume, "s-T1", "GREEN retoma la sesion de RED");
-  assert.equal(deT1[2].resume, "s-T1", "REVIEW retoma la misma");
+  // Esta linea afirmaba `"s-T1"` — que REVIEW retomaba la sesion — y era el
+  // unico motivo por el que el agujero no se veia. Ver el test siguiente.
+  assert.equal(deT1[2].resume, null, "REVIEW NO retoma: el revisor no hereda el razonamiento");
   const primeraDeT2 = registro.find((x) => x.tarea === "T2");
   assert.equal(primeraDeT2.resume, null, "otra tarea, sesion nueva: evita la compactacion");
+});
+
+test("el revisor nunca retoma la sesion del implementador", async () => {
+  // EL FALLO QUE ESTE TEST FIJA, y estuvo en el motor sin que nada lo delatara.
+  //
+  // `fase()` pasaba `resume: t.sessionId` para TODAS las fases, revision
+  // incluida. El camino de abanico (`revisionEnAbanico`) construye su peticion
+  // aparte y si pasa `resume: null` a proposito — asi que el motor hacia lo
+  // correcto por un lado y lo contrario por el otro, y el lado equivocado es el
+  // que corre con la configuracion por defecto (`fanout: false`).
+  //
+  // Lo tapaba el test de arriba, que afirmaba `"s-T1"` como comportamiento
+  // esperado. Un test que encoda el fallo es peor que no tener test: convierte
+  // arreglarlo en "romper la suite".
+  //
+  // Por que importa: un revisor que hereda el transcript hereda el
+  // razonamiento, y el modelo que acaba de defender una solucion no la ataca en
+  // el turno siguiente. La revision pasa de romper a confirmar, que es
+  // exactamente el modo de fallo que la definicion de producto nombra para esta
+  // etapa. Y no se nota: produce revisiones que parecen limpias.
+  const esc = escenario([tarea("T1")]);
+  const registro = [];
+  await runItem("1", depsBase(esc, registro));
+
+  const revisiones = registro.filter((x) => /^REVIEW/i.test(x.fase));
+  // Sin esta guarda el test es vacio: si el escenario dejara de llegar a
+  // REVIEW, un bucle sobre cero elementos pasa sin comprobar nada.
+  assert.ok(revisiones.length > 0, "el escenario no llego a ninguna revision: este test no mide nada");
+  for (const r of revisiones) {
+    assert.equal(r.resume, null, `la fase ${r.fase} retomo la sesion ${r.resume}`);
+  }
 });
 
 test("dos tareas sin dependencias avanzan en paralelo, cada una en su worktree", async () => {

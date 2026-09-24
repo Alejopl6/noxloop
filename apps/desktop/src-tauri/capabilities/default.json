@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permisos minimos de la ventana principal. Cada entrada esta por una llamada que la interfaz hace de verdad; lo que falta, falta a proposito. En particular NO se concede 'shell:allow-execute' ni 'shell:allow-spawn': el sidecar lo lanza Rust en setup(), y la ACL solo filtra las invocaciones que vienen del webview, asi que concederlos no habilitaria nada que la aplicacion necesite y si le daria al webview la capacidad de lanzar procesos. El comando 'daemon_info' no aparece aca porque los comandos propios (generate_handler!) no pasan por la ACL; cuando llegue la boveda de la fase D, sus comandos no se declaran como comandos invocables.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "store:default",
+    "opener:allow-open-url"
+  ]
+}

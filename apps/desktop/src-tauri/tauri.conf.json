@@ -1,0 +1,104 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "noxloop",
+  "version": "0.1.0",
+  "identifier": "dev.noxloop.desktop",
+  "build": {
+    "frontendDist": "../../studio/out",
+    "devUrl": "http://localhost:3100",
+    "beforeDevCommand": "node scripts/preparar-sidecar.mjs && npm run studio:dev --prefix ../..",
+    "beforeBuildCommand": "npm run studio:build --prefix ../..",
+    "beforeBundleCommand": "node scripts/preparar-sidecar.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "noxloop",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/noxloop-service"],
+    "resources": {
+      "../../../packages/service/package.json": "servicio/package.json",
+      "../../../packages/service/bin/**/*": "servicio/bin/",
+      "../../../packages/service/src/**/*": "servicio/src/",
+
+      "../../../packages/store/package.json": "store/package.json",
+      "../../../packages/store/src/**/*": "store/src/",
+      "../../../packages/vault/package.json": "vault/package.json",
+      "../../../packages/vault/src/**/*": "vault/src/",
+      "../../../packages/scanner/package.json": "scanner/package.json",
+      "../../../packages/scanner/src/**/*": "scanner/src/",
+      "../../../packages/core/package.json": "core/package.json",
+      "../../../packages/core/src/**/*": "core/src/",
+      "../../../packages/connections/package.json": "connections/package.json",
+      "../../../packages/connections/src/**/*": "connections/src/",
+      "../../../packages/adapters/package.json": "adapters/package.json",
+      "../../../packages/adapters/src/**/*": "adapters/src/",
+      "../../../packages/engine/package.json": "engine/package.json",
+      "../../../packages/engine/src/**/*": "engine/src/",
+      "../../../packages/asistencia/package.json": "asistencia/package.json",
+      "../../../packages/asistencia/src/**/*": "asistencia/src/",
+
+      "../../../node_modules/ai/**/*": "node_modules/ai/",
+      "../../../node_modules/@ai-sdk/anthropic/**/*": "node_modules/@ai-sdk/anthropic/",
+      "../../../node_modules/@ai-sdk/gateway/**/*": "node_modules/@ai-sdk/gateway/",
+      "../../../node_modules/@ai-sdk/provider/**/*": "node_modules/@ai-sdk/provider/",
+      "../../../node_modules/@ai-sdk/provider-utils/**/*": "node_modules/@ai-sdk/provider-utils/",
+      "../../../node_modules/@standard-schema/spec/**/*": "node_modules/@standard-schema/spec/",
+      "../../../node_modules/@vercel/oidc/**/*": "node_modules/@vercel/oidc/",
+      "../../../node_modules/@workflow/serde/**/*": "node_modules/@workflow/serde/",
+      "../../../node_modules/eventsource-parser/**/*": "node_modules/eventsource-parser/",
+      "../../../node_modules/json-schema/**/*": "node_modules/json-schema/",
+      "../../../node_modules/undici/**/*": "node_modules/undici/",
+      "../../../node_modules/zod/**/*": "node_modules/zod/",
+
+      "../../../node_modules/@nangohq/node/**/*": "node_modules/@nangohq/node/",
+      "../../../node_modules/axios/**/*": "node_modules/axios/",
+      "../../../node_modules/follow-redirects/**/*": "node_modules/follow-redirects/",
+      "../../../node_modules/form-data/**/*": "node_modules/form-data/",
+      "../../../node_modules/proxy-from-env/**/*": "node_modules/proxy-from-env/",
+      "../../../node_modules/asynckit/**/*": "node_modules/asynckit/",
+      "../../../node_modules/combined-stream/**/*": "node_modules/combined-stream/",
+      "../../../node_modules/delayed-stream/**/*": "node_modules/delayed-stream/",
+      "../../../node_modules/mime-types/**/*": "node_modules/mime-types/",
+      "../../../node_modules/mime-db/**/*": "node_modules/mime-db/",
+      "../../../node_modules/es-set-tostringtag/**/*": "node_modules/es-set-tostringtag/",
+      "../../../node_modules/get-intrinsic/**/*": "node_modules/get-intrinsic/",
+      "../../../node_modules/has-symbols/**/*": "node_modules/has-symbols/",
+      "../../../node_modules/hasown/**/*": "node_modules/hasown/",
+      "../../../node_modules/function-bind/**/*": "node_modules/function-bind/",
+      "../../../node_modules/es-define-property/**/*": "node_modules/es-define-property/",
+      "../../../node_modules/es-errors/**/*": "node_modules/es-errors/",
+      "../../../node_modules/es-object-atoms/**/*": "node_modules/es-object-atoms/",
+      "../../../node_modules/gopd/**/*": "node_modules/gopd/",
+      "../../../node_modules/call-bind-apply-helpers/**/*": "node_modules/call-bind-apply-helpers/",
+      "../../../node_modules/dunder-proto/**/*": "node_modules/dunder-proto/",
+      "../../../node_modules/math-intrinsics/**/*": "node_modules/math-intrinsics/",
+      "../../../node_modules/agent-base/**/*": "node_modules/agent-base/",
+      "../../../node_modules/ms/**/*": "node_modules/ms/",
+      "../../../node_modules/debug/**/*": "node_modules/debug/",
+      "../../../node_modules/has-tostringtag/**/*": "node_modules/has-tostringtag/",
+      "../../../node_modules/get-proto/**/*": "node_modules/get-proto/",
+      "../../../node_modules/https-proxy-agent/**/*": "node_modules/https-proxy-agent/"
+    }
+  }
+}

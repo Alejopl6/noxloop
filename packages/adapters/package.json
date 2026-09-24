@@ -1,0 +1,10 @@
+{
+  "name": "@noxloop/adapters",
+  "version": "0.1.0",
+  "description": "La capa de runtimes de agente de noxloop: el contrato AgentAdapter, su suite, los tres adaptadores del alcance, el modelo de flota, la bandeja y el compilador de contexto.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": { "node": ">=22" },
+  "files": ["src"]
+}

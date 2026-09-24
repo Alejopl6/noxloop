@@ -15,11 +15,13 @@ dejar pull requests abiertos. No mergea. No despliega. Ahí termina, a propósit
                                                             └─ T3 ─┘   (rebase, verifica, integra)
 ```
 
-> **Estado: completo para el flujo que promete.** 650 tests, typecheck y
-> validación de esquemas en verde. Asignar un ticket —o mencionarlo— en GitHub
-> Issues, Linear o Azure DevOps es todo lo que hay que hacer: hay un test de
-> punta a punta que recorre el cableado real y solo simula el modelo y el forge.
-> Lo que queda abierto está [declarado, no escondido](#huecos-declarados).
+> **Estado: el motor, completo; el plano de control, en cierre.** 1750 tests,
+> typecheck y validación de esquemas en verde. Asignar un ticket —o
+> mencionarlo— en GitHub Issues, Linear o Azure DevOps es todo lo que hay que
+> hacer: hay un test de punta a punta que da de alta un repositorio real en la
+> aplicación, lo lleva a `ACTIVE` y llega a PR abierto, simulando solo el modelo
+> y el forge. Lo que queda abierto —incluido que el motor todavía no empuja la
+> rama del ítem— está [declarado, no escondido](#huecos-declarados).
 
 ---
 
@@ -92,6 +94,22 @@ un repositorio es cómo se trabaja en el repositorio equivocado.
 El ejemplo viene apuntando al **proveedor falso**, que no toca ninguna red: se
 puede ver el motor funcionando antes de poner una credencial.
 
+### La aplicación
+
+Además del CLI hay una aplicación de escritorio —y la misma interfaz en el
+navegador— que lleva un repositorio desde el alta hasta dejarlo listo para
+recibir tickets: escaneo, constitución, bootstrap, conexiones, flota. Detrás
+corre un servicio local que es el único escritor de su almacén y escucha solo en
+`127.0.0.1`.
+
+```bash
+npm run desktop                       # escritorio (necesita Rust)
+npm run service & npm run studio:dev  # o servicio + interfaz en el navegador
+```
+
+Cómo se levanta cada pieza y cómo se verifica, en
+[`specs/002-control-plane/quickstart.md`](specs/002-control-plane/quickstart.md).
+
 ### Como plugin de Claude Code
 
 ```
@@ -127,11 +145,21 @@ mal: se arregla la interfaz, no se ramifica el motor con un `if`.
 ## Cómo está armado
 
 ```
-packages/engine/     el motor: estado, scheduler, cola de integración, gates, hooks
-packages/plugin/     el plugin de Claude Code: comandos, agentes, skills
-providers/           plano, a propósito: un archivo = un gestor de tickets
-examples/            configuración lista para copiar
-specs/               el ciclo spec-kit completo de cada cambio
+packages/engine/       el motor: estado, scheduler, cola de integración, gates, hooks
+packages/plugin/       el plugin de Claude Code: comandos, agentes, skills
+packages/service/      el servicio de control: API local, único escritor del almacén
+packages/store/        el almacén del plano de control (SQLite) y su auditoría encadenada
+packages/vault/        la bóveda: credenciales, grants, redactor, SSH
+packages/scanner/      lee un repositorio sin escribir en él
+packages/connections/  la capa de conexiones: adaptadores local, Nango y fake
+packages/adapters/     los runtimes de agente: Claude Agent SDK, Codex, fake
+packages/asistencia/   la asistencia con IA: propone y marca como sugerido, nunca decide
+packages/core/         el dominio de las etapas 02-05: constitución, guidelines, diseño, bootstrap
+apps/studio/           la interfaz (Next.js, exportada a estático)
+apps/desktop/          la cáscara de escritorio (Tauri) y su sidecar
+providers/             plano, a propósito: un archivo = un gestor de tickets
+examples/              configuración lista para copiar
+specs/                 el ciclo spec-kit completo de cada cambio
 ```
 
 Dos reglas de estructura que se verifican con tests, no con revisión:
@@ -144,7 +172,7 @@ Dos reglas de estructura que se verifican con tests, no con revisión:
   otro archivo se saltearía las guardas, que es todo lo que sostiene el
   principio del exit code.
 
-Cero dependencias de runtime obligatorias: el motor corre con Node y git. El
+Cero dependencias de runtime obligatorias **en el motor**: corre con Node y git. El
 Claude Agent SDK es opcional, y si falta, se degrada a invocar el CLI y lo dice.
 Incluso el validador de JSON Schema es propio — esto se instala para orquestar
 los repositorios de otra persona, y cada dependencia es superficie que esa
@@ -155,9 +183,10 @@ persona no eligió.
 ## Verificación
 
 ```bash
-npm test          # 849 tests: unitarios, contrato de proveedor, integración, concurrencia y guardas de constitución
-npm run typecheck # tsc --checkJs, sin paso de build
-npm run validate  # la configuración de ejemplo contra su esquema
+npm test             # 1750 tests: motor, servicio, bóveda, scanner, conexiones, contrato de proveedor y guardas
+npm run typecheck    # tsc --checkJs, sin paso de build
+npm run validate     # la configuración de ejemplo contra su esquema
+npm run studio:build # la interfaz compila a estático
 ```
 
 Los tests del motor corren **sin red, sin credenciales y sin modelo**: el
@@ -167,6 +196,10 @@ proveedor falso y repositorios git desechables.
 ---
 
 ## El plan de trabajo
+
+Hay dos especificaciones, cada una con su ciclo completo.
+
+### 001 — el orquestador
 
 Todo el diseño está en
 [`specs/001-parallel-ticket-orchestrator/`](specs/001-parallel-ticket-orchestrator/):
@@ -182,7 +215,6 @@ contratos y 84 tareas en 8 fases.
 | 5. US3 — proveedores | Azure DevOps, GitHub, Linear, degradación, docs | ✅ 9/9 |
 | 6. US4 — retomar | reanudación, worktrees huérfanos, destrabar | ✅ 7/7 |
 | 7. US5 — adoptabilidad | ADOPTING, PARALLELISM, AUTONOMY, MIGRATING | ✅ 7/7 |
-| 5. US3 — proveedores | Azure DevOps, GitHub, Linear | 9 tareas |
 | 8. Pulido | daemon, disparo por asignación y mención | ✅ 6/6 |
 | Descubiertas | 32 huecos que el plan no había previsto | ✅ 29 cerrados, 3 declarados |
 
@@ -207,11 +239,45 @@ donde hay una persona del otro lado.
 Después del cambio: de 28 grafías prohibidas pasan **0**, y de 8 comandos
 legítimos se bloquean **0**.
 
+### 002 — el plano de control
+
+[`specs/002-control-plane/`](specs/002-control-plane/) cubre el ciclo que va
+**antes** del ticket: llevar un repositorio existente, desde "abrir la app",
+hasta un proyecto `ACTIVE` que el motor puede recorrer.
+
+| Fase | Qué entrega | Estado |
+|---|---|---|
+| A. Esqueleto | monorepo, servicio, almacén, interfaz, cáscara de escritorio | ✅ |
+| B. Scanner | lee el repositorio sin escribir, con evidencia por hallazgo | ✅ |
+| C. Contexto | constitución, bootstrap, las once pantallas del alta | ✅ |
+| D.1 Bóveda | credenciales, grants, redactor, auditoría encadenada, SSH | ✅ |
+| D.2 Conexiones | adaptadores local, Nango y fake; OAuth con navegador del sistema y sondeo | ✅ salvo T156 |
+| E. Flota y handoff | adaptadores de agente, flota, bandeja, del proyecto al PR | ✅ |
+| F. Cierre | quickstart, docs, CI, builds de escritorio, aceptación SC-001 | ✅ salvo T205 a mano |
+
+El recorrido de punta a punta ya no cruza ninguna costura a mano: el último
+arreglo fue que un run lanzado por el CLI no aparecía en los runs de su
+proyecto, porque sus tareas no llevaban la ruta del repositorio.
+
 ---
 
 ## Huecos declarados
 
-Uno, y es deliberado. Está en `tasks.md` como T116: **el merge local en dos
+**El motor no empuja la rama del ítem.** `createPR` llama a `gh pr create --head
+<rama>`, y contra un remoto real eso falla si la rama no está publicada. El
+límite de autonomía queda del lado seguro —el motor no empuja nada—, pero el PR
+no se abre solo: hay que empujar la rama a mano (`docs/ADOPTING.md` §6 tiene el
+comando). Desde ahora, al menos, la causa textual del forge llega al reporte en
+vez de un `sin PR` a secas. El test de punta a punta no lo ve porque simula el
+forge.
+
+**Dos cierres de 002 que necesitan una persona, no código.** T156: registrar las
+aplicaciones OAuth propias en Linear, Jira y GitHub; el producto guía el
+registro, pero en un Nango autoalojado no hay aplicaciones compartidas. Y la
+mitad manual de T205: un repositorio real, de "abrir la app" a `ACTIVE`, en
+menos de 15 minutos y sin leer la documentación (escenario 8 del quickstart).
+
+Y uno deliberado. Está en `tasks.md` como T116: **el merge local en dos
 tiempos** (`git checkout main` y después `git merge task/x`) no lo frena el hook.
 No se cerró porque bloquear `checkout` es el sobre-bloqueo que ese hook ya
 cometió una vez, y la salida a lo compartido sí está cerrada: publicarlo exige un
@@ -260,4 +326,29 @@ tarea avance no es una decisión de implementación. No está disponible.
 
 ## Licencia
 
-MIT — ver [LICENSE](LICENSE).
+**noxloop es MIT. La capa de integración que trae dentro, no.**
+
+Los binarios distribuidos incluyen Nango y sus SDK `@nangohq/node` y
+`@nangohq/frontend`, bajo **Elastic License 2.0 (ELv2)**. La ELv2 no está
+aprobada por la OSI, no es compatible con GPL ni AGPL, y distribuciones como
+Debian y Fedora no aceptan paquetes con ese código dentro.
+
+Qué significa en la práctica, según quién seas:
+
+- **Lo usas en tu máquina o en la de tu equipo**: nada. La cláusula que limita
+  el servicio alojado no alcanza a un Nango local para tu propio uso.
+- **Lo incorporas a un producto tuyo o lo reempaquetas**: estás
+  redistribuyendo código ELv2 y tienes que pasar sus términos a quien reciba la
+  copia. Los tienes completos en [LICENSE](LICENSE).
+- **Quieres ofrecerlo como servicio alojado que conecte integraciones por
+  cuenta de tus usuarios**: eso sí choca con la ELv2.
+- **Tu política interna no admite ELv2**: entonces noxloop no te sirve tal cual
+  se distribuye hoy, y conviene que lo sepas antes de adoptarlo y no después.
+  El código ELv2 viaja en el binario aunque solo uses el adaptador `local`:
+  ese adaptador te ahorra *ejecutar* Nango, no lo saca del artefacto. Sacarlo
+  exige un build propio sin ese adaptador, que la fachada `ConnectionProvider`
+  hace posible pero que hoy no publicamos.
+
+Esta nota existe porque la decisión de meter Nango en el núcleo se tomó con la
+licencia sobre la mesa. Descubrirla después de adoptar el producto sería un
+problema que te habríamos creado nosotros en silencio.

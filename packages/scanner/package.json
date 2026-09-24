@@ -1,0 +1,10 @@
+{
+  "name": "@noxloop/scanner",
+  "version": "0.1.0",
+  "description": "El scanner de proyecto de noxloop: lee un arbol y devuelve un snapshot que distingue lo detectado de lo inferido.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": { "node": ">=22" },
+  "files": ["src"]
+}

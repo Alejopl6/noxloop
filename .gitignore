@@ -2,10 +2,26 @@ node_modules/
 dist/
 build/
 coverage/
+
+# La superficie de la feature 002. Todo esto es salida de build, no fuente.
+#
+# `binaries/` lleva el ejecutable de Node copiado con sufijo de target triple
+# para el sidecar: son ~60-90 MB por plataforma y los regenera
+# `preparar-sidecar.mjs` en cada empaquetado. Versionarlo seria meter el
+# runtime de Node en el historial de git.
+/apps/studio/.next/
+/apps/studio/out/
+/apps/desktop/src-tauri/target/
+/apps/desktop/src-tauri/binaries/
+*.tsbuildinfo
+next-env.d.ts
 *.log
 .env
 .env.*
 !.env.example
+# La plantilla del compose de Nango. `docs/CONEXIONES.md` manda copiarla, y sin
+# esta linea no viajaba en el repositorio: el primer paso fallaba en un clon limpio.
+!.env.ejemplo
 .DS_Store
 Thumbs.db
 *.tmp
@@ -23,3 +39,8 @@ Thumbs.db
 # ...pero no su metadata de plantilla, que es de spec-kit y no de este proyecto.
 /.specify/memory/.constitution-template.json
 /.claude/skills/speckit-*
+
+# El volumen de Postgres del servidor de integraciones. Lo crea `docker compose
+# up` en el directorio del compose, y son cientos de megas de base de datos con
+# las credenciales cifradas del operador dentro: no se versiona ni por error.
+packages/connections/nango/datos/

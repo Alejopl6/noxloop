@@ -19,3 +19,30 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+--- Dependencias con licencia distinta ---
+
+El código de noxloop se distribuye bajo la licencia MIT de más arriba.
+
+Los binarios distribuidos de noxloop incluyen la capa de integración Nango y
+sus SDK de cliente, "@nangohq/node" y "@nangohq/frontend", que NO están bajo
+licencia MIT: están bajo la Elastic License 2.0 (ELv2).
+
+La Elastic License 2.0 no está aprobada por la OSI y no es compatible con las
+licencias GPL ni AGPL. Entre otras condiciones, prohíbe ofrecer el software
+como un servicio alojado a terceros y prohíbe eludir sus limitaciones
+funcionales. Un operador que ejecuta Nango localmente para su propio uso no
+está afectado por esa cláusula; un servicio que conectara integraciones por
+cuenta de sus usuarios, sí.
+
+Ese código viaja en el binario con independencia de qué adaptador de
+conexiones se use en tiempo de ejecución. Usar el adaptador "local" evita
+tener que EJECUTAR Nango, pero no saca la dependencia del artefacto.
+
+Quien redistribuya noxloop —empaquetado, reempaquetado o incorporado a otro
+producto— está redistribuyendo también ese código ELv2, y la Elastic License
+2.0 exige que quien recibe la copia reciba sus términos junto con ella.
+
+El texto completo de la Elastic License 2.0 está en:
+https://www.elastic.co/licensing/elastic-license
