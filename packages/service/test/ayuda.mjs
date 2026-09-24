@@ -112,7 +112,12 @@ export function diferencias(antes, despues) {
  * @param {(svc: any) => Promise<any>} fn
  */
 export async function conServicio(opts, fn) {
-  const svc = await arrancar({ home: homeTemporal(), token: TOKEN, ...opts });
+  // EL HOME DE CLAUDE, VACIO POR DEFECTO (spec 004). El board consulta el
+  // diagnostico, que lee `~/.claude.json`: sin esto, cada test leeria el del
+  // operador y un repo temporal saldria «confianza pendiente» en una maquina y
+  // «desconocida» en el CI. Vacio es `desconocida`, que no bloquea nada.
+  const motor = { homeDeClaude: mkdtempSync(join(tmpdir(), "noxloop-claude-vacio-")), ...(opts.motor ?? {}) };
+  const svc = await arrancar({ home: homeTemporal(), token: TOKEN, ...opts, motor });
   try {
     return await fn(svc);
   } finally {

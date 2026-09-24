@@ -259,6 +259,8 @@ function escribirSesion(home, datos) {
  *     reloj?: () => number,
  *     ejecutarAutenticacion?: (argv: string[], o: {env: Record<string, string>}) => Promise<{code: number|null, stdout: string, stderr: string}>,
  *     lanzarLogin?: (argv: string[], env: Record<string, string>) => void,
+ *     homeDeClaude?: string,
+ *     ejecutarDiagnostico?: import("./diagnostico.mjs").EjecutorDeVersion,
  *   },
  * }} opts
  */
@@ -356,6 +358,13 @@ export async function arrancar(opts) {
     lanzarLogin: m.lanzarLogin,
     entornoBase: m.entornoBase,
     cacheDeRuntimes: new Map(),
+    // El diagnostico (spec 004, `diagnostico.mjs`). Inyectables por lo mismo:
+    // el de verdad lanza `--version` de cuatro binarios y LEE el
+    // `~/.claude.json` del operador, y un test no puede depender de ninguno.
+    homeDeClaude: m.homeDeClaude,
+    ejecutarDiagnostico: m.ejecutarDiagnostico,
+    nodo: m.nodo,
+    cacheDelDiagnostico: new Map(),
     // La direccion en la que escucha ESTE servicio. Se rellena al escuchar:
     // el gestor local la necesita dentro del motor para pedirle las tareas al
     // unico escritor del almacen en vez de abrirlo por su cuenta.

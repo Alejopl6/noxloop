@@ -2,9 +2,12 @@
 
 import { useMemo, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
 import { Badge, type TonoDeBadge } from '@/components/ui/insignia'
 import { Note } from '@/components/ui/nota'
+import { abrirEnEditor, primeraLineaDelParche, rutaEnElWorktree } from '@/lib/escritorio'
 import type { ArchivoDeDiff, CommitDeTarea, DiffDeTarea } from '@/lib/tipos'
+import { useEditores } from '@/lib/usar-escritorio'
 import { cn } from '@/lib/utils'
 
 /**
@@ -94,12 +97,48 @@ const ESTILO_DE_LINEA: Record<LineaDePatch['tipo'], { fila: string; signo: strin
   nota: { fila: 'text-ds-gray-700 italic', signo: 'text-ds-gray-700', marca: '' },
 }
 
-export function ParcheUnificado({ archivo }: { archivo: ArchivoDeDiff }) {
+/**
+ * «ABRIR EN EL EDITOR» (FR-007). Solo en escritorio y solo si la cascara
+ * detecto un editor: en web `useEditores()` da `[]` y esto no se pinta. La
+ * interfaz no ejecuta nada: pide a la cascara, que valida la ruta contra los
+ * worktrees de noxloop y lanza el editor (`src-tauri/src/editor.rs`).
+ */
+function useAbrirEnEditor(worktree: string | null | undefined, archivo: ArchivoDeDiff) {
+  const editores = useEditores()
+  const [fallo, setFallo] = useState<string | null>(null)
+  const ruta = archivo.estado === 'D' ? null : rutaEnElWorktree(worktree, archivo.ruta)
+  if (editores.length === 0 || !ruta) return { abrir: null, fallo: null, editor: null }
+  const abrir = (linea: number | null) => {
+    setFallo(null)
+    abrirEnEditor(ruta, linea).catch((error: unknown) => setFallo(String(error)))
+  }
+  return { abrir, fallo, editor: editores[0].nombre }
+}
+
+export function ParcheUnificado({ archivo, worktree }: { archivo: ArchivoDeDiff; worktree?: string | null }) {
   const lineas = useMemo(() => analizarParche(archivo.parche), [archivo.parche])
   const cortado = parcheCortado(archivo)
+  const { abrir, fallo, editor } = useAbrirEnEditor(worktree, archivo)
 
   return (
     <div className="flex min-w-0 flex-col gap-2">
+      {abrir ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            title={`Abre ${archivo.ruta} del worktree de la tarea en ${editor}`}
+            onClick={() => abrir(primeraLineaDelParche(archivo.parche))}
+          >
+            Abrir en el editor
+          </Button>
+        </div>
+      ) : null}
+      {fallo ? (
+        <Note tipo="error" titulo="No se pudo abrir en el editor">
+          {fallo}
+        </Note>
+      ) : null}
       {cortado ? (
         <Note tipo="advertencia" titulo="Este parche llego cortado">
           El servicio corta los parches de mas de 200 KB. Lo que se ve termina donde termina lo que
@@ -123,7 +162,18 @@ export function ParcheUnificado({ archivo }: { archivo: ArchivoDeDiff }) {
                       {linea.antes ?? ''}
                     </td>
                     <td className="w-10 select-none px-2 text-right align-top text-ds-gray-700">
-                      {linea.despues ?? ''}
+                      {abrir && linea.despues !== null ? (
+                        <button
+                          type="button"
+                          title={`Abrir en el editor en la linea ${linea.despues}`}
+                          onClick={() => abrir(linea.despues)}
+                          className="hover:text-ds-blue-900 hover:underline"
+                        >
+                          {linea.despues}
+                        </button>
+                      ) : (
+                        linea.despues ?? ''
+                      )}
                     </td>
                     <td className={cn('w-4 select-none text-center align-top', estilo.signo)}>{estilo.marca}</td>
                     <td className="whitespace-pre pr-4 align-top text-ds-gray-1000">{linea.texto || ' '}</td>
@@ -197,12 +247,14 @@ function BloqueDeCambios({
   sha,
   mensaje,
   archivos,
+  worktree,
 }: {
   titulo: string
   tono: TonoDeBadge
   sha: string | null
   mensaje: string | null
   archivos: ArchivoDeDiff[]
+  worktree?: string | null
 }) {
   const [elegido, setElegido] = useState<string | null>(archivos[0]?.ruta ?? null)
   const archivo = archivos.find((candidato) => candidato.ruta === elegido) ?? archivos[0] ?? null
@@ -234,7 +286,7 @@ function BloqueDeCambios({
       ) : (
         <div className="grid gap-3 lg:grid-cols-[16rem_minmax(0,1fr)]">
           <ListaDeArchivos archivos={archivos} elegido={archivo?.ruta ?? null} alElegir={setElegido} />
-          {archivo ? <ParcheUnificado archivo={archivo} /> : null}
+          {archivo ? <ParcheUnificado key={archivo.ruta} archivo={archivo} worktree={worktree} /> : null}
         </div>
       )}
     </section>
@@ -254,7 +306,11 @@ function ordenDelTest(commits: CommitDeTarea[]): 'antes' | 'despues' | null {
   return test < impl ? 'antes' : 'despues'
 }
 
-export function VisorDeDiff({ diff }: { diff: DiffDeTarea }) {
+/**
+ * `worktree`: la ruta absoluta del worktree de la tarea (`TareaDeRun.worktree`).
+ * Sin ella no hay «Abrir en el editor»: el diff trae rutas relativas.
+ */
+export function VisorDeDiff({ diff, worktree }: { diff: DiffDeTarea; worktree?: string | null }) {
   const orden = ordenDelTest(diff.commits)
 
   return (
@@ -286,6 +342,7 @@ export function VisorDeDiff({ diff }: { diff: DiffDeTarea }) {
             sha={commit.sha}
             mensaje={commit.mensaje}
             archivos={commit.archivos}
+            worktree={worktree}
           />
         )
       })}
@@ -297,6 +354,7 @@ export function VisorDeDiff({ diff }: { diff: DiffDeTarea }) {
           sha={null}
           mensaje="Lo que la tarea lleva hecho en su worktree respecto a su base."
           archivos={diff.sinCommitear.archivos}
+          worktree={worktree}
         />
       ) : null}
     </div>

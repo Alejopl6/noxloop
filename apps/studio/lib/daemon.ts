@@ -691,3 +691,53 @@ export function crearCliente(origen: OrigenServicio): ClienteServicio {
     },
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Spec 004 · Diagnostico                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * La ruta del diagnostico, aparte de `RUTAS` y sin metodo en el cliente: la
+ * pantalla la LEE con `useLectura` (necesita la ruta como texto) y «Volver a
+ * comprobar» pide la misma con `fresh=1`, que salta la cache de 30 s del
+ * servicio. Solo lectura: diagnosticar no escribe nada (FR-002).
+ */
+export const RUTAS_DE_DIAGNOSTICO = {
+  diagnostico(filtro: { proyecto?: string | null; fresco?: boolean } = {}): string {
+    const parametros = new URLSearchParams()
+    if (filtro.proyecto) parametros.set('project', filtro.proyecto)
+    if (filtro.fresco) parametros.set('fresh', '1')
+    const consulta = parametros.toString()
+    return consulta ? `/v1/diagnostics?${consulta}` : '/v1/diagnostics'
+  },
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 004 · Run en vivo: el transcript de cada fase                         */
+/* -------------------------------------------------------------------------- */
+
+/** El evento del canal que avisa de que un transcript crecio. */
+export const EVENTO_DE_TRANSCRIPT = 'run.transcript'
+
+/**
+ * La ruta del transcript de una tarea, aparte de `RUTAS` por lo mismo que el
+ * diagnostico: la pantalla la LEE (con `cliente.obtener`) y la vuelve a pedir
+ * con `desde` cuando llega `run.transcript`, para traer solo lo nuevo. Solo
+ * lectura: el transcript lo escribe el motor, redactado.
+ */
+export const RUTAS_DEL_TRANSCRIPT = {
+  transcript(
+    itemId: string,
+    taskId: string,
+    filtro: { fase?: string | null; lente?: string | null; desde?: number | null; limite?: number | null } = {},
+  ): string {
+    const parametros = new URLSearchParams()
+    if (filtro.fase) parametros.set('fase', filtro.fase)
+    if (filtro.lente) parametros.set('lente', filtro.lente)
+    if (filtro.desde != null && filtro.desde > 0) parametros.set('desde', String(filtro.desde))
+    if (filtro.limite != null) parametros.set('limite', String(filtro.limite))
+    const consulta = parametros.toString()
+    const base = `/v1/runs/${encodeURIComponent(itemId)}/tasks/${encodeURIComponent(taskId)}/transcript`
+    return consulta ? `${base}?${consulta}` : base
+  },
+}

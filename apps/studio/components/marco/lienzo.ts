@@ -126,6 +126,8 @@ export const CLASE_DE_VISTA: Record<Seccion, ClaseDeVista> = {
   // proyectos con su flota.
   settings: 'inventario',
   modelos: 'inventario',
+  // Binarios de la maquina y un bloque por proyecto con sus problemas.
+  diagnostico: 'inventario',
   'flota-por-defecto': 'inventario',
 
   // La pestana General del proyecto: un punado de campos.
@@ -191,6 +193,7 @@ export const ALINEACION_DE_VISTA: Record<Seccion, AlineacionDeVista> = {
   costos: 'izquierda',
   settings: 'izquierda',
   modelos: 'izquierda',
+  diagnostico: 'izquierda',
   'flota-por-defecto': 'izquierda',
   ajustes: 'izquierda',
   guidelines: 'izquierda',

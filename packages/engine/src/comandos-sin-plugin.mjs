@@ -195,15 +195,17 @@ const GUARDA_POSTERIOR =
  * Un comando que no se puede expandir NO se manda: la fase falla con la causa,
  * sin invocar al runtime (ni gastar el modelo).
  *
- * @param {(fase: any) => Promise<any>} runPhase
+ * @param {(fase: any, llamada?: any) => Promise<any>} runPhase
  * @param {any | (() => any)} capacidades el objeto de `capabilities()`, o como pedirlo
  * @param {{raiz?: string}} [opts]
- * @returns {(fase: any) => Promise<any>}
+ * @returns {(fase: any, llamada?: any) => Promise<any>}
  */
 export function conComandosExpandidos(runPhase, capacidades, opts = {}) {
-  return async (fase) => {
+  // `llamada` (el segundo argumento: hoy, `alEvento` del transcript) pasa tal
+  // cual: expandir el encargo no cambia a quien se le cuenta lo que pasa.
+  return async (fase, llamada) => {
     const caps = (typeof capacidades === "function" ? capacidades() : capacidades) || {};
-    if (caps.comandos === true || typeof fase?.prompt !== "string") return runPhase(fase);
+    if (caps.comandos === true || typeof fase?.prompt !== "string") return runPhase(fase, llamada);
 
     const e = expandirComando(fase.prompt, { task: fase.task, hooks: caps.hooks === true, raiz: opts.raiz });
     if (!e.ok) {
@@ -216,6 +218,6 @@ export function conComandosExpandidos(runPhase, capacidades, opts = {}) {
         subtype: "comando_sin_expansion",
       };
     }
-    return runPhase(e.expandido ? { ...fase, prompt: e.prompt } : fase);
+    return runPhase(e.expandido ? { ...fase, prompt: e.prompt } : fase, llamada);
   };
 }

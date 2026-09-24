@@ -23,9 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Las dos arquitecturas de macOS por separado y no un binario
-          # universal: el sidecar es un runtime de Node distinto para cada una,
-          # y un universal tendria que empaquetar los dos.
+          # Las dos arquitecturas de macOS por separado: son artefactos de
+          # comprobacion. El `.dmg` que se PUBLICA es el universal de
+          # `release.yml`, que une los dos runtimes de Node con `lipo`.
           - plataforma: macos-14
             objetivo: aarch64-apple-darwin
           - plataforma: macos-13

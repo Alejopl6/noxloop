@@ -36,6 +36,7 @@ import { ejecutorDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ej
 import { claveDelModelo } from "./runtimes.mjs";
 import { lockVivo } from "./lanzador.mjs";
 import { ESTADOS_DEL_RUN, accionDelEstado, avanceDe, estadoDelRun, gastoDe } from "./estado-del-run.mjs";
+import { vigilarTranscripts } from "./transcript.mjs";
 
 /** Donde el motor escribe el estado de cada run, dentro del home. */
 const DIRECTORIO = "runs";
@@ -206,6 +207,9 @@ async function lanzar(p, proyecto) {
     preparado,
     preparar,
   });
+  // Un run que arranca va a escribir transcripts: se arma el sondeo que avisa
+  // cuando crecen (`run.transcript`), para que el detalle se actualice solo.
+  vigilarTranscripts(p.estado);
   return { codigo: r.codigo, cuerpo: { run: r.run } };
 }
 
@@ -454,6 +458,7 @@ async function actuar(p, accion) {
     preparar,
   };
   const r = accion === "approve" ? await motor.lanzador.aprobar(pedido) : await motor.lanzador.reintentar(pedido);
+  vigilarTranscripts(p.estado);
   return { codigo: r.codigo, cuerpo: { run: r.run } };
 }
 

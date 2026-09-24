@@ -33,6 +33,8 @@ import * as worktree from "./worktree.mjs";
 import { createLogger } from "./log.mjs";
 import { buildHookSettings, validateHookSettings } from "./session-settings.mjs";
 import { validate } from "./schema.mjs";
+// El transcript de cada fase, redactado antes de tocar disco (spec 004).
+import { abrirTranscript } from "./transcript.mjs";
 
 /**
  * Carga el proveedor declarado y lo valida ANTES de usarlo.
@@ -484,7 +486,7 @@ export async function buildDeps(item, config, opts = {}) {
   // Y ENCIMA, EL ENCARGO. Si el runtime DE ESA FASE no declara `comandos:
   // true`, el `/noxloop-task ...` que construye el driver se le entrega
   // expandido al texto del comando: se decide por la capacidad, no por el nombre.
-  /** @type {Record<string, (fase: any) => Promise<any>>} */
+  /** @type {Record<string, (fase: any, llamada?: any) => Promise<any>>} */
   const costuras = {};
   for (const rol of ["implementador", "revisor", "planificador"]) {
     const a = adaptadorDe(rol);
@@ -493,12 +495,29 @@ export async function buildDeps(item, config, opts = {}) {
       () => a.capabilities(),
     );
   }
-  const runPhase = (/** @type {any} */ fase) => {
+  const runPhase = async (/** @type {any} */ fase) => {
     const rol = rolDeFase(fase?.phase);
     const env = fase?.env ?? entornoDelRol(rol);
     // Los secretos se recalculan con el runtime que de verdad corre la fase:
     // los de otro rol dejarian sin mirar en argv la credencial de este.
-    return costuras[rol]({ ...fase, env, secretos: secretosDe(rol, env) });
+    const secretos = secretosDe(rol, env);
+
+    // EL TRANSCRIPT DE LA FASE (spec 004, FR-004). Se abre AQUI, en la costura,
+    // y no en el driver: es el unico punto por el que pasan las cuatro llamadas
+    // del driver y la del planificador, y aqui ya se sabe el entorno y cuales
+    // de sus variables son secretas —que es contra lo que se redacta—. El
+    // driver no se entera: sigue llamando `deps.runPhase(fase)`.
+    const transcript = await transcriptDeFase(home, fase, env, secretos);
+    const r = await costuras[rol](
+      { ...fase, env, secretos },
+      transcript ? { alEvento: transcript.alEvento } : {},
+    );
+    try {
+      transcript?.cerrar(r);
+    } catch {
+      /* el transcript es registro, no veredicto: la fase ya termino */
+    }
+    return r;
   };
 
   return {
@@ -533,6 +552,31 @@ export async function buildDeps(item, config, opts = {}) {
     alcancePorElMotor: adaptador.capabilities().hooks !== true,
     ...overrides,
   };
+}
+
+/**
+ * El transcript de una invocacion, o `null` si no hay donde ponerlo.
+ *
+ * El item sale de la fase (`fase.item.id`); la planificacion lo lleva en el
+ * taskId (`plan:<item>`). Sin home o sin item no se escribe nada: un
+ * transcript sin run al que pertenecer no lo encuentra nadie.
+ *
+ * @param {string} home
+ * @param {any} fase
+ * @param {Record<string, string>} env
+ * @param {string[]} secretos
+ */
+async function transcriptDeFase(home, fase, env, secretos) {
+  const itemId = fase?.item?.id ?? /^plan:(.+)$/.exec(String(fase?.taskId ?? ""))?.[1];
+  if (!home || itemId == null || !fase?.taskId || !fase?.phase) return null;
+  try {
+    return await abrirTranscript({
+      home, itemId: String(itemId), taskId: String(fase.taskId), fase: String(fase.phase),
+      lente: fase.lens ?? null, env, secretos,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** El worktree donde corre la planificacion: la spec vive donde el trabajo que describe. */

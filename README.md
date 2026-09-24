@@ -94,6 +94,33 @@ un repositorio es cómo se trabaja en el repositorio equivocado.
 El ejemplo viene apuntando al **proveedor falso**, que no toca ninguna red: se
 puede ver el motor funcionando antes de poner una credencial.
 
+### Instalar la aplicación (macOS)
+
+Cada tag `v*` publica en
+[Releases](../../releases) un `.dmg` **universal** (Apple Silicon e Intel) y su
+`.sha256`. El runtime de Node del servicio viaja dentro de la app; no hace falta
+tener Node instalado.
+
+1. Descarga `noxloop_<versión>_universal.dmg` y
+   `noxloop_<versión>_universal.dmg.sha256` en la misma carpeta, y verifica:
+
+   ```bash
+   shasum -a 256 -c noxloop_<versión>_universal.dmg.sha256   # tiene que decir OK
+   ```
+
+2. Abre el `.dmg` y arrastra `noxloop.app` a `/Applications`.
+3. La app **no está firmada ni notarizada** todavía, así que macOS la pone en
+   cuarentena y se niega a abrirla («está dañada» o «no se puede verificar el
+   desarrollador»). Quita la cuarentena una vez:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/noxloop.app
+   ```
+
+**Requisitos** en la máquina: `git`, y `claude` (Claude Code) o `codex`
+instalados y **con sesión iniciada** — son los que ejecutan las tareas. Para
+«Abrir en el editor», uno de VS Code, Cursor, Zed o Sublime Text.
+
 ### La aplicación
 
 Además del CLI hay una aplicación de escritorio —y la misma interfaz en el

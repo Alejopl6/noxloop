@@ -12,6 +12,7 @@ import { PuntoDeProyecto } from '@/components/board/tarjeta'
 import { VisorDeDiff, totalesDelDiff } from '@/components/runs/visor-de-diff'
 import { etiquetaDeTarea, tonoDeTarea } from '@/components/vista-runs'
 import { tonoDeEstadoDeRun } from '@/components/runs/estado-de-run'
+import { VistaDeTranscript } from '@/components/runs/transcript-de-tarea'
 import { RUTAS, type ErrorDelServicio } from '@/lib/daemon'
 import { useLectura } from '@/lib/lectura'
 import {
@@ -58,6 +59,12 @@ export interface PropsDeDetalleDeRun {
   resumenDeTarea: (tarea: TareaDeRun) => ReactNode
   /** El diff de la tarea abierta. */
   diff: { datos: DiffDeTarea | null; error: ErrorDelServicio | null }
+  /**
+   * Lo que el agente dijo e hizo en cada fase de la tarea abierta (spec 004,
+   * US2). Una funcion y no datos: la vista viva lo lee y lo sigue por el canal,
+   * y el catalogo pinta un ejemplo quieto. Sin ella, la seccion no se pinta.
+   */
+  transcript?: (tarea: TareaDeRun) => ReactNode
 }
 
 export function PanelDeDetalleDeRun({
@@ -72,6 +79,7 @@ export function PanelDeDetalleDeRun({
   alAbrirExterno,
   resumenDeTarea,
   diff,
+  transcript,
 }: PropsDeDetalleDeRun) {
   const proyecto = referenciaDeProyecto(resumen?.proyecto ?? run?.project_id ?? null)
   const titulo = resumen?.titulo ?? run?.item.title ?? itemId
@@ -185,6 +193,12 @@ export function PanelDeDetalleDeRun({
         </section>
       ) : null}
 
+      {abierta && transcript ? (
+        <section className="flex flex-col gap-4" aria-label={`Transcript de ${abierta.id}`}>
+          {transcript(abierta)}
+        </section>
+      ) : null}
+
       {abierta ? (
         <section className="flex flex-col gap-4" aria-label={`Cambios de ${abierta.id}`}>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -200,7 +214,7 @@ export function PanelDeDetalleDeRun({
           </div>
           <FalloDeLectura error={diff.error} />
           {diff.datos ? (
-            <VisorDeDiff diff={diff.datos} />
+            <VisorDeDiff diff={diff.datos} worktree={abierta.worktree} />
           ) : diff.error ? null : (
             <Spinner etiqueta="Leyendo el diff de la tarea" conTexto />
           )}
@@ -271,6 +285,8 @@ export function VistaDeDetalleDeRun({
       alVolver={alVolver}
       alAbrirExterno={alAbrirExterno}
       resumenDeTarea={(tarea) => <ResumenDeDiffLeido itemId={itemId} tareaId={tarea.id} />}
+      // `key` por tarea: cambiar de tarea es otro transcript, no una fusion con el anterior.
+      transcript={(tarea) => <VistaDeTranscript key={tarea.id} itemId={itemId} tareaId={tarea.id} />}
       // El diff de la tarea ANTERIOR se descarta mientras llega el de la nueva:
       // `useLectura` conserva los datos al cambiar de ruta, y pintar los
       // cambios de T002 bajo el titulo de T003 es peor que un segundo de

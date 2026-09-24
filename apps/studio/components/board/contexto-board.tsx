@@ -5,6 +5,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 import { RUTAS } from '@/lib/daemon'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import type { Board } from '@/lib/tipos'
+import { useBadgeDelDock } from '@/lib/usar-escritorio'
 
 /**
  * UNA SOLA LECTURA DEL BOARD PARA TODA LA CONSOLA.
@@ -51,6 +52,9 @@ export function ProveedorDeBoard({ children }: { children: ReactNode }) {
   const lectura = useLectura<Board>(RUTAS.board({ incluirTerminados }), {
     relerEn: EVENTOS_DEL_BOARD,
   })
+  // El numero del Dock sale de esta misma lectura (FR-008): el Dock y el
+  // lateral no pueden decir cosas distintas. En web no hace nada.
+  useBadgeDelDock(lectura.datos?.resumen.teNecesitan ?? null)
 
   const valor = useMemo<ValorDelBoard>(
     () => ({

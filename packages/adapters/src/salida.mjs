@@ -12,6 +12,8 @@
 // verde inventado. Se devuelve `null` y el adaptador lo trata como fase sin
 // veredicto.
 
+import { tokensDeUsoClaude } from "./eventos.mjs";
+
 /**
  * @typedef {object} ResultadoCrudo
  * @property {string|null} sessionId
@@ -19,6 +21,7 @@
  * @property {string|null} subtype
  * @property {number|null} usd
  * @property {string} texto
+ * @property {import("./contrato.mjs").TokensDeInvocacion} [tokens] solo si el runtime los reporto
  */
 
 /**
@@ -36,14 +39,58 @@ export function leerResultadoJson(stdout) {
   }
   if (!parseado || typeof parseado !== "object") return null;
 
+  return deObjetoDeResultado(parseado);
+}
+
+/** @param {any} parseado @returns {ResultadoCrudo} */
+function deObjetoDeResultado(parseado) {
   const subtype = typeof parseado.subtype === "string" ? parseado.subtype : null;
+  const tokens = tokensDeUsoClaude(parseado.usage);
   return {
     sessionId: typeof parseado.session_id === "string" ? parseado.session_id : null,
     isError: parseado.is_error === true,
     subtype,
     usd: typeof parseado.total_cost_usd === "number" ? parseado.total_cost_usd : null,
     texto: typeof parseado.result === "string" ? parseado.result : "",
+    ...(tokens ? { tokens } : {}),
   };
+}
+
+/**
+ * La forma `stream-json`: un mensaje por linea y el resultado en el ULTIMO con
+ * `type: "result"`. Acepta tambien el objeto suelto de `--output-format json`,
+ * que es un stream de una sola linea sin `type`.
+ *
+ * Como en `leerResultadoJsonl`, las lineas que no parsean se ignoran y la
+ * AUSENCIA del resultado devuelve null: un stream cortado no es un exito.
+ *
+ * @param {string} stdout
+ * @returns {ResultadoCrudo|null}
+ */
+export function leerResultadoStreamJson(stdout) {
+  // El objeto suelto solo cuenta si ES un resultado: una sola linea con un
+  // mensaje del asistente no es el final de nada.
+  const unaLinea = String(stdout || "").trim();
+  if (!unaLinea.includes("\n")) {
+    try {
+      const p = JSON.parse(unaLinea || "null");
+      if (p && typeof p === "object" && (p.type === undefined || p.type === "result")) return deObjetoDeResultado(p);
+    } catch {
+      /* no es un objeto suelto: se lee como stream */
+    }
+  }
+  let ultimo = null;
+  for (const linea of String(stdout || "").split("\n")) {
+    const t = linea.trim();
+    if (!t.startsWith("{")) continue;
+    try {
+      const ev = JSON.parse(t);
+      if (ev && typeof ev === "object" && ev.type === "result") ultimo = ev;
+    } catch {
+      /* ruido entre eventos: ver la cabecera */
+    }
+  }
+  return ultimo ? deObjetoDeResultado(ultimo) : null;
 }
 
 /**
