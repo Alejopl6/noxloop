@@ -289,3 +289,59 @@ test("`prepararMotor` la escribe en `<home>/motor/<proyecto>.config.json` y el m
     assert.ok(!ruta.startsWith(proyecto.ruta_local));
   });
 });
+
+// ---------------------------------------------------------------------------
+// El runtime por rol: la flota del proyecto llega al motor (FR-031 y FR-034)
+// ---------------------------------------------------------------------------
+
+test("con la flota, la configuracion lleva el runtime de cada rol y el esquema del motor la acepta", () => {
+  const config = componerConfig(entrada({
+    ejecutor: { runtime: "codex", agente: null, de: "la tarea" },
+    flota: { revisor: { runtime: "claude-agent-sdk", nombre: "rev" }, planificador: { runtime: "claude-agent-sdk", nombre: "plan" } },
+  }));
+  assert.deepEqual(validate(ESQUEMA, config), []);
+  assert.deepEqual(config.runtimes, { implementador: "codex", revisor: "claude-agent-sdk", planificador: "claude-agent-sdk" });
+});
+
+test("sin revisor ni planificador en la flota, `runtimes` no los inventa", () => {
+  const config = componerConfig(entrada({
+    ejecutor: { runtime: "claude-agent-sdk", agente: null, de: "el proyecto" },
+    flota: { revisor: null, planificador: null },
+  }));
+  assert.deepEqual(config.runtimes, { implementador: "claude-agent-sdk" });
+});
+
+test("FR-034: si la cascada pone al implementador en el runtime del revisor, se niega al componer, con causa y accion", () => {
+  // La flota lo impide al guardar, pero la tarea puede elegir su ejecutor: una
+  // tarea con `codex` en un proyecto cuyo revisor es `codex` se revisaria a si
+  // misma. Se dice al pulsar Run, no a mitad del recorrido.
+  const e = codigoDe(() => componerConfig(entrada({
+    ejecutor: { runtime: "codex", agente: null, de: "la tarea" },
+    flota: { revisor: { runtime: "codex", nombre: "el revisor" }, planificador: null },
+  })));
+  assert.equal(e?.codigo, "revisor_comparte_runtime");
+  assert.match(e.causa, /el revisor/);
+  assert.match(e.causa, /codex/);
+  assert.ok(e.accion.length > 0);
+});
+
+test("`prepararMotor` deriva los runtimes de la flota del proyecto, y el motor los carga", async () => {
+  await conServicio({}, async (svc) => {
+    const proyecto = await proyectoActivo(svc);
+    const agentes = svc.dep.almacen.agentes;
+    agentes.crear({ project_id: proyecto.id, nombre: "impl", rol: "implementador", runtime: "claude-agent-sdk", modelo: "m" });
+    agentes.crear({ project_id: proyecto.id, nombre: "rev", rol: "revisor", runtime: "codex", modelo: "m" });
+
+    const { ruta, config } = await prepararMotor(svc.dep, proyecto, {
+      home: svc.home, ejecutor: { runtime: "claude-agent-sdk", agente: null },
+    });
+    assert.deepEqual(config.runtimes, { implementador: "claude-agent-sdk", revisor: "codex" });
+    assert.deepEqual(loadConfig(ruta, { env: {} }).runtimes, config.runtimes);
+
+    // Una tarea que elige `codex` para implementar choca con el revisor.
+    await assert.rejects(
+      prepararMotor(svc.dep, proyecto, { home: svc.home, ejecutor: { runtime: "codex", agente: null, de: "la tarea" } }),
+      (/** @type {any} */ e) => e.codigo === "revisor_comparte_runtime",
+    );
+  });
+});

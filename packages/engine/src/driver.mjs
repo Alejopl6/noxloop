@@ -707,7 +707,24 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   // runtime que declara `hooks: false`, porque ahi no hay hook que bloquee la
   // escritura antes. Es un dato que trae `deps`, no una pregunta por el nombre
   // del runtime (principio VI). Ver `alcance-de-fase.mjs`.
-  const guarda = deps.alcancePorElMotor === true && Boolean(t.worktree) && permitidosEnFase(nombre, t) !== null;
+  const necesitaGuarda = deps.alcancePorElMotor === true && permitidosEnFase(nombre, t) !== null;
+  // SIN WORKTREE NO HAY DONDE MIRAR, y entonces la fase NO se invoca. Correrla
+  // igual seria dejar a un runtime sin hooks escribir en RED sin nada que
+  // sostenga el principio I: ni el hook, que no tiene, ni esta guarda, que no
+  // tendria arbol que comparar. Se falla cerrado, antes de pagar el modelo.
+  if (necesitaGuarda && !t.worktree) {
+    return {
+      ok: false,
+      budgetExhausted: false,
+      findings: null,
+      subtype: "sin_guarda_de_alcance",
+      text:
+        `la fase ${nombre} de ${taskId} no se invoca: el implementador no tiene hooks, asi que el orden del TDD lo ` +
+        "fuerza el motor despues de la fase sobre el worktree de la tarea, y la tarea no tiene worktree. Sin " +
+        "worktree no hay guarda que lo sostenga.",
+    };
+  }
+  const guarda = necesitaGuarda;
   const ramas = guarda ? ramasProtegidas(run, t, deps) : [];
   const ramasAntes = guarda ? fotoDeRamas(t.worktree, ramas) : null;
 
@@ -765,7 +782,12 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
     prompt: promptDeFase(nombre, run, t, opts.extra),
     tier: t.tier,
   }));
-  if (r?.sessionId && r.sessionId !== t.sessionId) {
+  // LA SESION DE UNA REVISION NO SE GUARDA EN LA TAREA. La revision corre en
+  // OTRO runtime (FR-034) y abre sesion nueva a proposito; si su id quedara
+  // como el de la tarea, el siguiente GREEN pediria al implementador retomar
+  // una sesion que es de otro runtime —o, en el mismo, el razonamiento del
+  // revisor—.
+  if (!esRevision(nombre) && r?.sessionId && r.sessionId !== t.sessionId) {
     setTaskFields(loadRun(run.item.id, { home: deps.home }), taskId, { sessionId: r.sessionId }, { home: deps.home });
   }
 

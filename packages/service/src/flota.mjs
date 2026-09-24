@@ -20,13 +20,37 @@
 // la consulta luego ya no lo arregla.
 
 import { ENUMS } from "../../store/src/index.mjs";
-import { sugerirFlota } from "../../adapters/src/index.mjs";
+import { modoTdd, sugerirFlota } from "../../adapters/src/index.mjs";
 
 import { coleccion, conJson, exigir, exigirProyecto, noEsta } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
 
 /** Los campos JSON de un agente, para que vuelvan como JSON y no como texto. */
 const JSON_DEL_AGENTE = ["skills", "tools", "mcps", "permisos", "presupuesto", "contexto"];
+
+/**
+ * Un agente como sale por la API: sus campos JSON como JSON y, al lado, QUIEN
+ * SOSTIENE SU TDD (`tdd`, ver `modoTdd`).
+ *
+ * POR QUE SE DERIVA Y NO SE GUARDA. Sale de las capacidades del runtime, que
+ * son del adaptador registrado y no del almacen: guardarlo seria una copia que
+ * se queda vieja el dia que el runtime gane o pierda hooks. Sin registro de
+ * runtimes no se puede afirmar nada, y se dice `null` en vez de adivinar.
+ *
+ * EL MOTOR SIEMPRE APLICA LA GUARDA POSTERIOR a un implementador sin hooks, y
+ * el servicio solo lanza fases por el motor: por eso aqui un implementador sin
+ * hooks es `por_motor` y no un rechazo.
+ *
+ * @param {any} dep
+ * @param {any} fila
+ */
+function agenteDeSalida(dep, fila) {
+  const caps = dep.adaptadores?.tiene?.(String(fila.runtime)) ? dep.adaptadores.capacidades(String(fila.runtime)) : null;
+  return {
+    ...conJson(fila, JSON_DEL_AGENTE),
+    tdd: caps ? modoTdd(String(fila.rol), caps) : null,
+  };
+}
 
 /** El rol contrario, que es contra el que se mide FR-034. */
 const CONTRARIO = { revisor: "implementador", implementador: "revisor" };
@@ -69,7 +93,7 @@ export async function agentesDelProyecto(p) {
 
   if (p.metodo === "GET") {
     return {
-      cuerpo: coleccion(p.dep.almacen.agentes.porProyecto(proyecto.id).map((a) => conJson(a, JSON_DEL_AGENTE))),
+      cuerpo: coleccion(p.dep.almacen.agentes.porProyecto(proyecto.id).map((a) => agenteDeSalida(p.dep, a))),
     };
   }
 
@@ -105,7 +129,7 @@ export async function agentesDelProyecto(p) {
     contexto: cuerpo.contexto,
   });
 
-  return { codigo: 201, cuerpo: { agente: conJson(agente, JSON_DEL_AGENTE) } };
+  return { codigo: 201, cuerpo: { agente: agenteDeSalida(p.dep, agente) } };
 }
 
 /**
@@ -250,7 +274,7 @@ export async function unAgente(p) {
   });
 
   p.dep.almacen.base.escribir(`UPDATE agent SET ${asignaciones.join(", ")} WHERE id = ?`, [...valores, agente.id]);
-  return { cuerpo: { agente: conJson(p.dep.almacen.agentes.porId(agente.id), JSON_DEL_AGENTE) } };
+  return { cuerpo: { agente: agenteDeSalida(p.dep, p.dep.almacen.agentes.porId(agente.id)) } };
 }
 
 /** @param {import("./rutas.mjs").Peticion} p */
@@ -287,7 +311,7 @@ export function activarProyecto(p, proyecto, motivo) {
 
   const actualizado = p.dep.almacen.proyectos.transicionar(proyecto.id, "ACTIVE", { actor: "operador" });
   p.estado.bus.emitir("proyecto.estado", { estado: actualizado.estado, motivo }, { project_id: proyecto.id });
-  return { proyecto: actualizado, flota: agentes.map((/** @type {any} */ a) => conJson(a, JSON_DEL_AGENTE)) };
+  return { proyecto: actualizado, flota: agentes.map((/** @type {any} */ a) => agenteDeSalida(p.dep, a)) };
 }
 
 // ---------------------------------------------------------------------------

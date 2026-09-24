@@ -75,6 +75,7 @@ export const VARIABLES_DE_SESION = Object.freeze(["HOME", "USER", "LOGNAME", "PA
  *   alLanzar?: (l: any) => void,
  *   ejecutarAutenticacion?: import("../autenticacion.mjs").Ejecutor,
  *   entornoDisponible?: Record<string, string|undefined>,
+ *   directoriosDelPlan?: string[],
  * }} [opts]
  * @returns {import("../contrato.mjs").AgentAdapter}
  */
@@ -88,6 +89,9 @@ export function crearAdaptadorCodex(opts = {}) {
     // De donde se toman los valores de lo declarado, para el preflight. Se
     // filtra por nombre, nunca se pasa entero. Ver el adaptador de Claude.
     entornoDisponible = {},
+    // Donde la fase PLAN tiene que poder escribir, ademas de su worktree. Ver
+    // el sandbox en `runPhase`.
+    directoriosDelPlan = [],
   } = opts;
 
   /** El ejecutor del preflight, apuntado al binario que este adaptador usa de verdad. */
@@ -137,8 +141,9 @@ export function crearAdaptadorCodex(opts = {}) {
         return {
           ok: false,
           causa:
-            `${autenticacion.causa} Este runtime es el REVISOR de la flota: sin el, la revision correria sobre el ` +
-            "mismo runtime que implemento, que es justo lo que FR-034 prohibe.",
+            `${autenticacion.causa} Las fases del rol que la flota le asigno a este runtime no pueden correr; si ` +
+            "es el revisor, moverlas al implementador dejaria la revision sobre el mismo runtime que escribio el " +
+            "codigo, que es justo lo que FR-034 prohibe.",
           accion:
             `${autenticacion.accion} O asigna al revisor otro runtime distinto del del implementador desde ` +
             "Flota -> Agentes.",
@@ -184,7 +189,20 @@ export function crearAdaptadorCodex(opts = {}) {
       // piden el worktree escribible; la revision se queda en solo lectura, que
       // es lo que una revision tiene que ser. Lo que la fase escriba fuera de
       // su alcance DENTRO del worktree lo revierte el motor despues.
+      //
+      // Verificado contra `codex exec --help` (codex-cli 0.137.0): `-s,
+      // --sandbox <read-only|workspace-write|danger-full-access>`.
       args.push("--sandbox", esRevision(peticion.phase) ? "read-only" : "workspace-write");
+      // EL PLAN SE ESCRIBE FUERA DEL WORKTREE (`<home>/plans/`), y el sandbox
+      // solo deja escribir en el directorio de trabajo: Codex como planificador
+      // terminaba la fase sin poder dejar el plan. `--add-dir` ("additional
+      // directories that should be writable alongside the primary workspace",
+      // misma ayuda) lo abre, y SOLO en PLAN: sin hooks que acoten lo que
+      // escribe, darle mas en una fase que implementa le dejaria tocar lo que
+      // la guarda posterior del motor —que mira el worktree de la tarea— no ve.
+      if (peticion.phase === "PLAN") {
+        for (const d of directoriosDelPlan) args.push("--add-dir", d);
+      }
       args.push(peticion.prompt);
 
       try {

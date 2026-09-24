@@ -49,6 +49,7 @@ import { pathToFileURL } from "node:url";
 
 import { slugDe } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
+import { flotaDelProyecto } from "./ejecutor.mjs";
 
 /**
  * Donde viven los proveedores del motor, por defecto: `providers/` en la raiz
@@ -467,10 +468,24 @@ export function opcionesDelGestor({ proyecto, remoto, gestor, esquemaDeOpciones 
  *   raizDeProveedores?: string, maxParallelItems?: number,
  *   esquemaDeOpciones?: any,
  *   ejecutor?: {runtime: string, agente: string|null, de?: string}|null,
- * }} e el `optionsSchema` del proveedor va en `esquemaDeOpciones`; `ejecutor`, el ya resuelto en cascada
+ *   flota?: {revisor: {runtime: string, nombre: string}|null, planificador: {runtime: string, nombre: string}|null}|null,
+ * }} e el `optionsSchema` del proveedor va en `esquemaDeOpciones`; `ejecutor`, el ya resuelto en cascada;
+ *   `flota`, el revisor y el planificador del proyecto (`flotaDelProyecto`)
  */
 export function componerConfig(e) {
   const { proyecto } = e;
+  // FR-034 AL COMPONER, antes que cualquier otra cosa del lanzamiento. La flota
+  // ya lo impide al guardar, pero el implementador sale de la CASCADA: una
+  // tarea puede elegir el runtime que el proyecto usa para revisar, y entonces
+  // se revisaria a si misma. El motor tambien lo rechaza al cargar; aqui se
+  // dice antes, al pulsar Run, con el nombre del agente que choca.
+  if (e.ejecutor?.runtime && e.flota?.revisor && e.flota.revisor.runtime === e.ejecutor.runtime) {
+    throw new ErrorDeServicio("revisor_comparte_runtime", {
+      revisor: e.flota.revisor.nombre,
+      implementador: `el ejecutor de la tarea (resuelto desde ${e.ejecutor.de ?? "la cascada"})`,
+      runtime: e.ejecutor.runtime,
+    });
+  }
   if (!e.remoto) {
     throw new ErrorDeServicio("sin_repo", { nombre: proyecto.nombre, ruta: proyecto.ruta_local, id: proyecto.id });
   }
@@ -505,6 +520,19 @@ export function componerConfig(e) {
     // runtime y no el primero de su registro. Sin ejecutor, el motor decide
     // (el de referencia), y la configuracion no finge una eleccion.
     ...(e.ejecutor?.runtime ? { runtime: e.ejecutor.runtime } : {}),
+    // Y EL RUNTIME DE CADA ROL (FR-034). Sin esto el motor corria TODAS las
+    // fases en el del implementador, y el revisor de la flota no llegaba: el
+    // implementador se revisaba a si mismo. Solo lo que la flota declara; un
+    // rol que no esta no se inventa —el motor lo dice al cargar—.
+    ...(e.ejecutor?.runtime || e.flota?.revisor || e.flota?.planificador
+      ? {
+          runtimes: {
+            ...(e.ejecutor?.runtime ? { implementador: e.ejecutor.runtime } : {}),
+            ...(e.flota?.revisor ? { revisor: e.flota.revisor.runtime } : {}),
+            ...(e.flota?.planificador ? { planificador: e.flota.planificador.runtime } : {}),
+          },
+        }
+      : {}),
     provider: {
       name: e.gestor.nombre,
       module: join(raiz, e.gestor.nombre, "index.mjs"),
@@ -636,6 +664,9 @@ export async function prepararMotor(dep, proyecto, opts) {
     maxParallelItems: opts.maxParallelItems,
     esquemaDeOpciones: modulo?.optionsSchema,
     ejecutor: opts.ejecutor ?? null,
+    // La flota se lee en CADA lanzamiento, como el resto: cambiar el revisor
+    // en Settings tiene que valer en el siguiente Run, no en una copia vieja.
+    flota: flotaDelProyecto(dep, proyecto.id),
   });
   const dir = join(opts.home, "motor");
   mkdirSync(dir, { recursive: true });

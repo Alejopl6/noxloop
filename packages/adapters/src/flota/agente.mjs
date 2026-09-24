@@ -35,6 +35,33 @@ export const ROLES = Object.freeze(["implementador", "revisor", "planificador", 
 const ROLES_OBLIGATORIOS = Object.freeze(["implementador", "revisor"]);
 
 /**
+ * Quien sostiene el test-primero (principio I) de un agente, dicho para que la
+ * pantalla de flota lo pueda pintar.
+ *
+ *   - `por_hook`: el runtime corre el hook del paso RED DENTRO de su
+ *     subproceso, y la escritura fuera de alcance se BLOQUEA antes de ocurrir.
+ *   - `por_motor`: el runtime no tiene hooks; el motor mira el worktree
+ *     DESPUES de cada fase y REVIERTE lo que la fase escribio fuera de su
+ *     alcance, contando el intento (`packages/engine/src/alcance-de-fase.mjs`).
+ *     El historial queda igual de limpio; lo que no hay es el bloqueo en
+ *     caliente, y por eso se declara en vez de igualarlo.
+ *   - `no_aplica`: el rol no escribe produccion (revisor, planificador,
+ *     verificador).
+ *   - `null`: implementador sin hooks en un camino donde el motor NO aplica la
+ *     guarda posterior — nadie lo sostiene, y ese agente no se guarda.
+ *
+ * @param {string} rol
+ * @param {any} caps las `capabilities()` del runtime
+ * @param {{alcancePorElMotor?: boolean}} [opts]
+ * @returns {"por_hook"|"por_motor"|"no_aplica"|null}
+ */
+export function modoTdd(rol, caps, { alcancePorElMotor = true } = {}) {
+  if (rol !== "implementador") return "no_aplica";
+  if (caps?.hooks === true) return "por_hook";
+  return alcancePorElMotor ? "por_motor" : null;
+}
+
+/**
  * @typedef {object} Agent
  * @property {string} id
  * @property {string|null} project_id
@@ -49,6 +76,7 @@ const ROLES_OBLIGATORIOS = Object.freeze(["implementador", "revisor"]);
  * @property {object} presupuesto
  * @property {object} contexto
  * @property {string} creado
+ * @property {"por_hook"|"por_motor"|"no_aplica"|null} [tdd] quien sostiene el principio I; lo pone `guardarAgente`
  */
 
 /**
@@ -100,10 +128,16 @@ export function crearAgente({
  * despues lo que rompe el paso RED, y al final lo que solo desactiva un limite.
  * Quien lanza, lanza el primero, y el primero tiene que ser el que mas explica.
  *
- * @param {{agentes: readonly Agent[], adaptadores: any}} datos
+ * EL IMPLEMENTADOR SIN HOOKS se acepta cuando quien lo va a correr aplica la
+ * guarda posterior (`alcancePorElMotor`, cierto por defecto: es lo que hace el
+ * motor con todo runtime sin hooks). Un camino que lo correria SIN esa guarda
+ * lo declara en `false`, y ahi se rechaza como antes: sin hook y sin guarda,
+ * el principio I dependeria de que el prompt se acuerde.
+ *
+ * @param {{agentes: readonly Agent[], adaptadores: any, alcancePorElMotor?: boolean}} datos
  * @returns {import("../errores.mjs").ErrorDeAdaptador[]}
  */
-export function validarFlota({ agentes, adaptadores }) {
+export function validarFlota({ agentes, adaptadores, alcancePorElMotor = true }) {
   /** @type {any[]} */
   const desconocidos = [];
   /** @type {any[]} */
@@ -123,7 +157,7 @@ export function validarFlota({ agentes, adaptadores }) {
     }
     const caps = adaptadores.capacidades(a.runtime);
 
-    if (a.rol === "implementador" && caps.hooks !== true) {
+    if (modoTdd(a.rol, caps, { alcancePorElMotor }) === null) {
       sinHooks.push(runtimeSinHooksParaImplementador(a.runtime, a.nombre));
     }
     if (caps.cost !== true && a.presupuesto && a.presupuesto.usd != null) {
@@ -163,19 +197,28 @@ export function validarFlota({ agentes, adaptadores }) {
  * mitad de los casos — justo la mitad que ocurre, porque nadie da de alta los
  * dos agentes en la misma peticion.
  *
- * @param {{agente: Agent, repositorio: any, adaptadores: any}} datos
+ * LO GUARDADO DECLARA QUIEN SOSTIENE EL TDD (`tdd`, ver `modoTdd`): un
+ * implementador `por_motor` no tiene la misma garantia que uno `por_hook`, y
+ * quien lo mira en la pantalla de flota tiene que poder saberlo sin conocer las
+ * capacidades de cada runtime.
+ *
+ * @param {{agente: Agent, repositorio: any, adaptadores: any, alcancePorElMotor?: boolean}} datos
  * @returns {Agent}
  */
-export function guardarAgente({ agente, repositorio, adaptadores }) {
+export function guardarAgente({ agente, repositorio, adaptadores, alcancePorElMotor = true }) {
   const existentes = repositorio
     .agentes(agente.project_id)
     .filter((/** @type {Agent} */ a) => a.id !== agente.id);
 
-  const problemas = validarFlota({ agentes: [...existentes, agente], adaptadores });
+  const problemas = validarFlota({ agentes: [...existentes, agente], adaptadores, alcancePorElMotor });
   if (problemas.length > 0) throw problemas[0];
 
-  repositorio.guardarAgente(agente);
-  return agente;
+  const guardado = Object.freeze({
+    ...agente,
+    tdd: modoTdd(agente.rol, adaptadores.capacidades(agente.runtime), { alcancePorElMotor }),
+  });
+  repositorio.guardarAgente(guardado);
+  return guardado;
 }
 
 /**
@@ -216,8 +259,10 @@ export function activarFlota({ project_id, repositorio, adaptadores }) {
     }
     if (caps.hooks !== true) {
       degradaciones.push(
-        `el runtime \`${id}\` declara \`hooks: false\`: no puede correr las guardas dentro de su subproceso, y ` +
-          "por eso no es elegible para implementar.",
+        `el runtime \`${id}\` declara \`hooks: false\`: no puede correr las guardas dentro de su subproceso. ` +
+          "Si implementa, el orden del TDD lo fuerza el motor DESPUES de cada fase —revierte lo escrito fuera de " +
+          "alcance y cuenta el intento— en vez de bloquearlo antes: el historial queda igual, el bloqueo en " +
+          "caliente no existe.",
       );
     }
   }

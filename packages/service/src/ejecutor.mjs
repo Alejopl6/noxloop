@@ -81,6 +81,30 @@ export function ejecutorDelProyecto(dep, projectId) {
 }
 
 /**
+ * Los runtimes de los roles que NO son el implementador, de la flota del
+ * proyecto: el revisor y el planificador, con el nombre del agente para poder
+ * decir quien choca con quien.
+ *
+ * El implementador no esta aqui a proposito: su runtime lo decide la cascada
+ * (`resolverEjecutor`), porque una tarea puede elegir el suyo. El revisor no se
+ * elige por tarea: es el de la flota, y es contra el que se mide FR-034.
+ *
+ * @param {any} dep
+ * @param {string} projectId
+ * @returns {{revisor: {runtime: string, nombre: string}|null, planificador: {runtime: string, nombre: string}|null}}
+ */
+export function flotaDelProyecto(dep, projectId) {
+  const deRol = (/** @type {string} */ rol) => {
+    const a = dep.almacen.base.consultarUno(
+      "SELECT runtime, nombre FROM agent WHERE project_id = ? AND rol = ? ORDER BY nombre LIMIT 1",
+      [projectId, rol],
+    );
+    return a && a.runtime ? { runtime: String(a.runtime), nombre: String(a.nombre) } : null;
+  };
+  return { revisor: deRol("revisor"), planificador: deRol("planificador") };
+}
+
+/**
  * La cascada entera, con de donde salio cada cosa.
  *
  * @param {{runtime: string, agente?: string|null}|null} deLaTarea

@@ -119,23 +119,47 @@ test("un runtime que no esta registrado se rechaza al guardar, no al ejecutar", 
   assert.ok(e.causa.includes("codex"), "la causa no lista los runtimes que si existen");
 });
 
-test("regla 5 — un runtime con hooks:false no es elegible para implementador, y se dice al guardar", (t) => {
+test("regla 5 — un implementador sin hooks se acepta porque el motor fuerza el TDD despues de la fase, y lo DECLARA", (t) => {
   const { repositorio, adaptadores } = montar(t);
-  // Codex declara `hooks: false`. Sin hooks, el paso RED depende de que el
-  // prompt se acuerde, y ya esta medido que deja de funcionar en la tercera
-  // iteracion. Como revisor si vale: la revision no escribe codigo.
+  // Codex declara `hooks: false`. El paso RED no lo bloquea un hook dentro de
+  // su subproceso: lo fuerza el motor despues de cada fase, revirtiendo lo que
+  // la fase escribio fuera de alcance (`alcance-de-fase.mjs`). No es la misma
+  // garantia —deshace, no bloquea— y por eso el agente lo dice.
+  const impl = guardarAgente({
+    agente: crearAgente({ ...BASE, nombre: "impl", rol: "implementador", runtime: "codex" }),
+    repositorio, adaptadores,
+  });
+  assert.equal(impl.tdd, "por_motor");
+  assert.equal(repositorio.agentes("p1")[0].tdd, "por_motor", "lo guardado no declara como se sostiene el TDD");
+
+  const rev = guardarAgente({
+    agente: crearAgente({ ...BASE, nombre: "rev", rol: "revisor", runtime: "claude-agent-sdk" }),
+    repositorio, adaptadores,
+  });
+  assert.equal(rev.tdd, "no_aplica", "un revisor no escribe produccion: el TDD no es suyo");
+});
+
+test("regla 5 — con hooks el TDD lo sostiene el hook, y el agente lo declara `por_hook`", (t) => {
+  const { repositorio, adaptadores } = montar(t);
+  const impl = guardarAgente({
+    agente: crearAgente({ ...BASE, nombre: "impl", rol: "implementador", runtime: "claude-agent-sdk" }),
+    repositorio, adaptadores,
+  });
+  assert.equal(impl.tdd, "por_hook");
+});
+
+test("regla 5 — donde el motor NO aplica la guarda posterior, un implementador sin hooks se sigue rechazando", (t) => {
+  const { repositorio, adaptadores } = montar(t);
+  // Un camino que corre al implementador fuera del motor —sin la guarda
+  // posterior— no tiene nada que sostenga el principio I en un runtime sin
+  // hooks. Ahi la regla vieja sigue en pie.
   const e = capturar(() => guardarAgente({
       agente: crearAgente({ ...BASE, nombre: "impl", rol: "implementador", runtime: "codex" }),
-      repositorio, adaptadores,
+      repositorio, adaptadores, alcancePorElMotor: false,
     }));
   assert.ok(e instanceof ErrorDeAdaptador, `no es un ErrorDeAdaptador: ${e}`);
   assert.equal(e.codigo, "runtime_sin_hooks_para_implementador");
-
-  guardarAgente({
-    agente: crearAgente({ ...BASE, nombre: "rev", rol: "revisor", runtime: "codex" }),
-    repositorio, adaptadores,
-  });
-  assert.equal(repositorio.agentes("p1").length, 1);
+  assert.equal(repositorio.agentes("p1").length, 0);
 });
 
 test("regla 2 — un presupuesto en USD sobre un runtime que no reporta gasto se rechaza al guardar", (t) => {
@@ -173,6 +197,11 @@ test("T187 — la flota completa produce el artefacto que lleva el proyecto a AC
   // tiene que decirlo al arrancar el run en vez de aplicar limites que no
   // pueden dispararse.
   assert.ok(artefacto.degradaciones.some((d) => d.includes("codex")));
+  // Lo de los hooks ya no dice "no elegible para implementar": dice quien
+  // sostiene el TDD en ese runtime.
+  const deHooks = artefacto.degradaciones.find((d) => d.includes("hooks: false"));
+  assert.ok(deHooks && /motor/.test(deHooks) && !/no es elegible/.test(deHooks), deHooks);
+  assert.deepEqual(artefacto.agentes.map((a) => [a.rol, a.tdd]).sort(), [["implementador", "por_hook"], ["revisor", "no_aplica"]]);
 });
 
 test("T187 — sin revisor no hay ACTIVE, y el error nombra el rol que falta", (t) => {
@@ -196,8 +225,17 @@ test("validarFlota devuelve los problemas sin lanzar, para que la pantalla los p
     ],
     adaptadores,
   });
-  const codigos = problemas.map((p) => p.codigo).sort();
-  assert.deepEqual(codigos, ["revisor_comparte_runtime", "runtime_sin_hooks_para_implementador"]);
+  assert.deepEqual(problemas.map((p) => p.codigo), ["revisor_comparte_runtime"]);
+  // Y fuera del motor, los dos juntos: la pantalla los pinta de una vez.
+  const sinMotor = validarFlota({
+    agentes: [
+      crearAgente({ ...BASE, nombre: "a", rol: "implementador", runtime: "codex" }),
+      crearAgente({ ...BASE, nombre: "b", rol: "revisor", runtime: "codex" }),
+    ],
+    adaptadores,
+    alcancePorElMotor: false,
+  });
+  assert.deepEqual(sinMotor.map((p) => p.codigo).sort(), ["revisor_comparte_runtime", "runtime_sin_hooks_para_implementador"]);
   assert.equal(repositorio.agentes("p1").length, 0);
 });
 

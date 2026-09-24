@@ -4,7 +4,7 @@
 // consumen, y nada mas. Cuanto mas corta es esta lista, mas barato es cambiar lo
 // de dentro sin romper a quien lo usa.
 
-export { ErrorDeAdaptador } from "./errores.mjs";
+export { ErrorDeAdaptador, revisorComparteRuntime } from "./errores.mjs";
 
 export {
   CLAVES_DE_CAPACIDAD,
@@ -36,7 +36,7 @@ export { crearAdaptadorFake } from "./adaptadores/fake.mjs";
 export { crearAdaptadorClaude, sdkDisponible, HERRAMIENTAS_POR_DEFECTO } from "./adaptadores/claude-agent-sdk.mjs";
 export { crearAdaptadorCodex } from "./adaptadores/codex.mjs";
 
-export { ROLES, activarFlota, crearAgente, guardarAgente, validarFlota } from "./flota/agente.mjs";
+export { ROLES, activarFlota, crearAgente, guardarAgente, modoTdd, validarFlota } from "./flota/agente.mjs";
 export { repositorioDeFlotaEnMemoria } from "./flota/repositorio.mjs";
 export { CAMPOS, ORIGENES, sugerirFlota } from "./flota/sugerencia.mjs";
 

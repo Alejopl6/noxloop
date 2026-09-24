@@ -17,6 +17,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { conServicio, pedir, repoDePrueba } from "./ayuda.mjs";
+import { registroDeAdaptadores } from "../../adapters/src/registro.mjs";
+
+/** Dos runtimes de mentira que cumplen el contrato: uno con hooks y otro sin. */
+function runtimesDeMentira() {
+  const uno = (/** @type {string} */ id, /** @type {boolean} */ hooks) => ({
+    id,
+    capabilities: () => ({ resume: true, cost: true, effort: false, hooks, models: "desconocido" }),
+    preflight: async () => ({ ok: true }),
+    runPhase: async () => {
+      throw new Error("esta ruta no ejecuta fases");
+    },
+  });
+  return registroDeAdaptadores([uno("con-hooks", true), uno("sin-hooks", false)]);
+}
 
 async function crearProyecto(svc, nombre) {
   const r = await pedir(svc, "/v1/projects", {
@@ -47,6 +61,47 @@ test("POST /agents declara un agente de la flota", async () => {
     assert.equal(estado, 201, JSON.stringify(cuerpo));
     assert.equal(cuerpo.agente.rol, "implementador");
     assert.deepEqual(cuerpo.agente.skills, [], "los campos JSON vuelven como JSON, no como texto");
+  });
+});
+
+test("un implementador SIN hooks se guarda: el motor fuerza el TDD despues de la fase, y el agente lo declara", async () => {
+  // Antes el modelo de flota lo rechazaba (`runtime_sin_hooks_para_implementador`).
+  // Ahora el motor lo sostiene a posteriori —revierte lo escrito fuera de
+  // alcance y cuenta el intento—, que no es la misma garantia que un hook que
+  // bloquea: por eso `tdd` lo dice, para que la pantalla de flota lo pinte.
+  await conServicio({ adaptadores: runtimesDeMentira() }, async (svc) => {
+    const p = await crearProyecto(svc, "Sin Hooks");
+    const impl = await crearAgente(svc, p.id, { nombre: "impl", rol: "implementador", runtime: "sin-hooks" });
+    assert.equal(impl.estado, 201, JSON.stringify(impl.cuerpo));
+    assert.equal(impl.cuerpo.agente.tdd, "por_motor");
+
+    const rev = await crearAgente(svc, p.id, { nombre: "rev", rol: "revisor", runtime: "con-hooks" });
+    assert.equal(rev.cuerpo.agente.tdd, "no_aplica");
+
+    const lista = await (await pedir(svc, `/v1/projects/${p.id}/agents`)).json();
+    const porNombre = Object.fromEntries(lista.items.map((/** @type {any} */ a) => [a.nombre, a.tdd]));
+    assert.deepEqual(porNombre, { impl: "por_motor", rev: "no_aplica" });
+
+    const cambiado = await pedir(svc, `/v1/agents/${impl.cuerpo.agente.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ runtime: "con-hooks", rol: "implementador" }),
+    });
+    // con-hooks ya es el runtime del revisor: FR-034 lo rechaza igual que siempre.
+    assert.equal(cambiado.status, 409);
+  });
+});
+
+test("con hooks el agente declara `por_hook`; sin registro de runtimes, `tdd` es null (no se sabe)", async () => {
+  await conServicio({ adaptadores: runtimesDeMentira() }, async (svc) => {
+    const p = await crearProyecto(svc, "Con Hooks");
+    const impl = await crearAgente(svc, p.id, { nombre: "impl", rol: "implementador", runtime: "con-hooks" });
+    assert.equal(impl.cuerpo.agente.tdd, "por_hook");
+  });
+  await conServicio({}, async (svc) => {
+    const p = await crearProyecto(svc, "Sin Registro");
+    const impl = await crearAgente(svc, p.id, { nombre: "impl", rol: "implementador", runtime: "runtime-a" });
+    assert.equal(impl.cuerpo.agente.tdd, null, "sin registro no se puede afirmar quien sostiene el TDD");
   });
 });
 
