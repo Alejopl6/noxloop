@@ -36,6 +36,7 @@ import * as diagnostico from "./diagnostico.mjs";
 import * as orden from "./orden.mjs";
 import * as cola from "./cola.mjs";
 import * as ajustes from "./ajustes.mjs";
+import * as movidas from "./movidas.mjs";
 
 export const TABLA = crearTabla([
   // ---- Salud y sesion -----------------------------------------------------
@@ -192,6 +193,9 @@ export const TABLA = crearTabla([
   // carga el proveedor (su test cuenta cada llamada). La cola vive en el
   // lanzador, en memoria; el limite, en el almacen, porque es una preferencia.
   { patron: "/v1/projects/:id/board/orden", metodos: ["PUT"], manejar: orden.ordenDelBoard },
+  // «Seguir aqui» o «Soltarla» sobre una tarjeta «movida» (spec 005, US1 esc.
+  // 4): se guarda en el almacen, y ni el gestor ni el run en disco se tocan.
+  { patron: "/v1/projects/:id/board/movidas/:itemId", metodos: ["POST"], manejar: movidas.decisionDeMovida },
   { patron: "/v1/queue", metodos: ["GET", "PUT"], manejar: cola.cola },
   { patron: "/v1/settings", metodos: ["GET", "PATCH"], manejar: ajustes.ajustes },
 

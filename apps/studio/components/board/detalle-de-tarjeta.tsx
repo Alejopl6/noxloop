@@ -13,8 +13,9 @@ import {
   Prioridad,
   PuntoDeProyecto,
 } from '@/components/board/tarjeta'
+import { decisionesDeMovida } from '@/components/board/movida'
 import type { ErrorDelServicio } from '@/lib/daemon'
-import type { GastoDeRun, Tarjeta } from '@/lib/tipos'
+import type { DecisionSobreMovida, GastoDeRun, Tarjeta } from '@/lib/tipos'
 
 /**
  * EL DETALLE DE UNA TARJETA: la causa textual completa y la accion que la
@@ -29,6 +30,11 @@ import type { GastoDeRun, Tarjeta } from '@/lib/tipos'
  * SOLO LECTURA Y UNA ACCION. No se edita nada del ticket: el gestor es la
  * fuente de verdad del backlog. Lo que se puede hacer es la misma accion
  * principal de la tarjeta, abrir el ticket en su gestor y abrir el PR.
+ *
+ * LA EXCEPCION, UNA MOVIDA (spec 005, FR-004): la issue del run salio de las
+ * reglas del proyecto, y el detalle ofrece «Seguir aqui» y «Soltarla», cada una
+ * con lo que hace dicho y el destino nombrado. Tampoco editan el ticket: la
+ * decision la guarda el servicio, y el gestor no se entera.
  */
 
 const NOTA_DEL_TONO = {
@@ -55,6 +61,7 @@ export function DetalleDeTarjeta({
   alCerrar,
   alAccionar,
   alAbrirExterno,
+  alDecidirMovida,
 }: {
   tarjeta: Tarjeta | null
   gestor: string
@@ -63,6 +70,8 @@ export function DetalleDeTarjeta({
   alCerrar: () => void
   alAccionar: (tarjeta: Tarjeta) => void
   alAbrirExterno: (url: string) => void
+  /** «Seguir aqui» / «Soltarla» (spec 005). Ausente: los botones no salen. */
+  alDecidirMovida?: (tarjeta: Tarjeta, decision: DecisionSobreMovida) => void
 }) {
   return (
     <Dialogo
@@ -80,6 +89,7 @@ export function DetalleDeTarjeta({
           alCerrar={alCerrar}
           alAccionar={alAccionar}
           alAbrirExterno={alAbrirExterno}
+          alDecidirMovida={alDecidirMovida}
         />
       ) : null}
     </Dialogo>
@@ -94,6 +104,7 @@ function Contenido({
   alCerrar,
   alAccionar,
   alAbrirExterno,
+  alDecidirMovida,
 }: {
   tarjeta: Tarjeta
   gestor: string
@@ -102,8 +113,10 @@ function Contenido({
   alCerrar: () => void
   alAccionar: (tarjeta: Tarjeta) => void
   alAbrirExterno: (url: string) => void
+  alDecidirMovida?: (tarjeta: Tarjeta, decision: DecisionSobreMovida) => void
 }) {
   const { ticket, proyecto, chip, avance, run, accion } = tarjeta
+  const decisiones = alDecidirMovida ? decisionesDeMovida(tarjeta) : []
   const tono = chip ? tonoDeChip(chip.tipo) : 'informativo'
 
   return (
@@ -137,6 +150,27 @@ function Contenido({
             </Note>
           ) : null}
         </div>
+      ) : null}
+
+      {decisiones.length > 0 ? (
+        // LAS DOS RESPUESTAS A UNA MOVIDA, cada una con lo que hace. Ninguna es
+        // la «buena»: por eso las dos son secundarias y ninguna va en rojo —
+        // soltar no borra nada, y el texto lo dice.
+        <section aria-label="Que hacer con la tarjeta movida" className="flex flex-col gap-3">
+          {decisiones.map((opcion) => (
+            <div key={opcion.decision} className="flex flex-wrap items-start gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={trabajando}
+                onClick={() => alDecidirMovida?.(tarjeta, opcion.decision)}
+              >
+                {opcion.etiqueta}
+              </Button>
+              <p className="min-w-0 flex-1 text-copy-13 text-ds-gray-900">{opcion.explicacion}</p>
+            </div>
+          ))}
+        </section>
       ) : null}
 
       {avance ? <BarraDeAvance avance={avance} color={COLOR_DE_TONO[tono]} /> : null}

@@ -171,6 +171,22 @@ function chipDeMovida(movida) {
 }
 
 /**
+ * La decision del operador que VALE para esta movida, o `null` (spec 005, US1
+ * esc. 4). Una decision se tomo para un destino: si la issue se fue despues a
+ * OTRO sitio, lo que se decidio ya no dice nada de esta movida y el chip vuelve
+ * a preguntar. Sin destino guardado (el gestor no lo dijo al decidir), vale
+ * para cualquiera: no hay con que compararla.
+ *
+ * @param {{decision: string, destino: string|null}|undefined|null} decision
+ * @param {{destino: string|null}} movida
+ */
+function decisionQueVale(decision, movida) {
+  if (!decision) return null;
+  if (decision.destino !== null && decision.destino !== undefined && decision.destino !== movida.destino) return null;
+  return decision;
+}
+
+/**
  * Quien ejecuta un ticket y como termina, resuelto en cascada (FR-031/032).
  * Solo una tarea LOCAL declara los suyos (en `raw`, que es de su proveedor);
  * un ticket de un gestor externo hereda del proyecto y termina en PR.
@@ -276,6 +292,7 @@ function tarjetaDe(ticket, run, parte, runtimes, movida = null) {
  *                  ejecutorDelProyecto?: {runtime: string, agente: null}|null,
  *                  revisor?: {runtime: string, nombre: string}|null,
  *                  movidas?: Map<string, {destino: string|null, detalle: string}>,
+ *                  decisiones?: Map<string, {decision: "seguir"|"soltar", destino: string|null}>,
  *                  bloqueos?: import("./diagnostico.mjs").Problema[]}>,
  *   includeDone?: boolean,
  *   proyectos?: any[],
@@ -315,7 +332,17 @@ export function construirBoard(e) {
       if (vistos.has(id)) continue;
       vistos.add(id);
       const sintetico = { id, key: r.key ?? null, title: r.titulo ?? null, url: r.url ?? null, canonicalState: "todo" };
-      tarjetas.push(tarjetaDe(sintetico, r, parte, runtimes, parte.movidas?.get(id) ?? null));
+      // «Movida» y lo que el operador decidio sobre ella (spec 005, US1 esc.
+      // 4). `seguir`: la tarjeta se queda, con el chip de su run —sigue siendo
+      // de este proyecto aunque ya no cumpla sus reglas—. `soltar`: deja de
+      // pintarse AQUI; el run en disco no se toca (es del motor, y el board no
+      // escribe), asi que sigue en `/v1/runs` y en la cola si estaba en ella.
+      // Una decision solo se mira en una movida: una issue que vuelve a cumplir
+      // las reglas entra por el bucle de arriba, y lo decidido no pinta nada.
+      const movida = parte.movidas?.get(id) ?? null;
+      const decision = movida ? decisionQueVale(parte.decisiones?.get(id), movida) : null;
+      if (decision?.decision === "soltar") continue;
+      tarjetas.push(tarjetaDe(sintetico, r, parte, runtimes, decision ? null : movida));
     }
   }
 
@@ -571,8 +598,9 @@ async function movidasDe(p, proyecto, diag, valor, candidatos) {
             detalle:
               `${clave} ya no cumple las reglas de este proyecto` +
               (destino ? `: ahora esta en el proyecto «${destino}» de \`${diag.gestor.nombre}\`.` : ", y el gestor no dice adonde fue.") +
-              " El run sigue aqui hasta su PR. Para traerla de vuelta o soltarla, ajusta las reglas en Settings del " +
-              "proyecto → Gestor, o no la relances desde este board.",
+              " El run sigue aqui hasta su PR. Decide en la tarjeta: «Seguir aqui» la deja en este board sin este " +
+              "aviso; «Soltarla» la quita de el (ni Linear ni el run se tocan). Para que vuelva a cumplirlas, " +
+              "ajusta las reglas en Settings del proyecto → Gestor.",
           });
         } catch {
           sabidas.set(id, null);
@@ -689,6 +717,10 @@ export async function board(p) {
       tickets,
       runs: runsDelProyecto,
       movidas,
+      // Lo que el operador decidio sobre sus movidas (spec 005, US1 esc. 4).
+      // Solo se LEE: pintar no escribe (SC-007), y por eso una decision que ya
+      // no aplica no se borra aqui (la olvida quien escribe: ver `movidas.mjs`).
+      decisiones: p.dep.almacen.movidas.delProyecto(String(proyecto.id)),
       nota,
       lanzable: diag.lanzable,
       tieneRepo: diag.tieneRepo,

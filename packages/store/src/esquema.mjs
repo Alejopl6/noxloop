@@ -57,6 +57,9 @@ export const TABLAS = Object.freeze([
   // servicio (el limite de runs simultaneos).
   "card_order",
   "service_setting",
+  // Spec 005 (US1 esc. 4, FR-004): lo que el operador decidio sobre una tarjeta
+  // «movida» — seguir aqui o soltarla.
+  "movida_decision",
 ]);
 
 /** Los enums de `data-model.md`, en un solo sitio. */
@@ -110,6 +113,10 @@ export const ENUMS = Object.freeze({
   // PR abierto (principio IV), y un valor `merge` que el CHECK aceptara seria
   // un valor que alguien acabaria poniendo.
   "local_task.termino": ["changes", "commit", "pr"],
+  // Una tarjeta «movida» (spec 005, FR-004) se queda en este board sin el chip
+  // (`seguir`) o deja de pintarse en el (`soltar`). No hay un tercero: «volver
+  // a preguntar» es borrar la fila, y el board vuelve a pintar el chip.
+  "movida_decision.decision": ["seguir", "soltar"],
   "danger_policy.capacidad": [
     "merge_autonomo",
     "despliegue",
@@ -689,6 +696,33 @@ CREATE TABLE service_setting (
 ) STRICT;
 `;
 
+// LA DECISION SOBRE UNA «MOVIDA» (spec 005, US1 esc. 4, FR-004). Una version
+// nueva y no un retoque de la 6, por lo de siempre.
+//
+// QUE SE GUARDA. Una issue con run que sale de las reglas del proyecto se pinta
+// con el chip «movida», y el operador contesta: `seguir` (la tarjeta se queda
+// aqui, sin chip: sigue siendo del proyecto aunque ya no cumpla las reglas) o
+// `soltar` (deja de pintarse en este board). Es dato del servicio, por
+// proyecto: el gestor NO se entera (principio VI) — soltar una tarjeta aqui no
+// es moverla ni cerrarla en Linear, que es del equipo.
+//
+// `destino` ES PARA DONDE SE DECIDIO. «Seguir aunque este en Pagos» no dice
+// nada de si la issue se va luego a otro sitio; con el destino guardado, una
+// movida a un sitio distinto vuelve a preguntar. `NULL` si el gestor no lo dijo.
+//
+// `item_id` es el id del ticket en el gestor, texto opaco, como en
+// `card_order`: sin clave foranea, porque casi nunca es una tarea local.
+const DECISION_DE_MOVIDA_SQL = `
+CREATE TABLE movida_decision (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  item_id    TEXT NOT NULL CHECK (length(trim(item_id)) > 0),
+  decision   TEXT NOT NULL CHECK (decision ${en("movida_decision.decision")}),
+  destino    TEXT,
+  decidida   TEXT NOT NULL,
+  PRIMARY KEY (project_id, item_id)
+) STRICT;
+`;
+
 /**
  * Las migraciones, en orden.
  *
@@ -707,4 +741,5 @@ export const MIGRACIONES = Object.freeze([
   { version: 4, nombre: "conexion-del-espacio-de-trabajo", sql: CONEXION_DEL_ESPACIO_SQL },
   { version: 5, nombre: "tareas-propias", sql: TAREAS_SQL },
   { version: 6, nombre: "orden-y-ajustes", sql: ORDEN_Y_AJUSTES_SQL },
+  { version: 7, nombre: "decision-de-movida", sql: DECISION_DE_MOVIDA_SQL },
 ]);

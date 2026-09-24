@@ -35,6 +35,7 @@ import { repositorioDeAuditoria } from "./auditoria.mjs";
 import { repositorioDeBoveda } from "./boveda.mjs";
 import { repositorioDeTareas } from "./tareas.mjs";
 import { repositorioDeAjustes, repositorioDeOrden } from "./orden.mjs";
+import { repositorioDeMovidas } from "./movidas.mjs";
 import {
   repositorioDeAgentes,
   repositorioDeBandeja,
@@ -100,6 +101,9 @@ export function abrirAlmacen(opciones = {}) {
     // gestor no se entera del orden: es de esta pantalla, no del equipo.
     orden: repositorioDeOrden(base),
     ajustes: repositorioDeAjustes(base),
+    // Lo que el operador decidio sobre una tarjeta «movida» (spec 005, FR-004):
+    // seguir aqui o soltarla. Tampoco llega al gestor.
+    movidas: repositorioDeMovidas(base),
     auditoria,
     inicio: vistaDeInicio(base),
     cerrar() {

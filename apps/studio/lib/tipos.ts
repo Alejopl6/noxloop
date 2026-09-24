@@ -1404,6 +1404,9 @@ export type TipoDeChip =
   | 'interrumpido'
   | 'pr_listo'
   | 'sin_repo'
+  // Spec 005 (FR-004): la issue del run salio de las reglas del proyecto. Pide
+  // una decision —seguir aqui o soltarla—, ver `DecisionSobreMovida`.
+  | 'movida'
 
 export interface ChipDeTarjeta {
   tipo: TipoDeChip
@@ -1996,9 +1999,9 @@ export interface TrackerGuardado {
 /**
  * El chip `movida` (FR-004): la tarjeta de un run cuya issue salio de las
  * reglas del proyecto. Llega en `Tarjeta.chip` con `tipo: 'movida'` y, aparte,
- * en `movida`. No se suma a `TipoDeChip` desde aqui: ese union es exhaustivo en
- * `components/board/chip.tsx`, y hasta que el board le de estilo propio el chip
- * se pinta con el tono neutro que ya usa para un tipo que no conoce.
+ * en `movida`. Es un `TipoDeChip` mas, con estilo propio en
+ * `components/board/chip.tsx` (ambar: pide una decision), y el detalle de la
+ * tarjeta ofrece las dos acciones (`DecisionSobreMovida`).
  */
 export interface ChipDeMovida {
   tipo: 'movida'
@@ -2099,5 +2102,54 @@ export interface RespuestaDeHandoff {
     retomaEn: 'GREEN' | 'RED'
     /** Los intentos consumidos, que el hand-off NO repone. */
     attempts: { red?: number; green?: number; gate?: number; review?: number } | null
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · «Seguir aqui» o «Soltarla» sobre una tarjeta movida (FR-004)     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Lo que la tarjeta trae ademas del chip cuando es una movida. Se DECLARA aqui
+ * por fusion de interfaces para no tocar `Tarjeta`, que es de otra etapa.
+ * Ausente o `null`: no es una movida, o el operador ya decidio «seguir».
+ */
+export interface Tarjeta {
+  movida?: MovidaDeTarjeta | null
+}
+
+/** El chip `movida` trae su destino tambien en el chip (`ChipDeMovida`). */
+export interface ChipDeTarjeta {
+  destino?: string | null
+}
+
+/**
+ * La respuesta del operador a una movida:
+ *
+ *   seguir  la tarjeta se queda en este board sin el chip: sigue siendo del
+ *           proyecto aunque ya no cumpla sus reglas.
+ *   soltar  la tarjeta deja de pintarse en este board. Ni la issue en el gestor
+ *           ni el run en disco se tocan.
+ *
+ * Se olvida si la issue vuelve a cumplir las reglas (o cambian), y no vale si
+ * la issue se va a otro destino: el chip vuelve a preguntar.
+ */
+export type DecisionSobreMovida = 'seguir' | 'soltar'
+
+/** `POST /v1/projects/:id/board/movidas/:itemId`. */
+export interface PedidoDeDecisionDeMovida {
+  decision: DecisionSobreMovida
+  /** El destino que se vio en la tarjeta. El del servicio gana si lo tiene. */
+  destino?: string | null
+}
+
+export interface RespuestaDeDecisionDeMovida {
+  decision: {
+    itemId: string
+    decision: DecisionSobreMovida
+    /** Para que destino se decidio: una movida a otro sitio vuelve a preguntar. */
+    destino: string | null
+    /** ISO-8601. */
+    decidida: string
   }
 }

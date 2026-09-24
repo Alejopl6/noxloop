@@ -28,7 +28,13 @@ import {
   type FiltroDeRepo,
   type FiltrosDelBoard,
 } from '@/components/board/derivar'
-import { comoErrorDelServicio, RUTAS, RUTAS_DE_ORDEN_Y_COLA, type ErrorDelServicio } from '@/lib/daemon'
+import {
+  comoErrorDelServicio,
+  decidirMovida,
+  RUTAS,
+  RUTAS_DE_ORDEN_Y_COLA,
+  type ErrorDelServicio,
+} from '@/lib/daemon'
 import { abrirExterno } from '@/lib/enlace'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import type { Navegar } from '@/lib/ruta'
@@ -39,6 +45,7 @@ import {
   type Board,
   type ColumnaDelBoard,
   type EstadoDeRuntime,
+  type DecisionSobreMovida,
   type Tarjeta,
   type TareaNueva,
 } from '@/lib/tipos'
@@ -93,6 +100,11 @@ export interface PropsDePanelDeBoard {
   alOrdenar?: (orden: NuevoOrden) => void
   /** Hay un orden en vuelo: los gestos esperan a que vuelva. */
   ordenando?: boolean
+  /**
+   * «Seguir aqui» / «Soltarla» sobre una tarjeta movida (spec 005, FR-004).
+   * Ausente = el detalle no ofrece los botones.
+   */
+  alDecidirMovida?: (tarjeta: Tarjeta, decision: DecisionSobreMovida) => void
 }
 
 const COLUMNAS_POR_DEFECTO: ColumnaDelBoard[] = ORDEN_DE_COLUMNAS.map((id) => ({
@@ -121,6 +133,7 @@ export function PanelDeBoard({
   filtrosIniciales,
   alOrdenar,
   ordenando = false,
+  alDecidirMovida,
 }: PropsDePanelDeBoard) {
   const [filtros, setFiltros] = useState<Omit<FiltrosDelBoard, 'proyecto'>>({
     ...FILTROS_VACIOS,
@@ -423,6 +436,7 @@ export function PanelDeBoard({
         alCerrar={() => setAbierta(null)}
         alAccionar={alAccionar}
         alAbrirExterno={alAbrirExterno}
+        alDecidirMovida={alDecidirMovida}
       />
     </div>
   )
@@ -585,6 +599,30 @@ export function VistaDeBoard({ proyectoId, navegar }: { proyectoId: string | nul
     [cliente, lectura],
   )
 
+  // «SEGUIR AQUI» O «SOLTARLA» (spec 005, FR-004). Con el «trabajando» y el
+  // error de la TARJETA, como Run: es una accion sobre ella, y su fallo se
+  // pinta en su detalle. Soltarla la saca del board al releer, y el detalle se
+  // cierra solo porque la tarjeta abierta ya no esta.
+  const alDecidirMovida = useCallback(
+    async (tarjeta: Tarjeta, decision: DecisionSobreMovida) => {
+      if (!cliente) return
+      setTrabajandoEn(tarjeta.id)
+      setErrores((previos) => {
+        const { [tarjeta.id]: _descartado, ...resto } = previos
+        return resto
+      })
+      try {
+        await decidirMovida(cliente, tarjeta, decision)
+        lectura?.releer()
+      } catch (fallo) {
+        setErrores((previos) => ({ ...previos, [tarjeta.id]: comoErrorDelServicio(fallo, 'el board') }))
+      } finally {
+        setTrabajandoEn(null)
+      }
+    },
+    [cliente, lectura],
+  )
+
   const [errorDeEnlace, setErrorDeEnlace] = useState<ErrorDelServicio | null>(null)
   const alAbrirExterno = useCallback(async (url: string) => {
     setErrorDeEnlace(null)
@@ -626,6 +664,7 @@ export function VistaDeBoard({ proyectoId, navegar }: { proyectoId: string | nul
         }}
         alOrdenar={(orden) => void alOrdenar(orden)}
         ordenando={ordenando}
+        alDecidirMovida={(tarjeta, decision) => void alDecidirMovida(tarjeta, decision)}
       />
       <DialogoDeTareaNueva
         abierto={tareaNuevaAbierta}

@@ -102,13 +102,56 @@ pintada). Si existe y sigue abierto (`canonicalState` no nulo):
 ```
 
 El chip reemplaza al del run (la columna y `run.estado` siguen diciendo en qué
-va el run). La acción se DICE en `detalle` —seguir: el run continúa aquí hasta
-su PR; soltarla: ajustar las reglas en Settings → Gestor o no relanzarla—.
-**Hueco declarado:** no hay todavía una ruta que fije «seguir aquí» (silenciar
-el chip) ni que suelte el run: persistir esa decisión es del almacén (frente B).
+va el run). En la interfaz es un `TipoDeChip` más, en **ámbar** (pide una
+decisión, nada falló), y el detalle de la tarjeta ofrece las dos acciones.
 
 Si `getItem` devuelve `null` (borrada) o un estado sin canónico (cancelada), no
 hay chip: la tarjeta del run sigue como siempre.
+
+### 4.1 «Seguir aquí» o «Soltarla»: `POST /v1/projects/:id/board/movidas/:itemId`
+
+```jsonc
+// pedido
+{ "decision": "seguir" | "soltar", "destino": "Pagos" }   // destino opcional (string|null)
+// 200
+{ "decision": { "itemId": "…", "decision": "seguir", "destino": "Pagos", "decidida": "2026-09-24T10:00:00.000Z" } }
+```
+
+- `seguir`: la tarjeta se queda en este board **sin** el chip «movida» (ni el
+  campo `movida`), con el chip de su run. Sigue siendo del proyecto aunque ya
+  no cumpla las reglas.
+- `soltar`: la tarjeta **deja de pintarse** en este board (y no cuenta en
+  `resumen` ni en el `total` de su columna). El run en disco **no se toca**:
+  es del motor, sigue en `/v1/runs` y en la cola si estaba en ella; soltar una
+  tarjeta no es cancelar un trabajo.
+- **El gestor no se entera** (principio VI): ni `setState` ni `comment` ni
+  nada. La decisión es dato del servicio, en el almacén
+  (`movida_decision(project_id FK cascade, item_id, decision, destino, decidida)`,
+  migración 7), y el test cuenta cada llamada al proveedor.
+- `destino` es para dónde se decidió: el que el board acaba de pintar (de su
+  caché), o el que manda la interfaz si la caché venció; `null` si el gestor no
+  lo dijo. Decidir otra vez reemplaza (una decisión vigente por tarjeta).
+- Emite `board.invalidado` (sin invalidar la caché del gestor: lo que cambió no
+  viene de él).
+
+Errores: `404 proyecto_desconocido`; `400 cuerpo_invalido` (falta `decision`,
+o no es `seguir|soltar` — la acción nombra las dos —, o `destino` no es texto);
+`404 recurso_desconocido` (`tipo: "run"`) si el item no tiene run en ESTE
+proyecto: sin run no hay tarjeta movida a la que aplicar nada.
+
+**Cuándo se olvida.** Pintar no escribe (spec 003, SC-007), así que el board solo
+LEE las decisiones:
+
+- si la issue vuelve a cumplir las reglas, entra por el listado y se pinta como
+  una más: la decisión no se mira (tampoco `soltar` la esconde);
+- si la issue se va a **otro** destino, la decisión no vale y el chip vuelve a
+  preguntar (sin destino guardado vale para cualquiera);
+- `PATCH /v1/projects/:id/tracker` con `opciones` **borra** las decisiones del
+  proyecto: reglas nuevas, preguntas nuevas.
+
+**Límite declarado:** una issue que vuelve a cumplir las reglas SIN que cambien
+(la devolvieron en el gestor) y después sale otra vez al MISMO destino
+encuentra su decisión vieja, porque nadie escribió entre medias.
 
 ## 5. Empuje y cierre (FR-003)
 

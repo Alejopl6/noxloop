@@ -19,6 +19,7 @@ import type {
   Board,
   DiffDeTarea,
   EstadoDeRuntime,
+  RespuestaDeDecisionDeMovida,
   RespuestaDeLanzamiento,
   ResultadoDelModoRapido,
   RunListado,
@@ -820,3 +821,44 @@ export const RUTAS_DEL_HANDOFF = {
 
 /** Cuando releer lo que el selector del hand-off muestra: el run cambio, o la sesion de un runtime. */
 export const EVENTOS_DEL_HANDOFF = ['run.cambio', 'board.invalidado', 'sincronizar_completo'] as const
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · «Seguir aqui» o «Soltarla» sobre una tarjeta movida (FR-004)     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * La ruta de la decision sobre una movida, aparte de `RUTAS` por lo mismo que
+ * el orden del board: la guarda el servicio en su almacen, y ni el gestor ni el
+ * run en disco se enteran (principios VI y VIII).
+ */
+export const RUTAS_DE_MOVIDAS = {
+  /** `POST {decision, destino?}` (`PedidoDeDecisionDeMovida` → `RespuestaDeDecisionDeMovida`). */
+  decision(proyectoId: string, itemId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/board/movidas/${encodeURIComponent(itemId)}`
+  },
+}
+
+/**
+ * Que se le pide al servicio al pulsar «Seguir aqui» o «Soltarla». Va al
+ * proyecto de la TARJETA (en «Todos» hay varios) con el id del TICKET —no el
+ * `id` compuesto de la tarjeta—, y lleva el destino que el operador vio.
+ */
+export function pedidoDeDecision(
+  tarjeta: { proyecto: { id: string }; ticket: { id: string }; movida?: { destino: string | null } | null },
+  decision: 'seguir' | 'soltar',
+): { ruta: string; cuerpo: { decision: 'seguir' | 'soltar'; destino: string | null } } {
+  return {
+    ruta: RUTAS_DE_MOVIDAS.decision(tarjeta.proyecto.id, tarjeta.ticket.id),
+    cuerpo: { decision, destino: tarjeta.movida?.destino ?? null },
+  }
+}
+
+/** Pide la decision al servicio. La interfaz no guarda nada: repinta al volver. */
+export function decidirMovida(
+  cliente: Pick<ClienteServicio, 'enviar'>,
+  tarjeta: Parameters<typeof pedidoDeDecision>[0],
+  decision: 'seguir' | 'soltar',
+): Promise<RespuestaDeDecisionDeMovida> {
+  const { ruta, cuerpo } = pedidoDeDecision(tarjeta, decision)
+  return cliente.enviar<RespuestaDeDecisionDeMovida>('POST', ruta, cuerpo)
+}

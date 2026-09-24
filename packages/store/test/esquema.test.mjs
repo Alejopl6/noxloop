@@ -32,6 +32,8 @@ const TABLAS_ESPERADAS = [
   "local_task",
   "local_task_comment",
   "local_task_sequence",
+  // La decision sobre una tarjeta «movida» (spec 005, FR-004).
+  "movida_decision",
   "project",
   "project_snapshot",
   "recommendation",

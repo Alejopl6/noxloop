@@ -169,9 +169,16 @@ export async function opcionesDelGestor(p) {
     if (problemas.length) rechazar(problemas, ["opciones"]);
     capacidades.opcionesDelGestor = cuerpo.opciones;
   }
+  // Reglas nuevas, preguntas nuevas: lo que el operador decidio sobre sus
+  // tarjetas «movidas» (spec 005, US1 esc. 4) se decidio con las reglas viejas.
+  // Una issue que ahora las cumple vuelve a ser del proyecto, y si mañana sale
+  // otra vez, el chip vuelve a preguntar en vez de aplicar una decision vieja
+  // en silencio. Se borra AQUI porque el board no escribe (SC-007).
+  const olvidarMovidas = "opciones" in cuerpo;
   if ("stateMap" in cuerpo) capacidades.stateMap = validarMapa(cuerpo.stateMap);
 
   p.dep.almacen.base.escribir("UPDATE connection SET capacidades = ? WHERE id = ?", [JSON.stringify(capacidades), conexion.id]);
+  if (olvidarMovidas) p.dep.almacen.movidas.olvidarDelProyecto(String(proyecto.id));
 
   // El board cacheaba los tickets con las opciones viejas: sin esto, el
   // operador corrige el equipo y sigue viendo el de antes durante 30 s.
