@@ -67,6 +67,7 @@ const FILAS_CUBIERTAS = [
   "boardFields",
   "identityAssignee",
   "listItems",
+  "listStates",
 ];
 
 const CONTRATO = new URL("../specs/001-parallel-ticket-orchestrator/contracts/provider.md", import.meta.url);
@@ -84,9 +85,16 @@ const CONTRATO = new URL("../specs/001-parallel-ticket-orchestrator/contracts/pr
  */
 const CONTRATO_BOARD = new URL("../specs/003-board-de-control/contracts/board-api.md", import.meta.url);
 
-/** Las capacidades cuya degradacion declara el contrato del board. */
+/**
+ * El contrato del gestor de la spec 005, donde nacio `listStates` (el editor
+ * visual del stateMap). Se lee por lo mismo que el del board: la degradacion
+ * esta DICHA en el contrato que comparten los frentes de esa feature.
+ */
+const CONTRATO_GESTOR = new URL("../specs/005-linear-cola-y-handoffs/contracts/gestor-api.md", import.meta.url);
+
+/** Las capacidades cuya degradacion declaran los contratos del board y del gestor. */
 function degradacionesDelBoard() {
-  const md = readFileSync(CONTRATO_BOARD, "utf8");
+  const md = readFileSync(CONTRATO_BOARD, "utf8") + "\n" + readFileSync(CONTRATO_GESTOR, "utf8");
   return new Set([...md.matchAll(/Sin la capacidad:\s*`capabilities\(\)\.([A-Za-z]+) === false`/g)].map((m) => m[1]));
 }
 
@@ -612,4 +620,38 @@ test("fila listItems: en true lista los tickets del gestor, y la bandeja sigue s
   const sin = sinCapacidad("listItems");
   const bandeja = await sin.mod.searchInbox(sin.fixtures.ctx);
   assert.equal(bandeja.assigned.length + bandeja.mentioned.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Fila `listStates` (spec 005, contracts/gestor-api.md §2): sin la capacidad,
+// el editor de estados no inventa la lista del gestor. Muestra los nombres que
+// el stateMap vigente ya declara, deja escribir un nombre a mano, y DICE que el
+// proveedor no sabe listar sus estados.
+//
+// LA MITAD QUE SE PRUEBA ACA es la del proveedor; la respuesta de la ruta
+// (`GET /v1/projects/:id/tracker/estados` con `listStates: false` y la nota)
+// vive en `packages/service`.
+// ---------------------------------------------------------------------------
+
+test("fila listStates: el contrato del gestor declara la degradacion", () => {
+  assert.ok(degradacionesDelBoard().has("listStates"), "gestor-api.md ya no dice que pasa sin listStates");
+});
+
+test("fila listStates: en false, can() lo dice sin un viaje, y la funcion lanza en vez de fingir una lista vacia", async () => {
+  const g = sinCapacidad("listStates");
+  const r = can(g.mod, "listStates");
+  assert.equal(r.available, false);
+  assert.match(String(r.reason), /listStates/);
+  assert.equal(g.llamadas.listStates, 0, "decidir el camino degradado no cuesta un viaje a la API");
+  // `[]` se leeria como «el equipo no tiene estados», y el editor quedaria
+  // vacio sin decir por que.
+  await assert.rejects(() => g.mod.listStates(g.fixtures.ctx), NotSupportedError);
+  assert.equal(g.tablero.escrituras, 0);
+});
+
+test("fila listStates: en true, los estados del gestor, uno por nombre del mapa y los que el mapa no nombra", async () => {
+  const g = gestorFalso();
+  const estados = await g.mod.listStates(g.fixtures.ctx);
+  assert.deepEqual(estados.map((/** @type {any} */ e) => e.name), ["Nuevo", "En curso", "Bloqueado", "En pausa"]);
+  assert.equal(g.llamadas.listStates, 1);
 });

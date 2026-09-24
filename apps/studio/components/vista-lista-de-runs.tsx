@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowUpRight, GitPullRequest } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,7 @@ import { PuntoDeProyecto } from '@/components/board/tarjeta'
 import { useBoard } from '@/components/board/contexto-board'
 import { tonoDeEstadoDeRun } from '@/components/runs/estado-de-run'
 import { VistaDeDetalleDeRun } from '@/components/runs/detalle-de-run'
+import { SeccionDeCola } from '@/components/cola-de-runs'
 import { RUTAS, comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
 import { abrirExterno } from '@/lib/enlace'
 import { useLectura } from '@/lib/lectura'
@@ -46,6 +47,12 @@ export interface PropsDePanelDeListaDeRuns {
   ahora: number
   navegar: Navegar
   alAbrirExterno: (url: string) => void
+  /**
+   * La cola global (spec 005, FR-006), encima de la lista. Un hueco y no la
+   * seccion importada aqui: el panel es puro y se pinta en el catalogo sin
+   * servicio, y la cola lee del servicio.
+   */
+  cola?: ReactNode
 }
 
 export function PanelDeListaDeRuns({
@@ -57,6 +64,7 @@ export function PanelDeListaDeRuns({
   ahora,
   navegar,
   alAbrirExterno,
+  cola,
 }: PropsDePanelDeListaDeRuns) {
   const [estado, setEstado] = useState<string | null>(null)
 
@@ -167,6 +175,8 @@ export function PanelDeListaDeRuns({
         titulo="Runs"
         descripcion="Lo que el motor corrio y lo que esta corriendo, de todos los proyectos. Se lanza desde el board; aqui se sigue."
       />
+
+      {cola}
 
       <div className="flex flex-wrap items-center gap-2">
         <FiltroDesplegable
@@ -283,6 +293,7 @@ export function VistaDeListaDeRuns({ ruta, navegar }: { ruta: Ruta; navegar: Nav
           ahora={ahora}
           navegar={navegar}
           alAbrirExterno={(url) => void alAbrirExterno(url)}
+          cola={<SeccionDeCola />}
         />
       )}
     </>

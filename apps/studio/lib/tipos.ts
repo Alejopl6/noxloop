@@ -1404,6 +1404,9 @@ export type TipoDeChip =
   | 'interrumpido'
   | 'pr_listo'
   | 'sin_repo'
+  // Spec 005 (FR-004): la issue del run salio de las reglas del proyecto. Pide
+  // una decision —seguir aqui o soltarla—, ver `DecisionSobreMovida`.
+  | 'movida'
 
 export interface ChipDeTarjeta {
   tipo: TipoDeChip
@@ -1865,4 +1868,288 @@ export interface AvisoDeTranscript {
   taskId: string
   fase: string
   lente?: string
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · Orden a mano del board y cola global (FR-005..006)              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `PUT /v1/projects/:id/board/orden` → el orden guardado del proyecto, por
+ * columna, de arriba abajo. Vive en el almacen del servicio: el gestor no se
+ * entera (el orden es de esta pantalla, no del equipo).
+ */
+export interface RespuestaDeOrdenDelBoard {
+  orden: Partial<Record<IdDeColumna, string[]>>
+}
+
+/** Un run que ocupa hueco en la cola global. */
+export interface RunCorriendoEnCola {
+  itemId: string
+  projectId: string
+  estado: string
+  proyecto: string | null
+  titulo: string | null
+  key: string | null
+}
+
+/** Un run que espera hueco, con su puesto (1 = el siguiente en arrancar). */
+export interface RunEsperandoEnCola {
+  itemId: string
+  projectId: string
+  posicion: number
+  proyecto: string | null
+  titulo: string | null
+  key: string | null
+}
+
+/** `GET|PUT /v1/queue`: la cola de TODOS los proyectos, con su limite. */
+export interface ColaDeRuns {
+  limite: number
+  corriendo: RunCorriendoEnCola[]
+  esperando: RunEsperandoEnCola[]
+}
+
+/** `GET|PATCH /v1/settings`. */
+export interface AjustesDelServicio {
+  /** Runs simultaneos en toda la maquina (1..16, 3 por defecto). */
+  runsSimultaneos: number
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · Linear completo: reglas, editor de estados, «movida» (FR-001..004) */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Los cinco estados que el `stateMap` ESCRIBE. `backlog` no esta a proposito:
+ * es de lectura del board, el gestor lo reconoce por su cuenta y el servicio
+ * rechaza la clave (`stateMap.backlog`).
+ */
+export type EstadoCanonicoEscribible = 'todo' | 'in_progress' | 'blocked' | 'in_review' | 'done'
+
+/** Lo que el proveedor diria de un estado sin mapa: los cinco mas `backlog`. */
+export type EstadoCanonicoLeido = EstadoCanonicoEscribible | 'backlog'
+
+/** El mapa de estados de un proyecto: el NOMBRE en el gestor de cada canonico, o `null`. */
+export type MapaDeEstados = Record<EstadoCanonicoEscribible, string | null>
+
+/** Un estado REAL del gestor, con el canonico que el mapa le da hoy. */
+export interface EstadoDelGestor {
+  id: string
+  /** Como se llama en el gestor: es lo que guarda el mapa. */
+  name: string
+  /** El enum del gestor si lo tiene (Linear: `unstarted`, `started`…), o `null`. */
+  category: string | null
+  /** La columna en que el gestor lo leeria sin mapa: se PROPONE, nunca se guarda sola. */
+  suggested: EstadoCanonicoLeido | null
+  /** El canonico que lo nombra en el mapa vigente, o `null` (sin asignar). */
+  asignado: EstadoCanonicoEscribible | null
+}
+
+/** Las reglas de ruteo de un proyecto de Linear (FR-001): proyecto Y alguna etiqueta. */
+export interface ReglasDeRuteo {
+  /** Nombre o UUID del proyecto de Linear. */
+  proyecto?: string
+  /** Basta con una. */
+  etiquetas?: string[]
+}
+
+/** Un fragmento del `optionsSchema` que declara el proveedor: lo que la pantalla sabe pintar. */
+export interface EsquemaDeOpcion {
+  type?: string | string[]
+  description?: string
+  properties?: Record<string, EsquemaDeOpcion>
+  items?: EsquemaDeOpcion
+  required?: string[]
+  additionalProperties?: boolean | EsquemaDeOpcion
+  enum?: unknown[]
+}
+
+/** `GET /v1/projects/:id/tracker/estados` (contracts/gestor-api.md §3 de la 005). */
+export interface EstadosDelTracker {
+  gestor: { nombre: string; conexion: string | null; opciones: Record<string, unknown> | null }
+  /** El `optionsSchema` del proveedor, o `null` si no lo declara o no esta instalado. */
+  esquema: EsquemaDeOpcion | null
+  /** `false` si la conexion es del espacio de trabajo: el PATCH daria 409. */
+  editable: boolean
+  motivo: string | null
+  /** Si el proveedor sabe listar sus estados. Sin ella, `estados` vuelve vacio y `nota` lo dice. */
+  listStates: boolean
+  estados: EstadoDelGestor[]
+  stateMap: MapaDeEstados | null
+  /** Estados reales que ningun canonico nombra: la spec pide NOMBRARLOS. */
+  sinAsignar: string[]
+  /** Nombres del mapa que el gestor no tiene: `setState` fallaria con ellos. */
+  desconocidos: Array<{ canonico: EstadoCanonicoEscribible; nombre: string }>
+  /** La degradacion o la caida del gestor, con su causa textual. */
+  nota: string | null
+}
+
+/** `PATCH /v1/projects/:id/tracker`: al menos uno de los dos. */
+export interface CambioDelTracker {
+  opciones?: Record<string, unknown>
+  stateMap?: MapaDeEstados
+}
+
+/** Lo que devuelve el PATCH. */
+export interface TrackerGuardado {
+  gestor: { nombre: string; conexion: string; opciones: Record<string, unknown> | null; stateMap: MapaDeEstados | null }
+}
+
+/**
+ * El chip `movida` (FR-004): la tarjeta de un run cuya issue salio de las
+ * reglas del proyecto. Llega en `Tarjeta.chip` con `tipo: 'movida'` y, aparte,
+ * en `movida`. Es un `TipoDeChip` mas, con estilo propio en
+ * `components/board/chip.tsx` (ambar: pide una decision), y el detalle de la
+ * tarjeta ofrece las dos acciones (`DecisionSobreMovida`).
+ */
+export interface ChipDeMovida {
+  tipo: 'movida'
+  texto: string
+  detalle: string
+  posicion: null
+  /** El proyecto del gestor donde vive hoy la issue, o `null` si el gestor no lo dice. */
+  destino: string | null
+}
+
+/** Lo que la tarjeta trae ademas del chip: `Tarjeta & { movida?: MovidaDeTarjeta }`. */
+export interface MovidaDeTarjeta {
+  destino: string | null
+  detalle: string
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · Hand-off y huecos de la flota (FR-007..008)                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Quien sostiene el test-primero de un agente (principio I), tal como lo deriva
+ * el servicio de las capacidades de su runtime (`modoTdd` de
+ * `packages/adapters`). `null` es «nadie», o «no se sabe» si el servicio no
+ * tiene registro de runtimes: no se rellena con un valor por defecto.
+ */
+export type ModoTdd = 'por_hook' | 'por_motor' | 'no_aplica'
+
+/**
+ * `tdd` viaja con cada agente de `GET /v1/projects/:id/agents`. Se DECLARA aqui
+ * por fusion de interfaces para no tocar la definicion de arriba, que es de
+ * otra etapa.
+ */
+export interface Agente {
+  tdd?: ModoTdd | null
+}
+
+/** Un hand-off que el motor registro en la tarea (`tasks[].handoffs`). */
+export interface RegistroDeHandoff {
+  at: string
+  de: string | null
+  a: string
+  agente?: string | null
+  /** El estado desde el que se paso: `blocked`, `red`... */
+  estado: string
+  motivo?: string | null
+  retomarEn?: 'red' | null
+  /** Que bucles ya estaban agotados: el hand-off no los repone, deja UN intento. */
+  presupuesto?: { agotados: string[]; concede: string | null }
+}
+
+/** Lo que el motor escribe en la tarea de un run por un hand-off. */
+export interface TareaDeRun {
+  /** Quien implementa ESTA tarea si no es el del run. `null`/ausente: el del run. */
+  implementador?: { runtime: string; agente: string | null } | null
+  retomarEn?: 'red' | null
+  handoffs?: RegistroDeHandoff[]
+}
+
+/** El motor escribe `projectId` (camelCase); `project_id` es de runs viejos. */
+export interface Run {
+  projectId?: string | null
+}
+
+/** El runtime que escribio cada evento lo estampa el motor: tras un hand-off una fase la hacen dos. */
+export interface EventoDeTranscript {
+  runtime?: string
+}
+
+/** `POST /v1/runs/:itemId/tasks/:taskId/handoff`. */
+export interface PedidoDeHandoff {
+  runtime: string
+  agente?: string | null
+  /** Por que se pasa: queda en el registro de decisiones del run. */
+  nota?: string | null
+}
+
+/**
+ * Por que se rechazo un hand-off (`error.objeto.razon` de `handoff_rechazado`).
+ * El choque con el revisor no esta: sale con su propio codigo,
+ * `revisor_comparte_runtime` (FR-034).
+ */
+export type RazonDeRechazoDeHandoff =
+  | 'fase_en_vuelo'
+  | 'runtime_no_registrado'
+  | 'runtime_desconectado'
+  | 'mismo_runtime'
+  | 'sin_implementacion'
+
+export interface RespuestaDeHandoff {
+  run: { itemId: string; estado: string; posicion: number | null }
+  handoff: {
+    taskId: string
+    de: string | null
+    a: string
+    agente: string | null
+    /** Donde retoma el nuevo agente: GREEN si el rojo ya estaba verificado. */
+    retomaEn: 'GREEN' | 'RED'
+    /** Los intentos consumidos, que el hand-off NO repone. */
+    attempts: { red?: number; green?: number; gate?: number; review?: number } | null
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · «Seguir aqui» o «Soltarla» sobre una tarjeta movida (FR-004)     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Lo que la tarjeta trae ademas del chip cuando es una movida. Se DECLARA aqui
+ * por fusion de interfaces para no tocar `Tarjeta`, que es de otra etapa.
+ * Ausente o `null`: no es una movida, o el operador ya decidio «seguir».
+ */
+export interface Tarjeta {
+  movida?: MovidaDeTarjeta | null
+}
+
+/** El chip `movida` trae su destino tambien en el chip (`ChipDeMovida`). */
+export interface ChipDeTarjeta {
+  destino?: string | null
+}
+
+/**
+ * La respuesta del operador a una movida:
+ *
+ *   seguir  la tarjeta se queda en este board sin el chip: sigue siendo del
+ *           proyecto aunque ya no cumpla sus reglas.
+ *   soltar  la tarjeta deja de pintarse en este board. Ni la issue en el gestor
+ *           ni el run en disco se tocan.
+ *
+ * Se olvida si la issue vuelve a cumplir las reglas (o cambian), y no vale si
+ * la issue se va a otro destino: el chip vuelve a preguntar.
+ */
+export type DecisionSobreMovida = 'seguir' | 'soltar'
+
+/** `POST /v1/projects/:id/board/movidas/:itemId`. */
+export interface PedidoDeDecisionDeMovida {
+  decision: DecisionSobreMovida
+  /** El destino que se vio en la tarjeta. El del servicio gana si lo tiene. */
+  destino?: string | null
+}
+
+export interface RespuestaDeDecisionDeMovida {
+  decision: {
+    itemId: string
+    decision: DecisionSobreMovida
+    /** Para que destino se decidio: una movida a otro sitio vuelve a preguntar. */
+    destino: string | null
+    /** ISO-8601. */
+    decidida: string
+  }
 }

@@ -31,6 +31,12 @@ export const CAPABILITY_KEYS = [
   // Sin ella el board no queda vacio: muestra lo que el motor ya conoce del
   // proyecto y una nota que nombra al proveedor y la capacidad que le falta.
   "listItems",
+  // Si el gestor sabe LISTAR sus estados de workflow (spec 005, FR-002). Es lo
+  // que llena el editor visual del `stateMap`: una fila por estado REAL, con su
+  // selector canonico. Sin ella el editor no inventa la lista: ofrece los
+  // nombres que el mapa vigente ya declara, deja escribir uno a mano, y dice
+  // por que (specs/005-linear-cola-y-handoffs/contracts/gestor-api.md §2).
+  "listStates",
 ];
 
 /**
@@ -43,10 +49,11 @@ export const CAPABILITY_KEYS = [
  * los rompe por algo que no usan. Omitirla es exactamente la degradacion
  * declarada: `can(mod, "listItems")` devuelve `available: false` con el motivo.
  * Lo que SI se exige es que, si se declara, sea boolean, y que en `true` venga
- * con su funcion. Los cuatro proveedores de este repositorio la declaran
- * explicita.
+ * con su funcion. Los cuatro proveedores de este repositorio declaran
+ * `listItems` explicita; `listStates` (spec 005) solo la declara Linear, y los
+ * demas quedan en la degradacion declarada hasta que alguien la implemente.
  */
-export const OPTIONAL_CAPABILITY_KEYS = ["listItems"];
+export const OPTIONAL_CAPABILITY_KEYS = ["listItems", "listStates"];
 
 export const CANONICAL_STATES = ["todo", "in_progress", "blocked", "in_review", "done"];
 export const LEVELS = ["epic", "feature", "story", "task"];
@@ -86,6 +93,7 @@ export const CAPABILITY_FUNCTIONS = {
   searchMentioned: "searchInbox",
   boardFields: null, // no es una funcion: es un campo del Item
   listItems: "listItems",
+  listStates: "listStates",
   // NO tiene funcion propia, igual que `boardFields`: no es una operacion
   // nueva, es COMO se llama a `searchInbox`. Mapearla a `searchInbox` obligaba
   // a exportarla a un gestor con los dos disparos en false — que es legitimo:
@@ -259,6 +267,45 @@ export function validateListPage(page, query = {}) {
     if (item) vistos.add(item.id);
     if (item?.canonicalState === "done" && !includeDone) {
       problems.push(`items[${i}]: vino en done sin includeDone — el board lo volveria a ofrecer para correr`);
+    }
+  });
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * La lista que devuelve `listStates(ctx)`: los estados de workflow del espacio
+ * del proyecto, en el orden en que el gestor los muestra.
+ *
+ * Cada uno es `{id, name, category, suggested}`:
+ *   - `name` es lo que el `stateMap` guarda (el mapa es por NOMBRE, porque el
+ *     id de un estado suele ser por equipo) y por eso no se puede repetir: dos
+ *     estados homonimos harian que el selector de uno escriba el del otro;
+ *   - `category` es el enum del gestor si lo tiene (Linear: `type`), o null;
+ *   - `suggested` es la columna en que el proveedor LEERIA ese estado sin mapa
+ *     (uno de LISTED_STATES) o null si no tiene equivalente: el editor lo
+ *     propone, nunca lo guarda solo.
+ *
+ * @param {any} lista
+ * @returns {{ok: boolean, problems: string[]}}
+ */
+export function validateStateList(lista) {
+  if (!Array.isArray(lista)) return { ok: false, problems: [`tiene que ser un array, llego ${JSON.stringify(lista)}`] };
+  const problems = [];
+  const vistos = new Set();
+  lista.forEach((e, i) => {
+    if (!e || typeof e !== "object") {
+      problems.push(`[${i}]: no es un objeto`);
+      return;
+    }
+    if (typeof e.id !== "string" || !e.id) problems.push(`[${i}].id: tiene que ser un string no vacio`);
+    if (typeof e.name !== "string" || !e.name.trim()) problems.push(`[${i}].name: tiene que ser un string no vacio`);
+    if (e.category != null && typeof e.category !== "string") problems.push(`[${i}].category: string o null`);
+    if (e.suggested != null && !LISTED_STATES.includes(e.suggested)) {
+      problems.push(`[${i}].suggested: tiene que ser uno de ${LISTED_STATES.join(", ")} o null, llego ${JSON.stringify(e.suggested)}`);
+    }
+    if (typeof e.name === "string") {
+      if (vistos.has(e.name)) problems.push(`[${i}].name: ${JSON.stringify(e.name)} vino repetido`);
+      vistos.add(e.name);
     }
   });
   return { ok: problems.length === 0, problems };
@@ -443,6 +490,24 @@ export function contractChecks(mod, fx) {
               `un cursor que no avanza hace girar al board para siempre`,
           );
         }
+      },
+    },
+    {
+      name: "10. listStates: en true lista estados validos y no vacios; en false la degradacion esta declarada",
+      run: async () => {
+        const caps = mod.capabilities() || {};
+        if (caps.listStates !== true) {
+          const r = can(mod, "listStates");
+          assert(!r.available, "listStates no esta en true pero can() la da por disponible");
+          assert(/listStates/.test(String(r.reason)), `el motivo no nombra la capacidad: ${r.reason}`);
+          return;
+        }
+        const estados = await mod.listStates(fx.ctx);
+        const v = validateStateList(estados);
+        assert(v.ok, `la lista de estados no valida:\n  - ${v.problems.join("\n  - ")}`);
+        // Una lista vacia de un gestor que dice saber listar se leeria como «el
+        // equipo no tiene estados»: el editor quedaria sin filas y sin motivo.
+        assert(estados.length > 0, "listStates en true devolvio una lista vacia con los fixtures");
       },
     },
   ];

@@ -271,6 +271,12 @@ const PROVOCADORES = {
     return (await (await pedirJson(svc, "/v1/runs/con-pr/approve", "POST")).json()).error;
   },
 
+  // Spec 005, FR-007: un hand-off sobre una tarea que ya esta integrada.
+  handoff_rechazado: async (svc) => {
+    runEnDisco(svc.home, "ya-integrada", { tasks: [{ id: "T001", status: "integrated", attempts: {}, dependsOn: [] }] });
+    return (await (await pedirJson(svc, "/v1/runs/ya-integrada/tasks/T001/handoff", "POST", { runtime: "codex" })).json()).error;
+  },
+
   fallo_interno: async () => deExcepcion(new Error("una excepcion que nadie previo")).error,
 };
 

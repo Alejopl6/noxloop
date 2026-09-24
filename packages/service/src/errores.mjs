@@ -397,6 +397,21 @@ export const CATALOGO = {
       "opciones ahi. Las de una cuenta de codigo (`owner/repo`) ya salen del remoto de cada proyecto.",
   },
 
+  // ---- El hand-off (spec 005, FR-007) --------------------------------------
+  //
+  // UN codigo con la razon en `objeto.razon` (`fase_en_vuelo`,
+  // `runtime_no_registrado`, `runtime_desconectado`, `mismo_runtime`,
+  // `sin_implementacion`): todas son «a esta tarea no se le puede cambiar el
+  // implementador ahora», y la accion ya dice a que sitio ir. La interfaz lee
+  // la razon, no la prosa. El choque con el revisor NO va aqui: es FR-034 y
+  // sale con su propio codigo, `revisor_comparte_runtime`, como en la flota.
+  handoff_rechazado: {
+    estado: 409,
+    causa: (d) =>
+      `No se puede pasar la tarea \`${d.taskId}\` del run \`${d.itemId}\` a \`${d.runtime}\`: ${d.porque}`,
+    accion: (d) => d.comoSeguir,
+  },
+
   // Principio X aplicado a las costuras que todavia no estan montadas. UN
   // codigo, con la pieza adentro: declarar el hueco es el contrato, y un
   // `fallo_interno` en su lugar manda al operador a leer una traza que no es suya.

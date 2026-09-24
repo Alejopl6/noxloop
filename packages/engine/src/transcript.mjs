@@ -144,7 +144,7 @@ async function redactorDeFase(env, secretos) {
  * @param {{
  *   home: string, itemId: string, taskId: string, fase: string, lente?: string|null,
  *   env?: Record<string, string>, secretos?: string[],
- *   redactar?: (texto: string) => string,
+ *   redactar?: (texto: string) => string, runtime?: string|null,
  * }} opts `redactar` es una redaccion ADICIONAL (la del servicio, si la hay), nunca en lugar de la de la fase
  * @returns {Promise<Transcript>}
  */
@@ -195,7 +195,12 @@ export async function abrirTranscript(opts) {
     if (e.tipo === "resultado" || e.tipo === "error") terminal = true;
     if (e.tipo === "error") huboError = true;
     deEstaInvocacion.push(e);
-    escribir(e);
+    // QUE RUNTIME LO DIJO (spec 005, FR-007). Tras un hand-off, el GREEN de una
+    // tarea lo escriben dos runtimes en el MISMO archivo —el transcript de una
+    // fase es todo lo que esa fase hizo—, y sin esto no se sabria de quien es
+    // cada linea. Lo estampa el motor, que es quien sabe que runtime lanzo; el
+    // evento del adaptador no lo trae.
+    escribir(opts.runtime ? { ...e, runtime: String(opts.runtime) } : e);
   };
 
   return {

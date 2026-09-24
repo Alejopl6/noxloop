@@ -14,6 +14,8 @@ import { DetalleDeTarjeta } from '@/components/board/detalle-de-tarjeta'
 import { BarraDelBoard, FiltroDesplegable } from '@/components/board/filtros'
 import { DialogoDeTareaNueva } from '@/components/board/tarea-nueva'
 import { PuntoDeProyecto, TarjetaDelBoard } from '@/components/board/tarjeta'
+import { TarjetaOrdenable } from '@/components/board/tarjeta-ordenable'
+import { moverTarjeta, puedeMover, soltarAntesDe, type NuevoOrden } from '@/components/board/orden'
 import {
   FILTROS_VACIOS,
   SIN_ASIGNAR,
@@ -26,7 +28,13 @@ import {
   type FiltroDeRepo,
   type FiltrosDelBoard,
 } from '@/components/board/derivar'
-import { comoErrorDelServicio, RUTAS, type ErrorDelServicio } from '@/lib/daemon'
+import {
+  comoErrorDelServicio,
+  decidirMovida,
+  RUTAS,
+  RUTAS_DE_ORDEN_Y_COLA,
+  type ErrorDelServicio,
+} from '@/lib/daemon'
 import { abrirExterno } from '@/lib/enlace'
 import { useLectura, type Lectura } from '@/lib/lectura'
 import type { Navegar } from '@/lib/ruta'
@@ -37,6 +45,7 @@ import {
   type Board,
   type ColumnaDelBoard,
   type EstadoDeRuntime,
+  type DecisionSobreMovida,
   type Tarjeta,
   type TareaNueva,
 } from '@/lib/tipos'
@@ -56,7 +65,9 @@ import {
  *
  * LO QUE ESTA PANTALLA NO HACE: mover ni editar tickets de un gestor externo.
  * El gestor es la fuente de verdad de su backlog (principio VI) y un kanban
- * que arrastra tarjetas seria un segundo escritor. Las acciones que hay —Run,
+ * que arrastra tarjetas DE COLUMNA seria un segundo escritor. Lo que si se
+ * arrastra (spec 005, FR-005) es el orden DENTRO de una columna, y ese orden
+ * lo guarda el servicio en su almacen: el gestor no se entera. Las acciones que hay —Run,
  * Aprobar plan, Retry y «Nueva tarea», que crea una tarea en el gestor LOCAL
  * de noxloop (US7)— son peticiones al servicio (principio VIII).
  */
@@ -82,6 +93,18 @@ export interface PropsDePanelDeBoard {
   alNuevaTarea: () => void
   /** Filtros iniciales. Solo para el catalogo: ensenar el board ya filtrado. */
   filtrosIniciales?: Partial<FiltrosDelBoard>
+  /**
+   * Guarda el orden a mano de una columna (spec 005). Ausente = el board no se
+   * ordena (el catalogo, sin servicio).
+   */
+  alOrdenar?: (orden: NuevoOrden) => void
+  /** Hay un orden en vuelo: los gestos esperan a que vuelva. */
+  ordenando?: boolean
+  /**
+   * «Seguir aqui» / «Soltarla» sobre una tarjeta movida (spec 005, FR-004).
+   * Ausente = el detalle no ofrece los botones.
+   */
+  alDecidirMovida?: (tarjeta: Tarjeta, decision: DecisionSobreMovida) => void
 }
 
 const COLUMNAS_POR_DEFECTO: ColumnaDelBoard[] = ORDEN_DE_COLUMNAS.map((id) => ({
@@ -108,6 +131,9 @@ export function PanelDeBoard({
   alAbrirExterno,
   alNuevaTarea,
   filtrosIniciales,
+  alOrdenar,
+  ordenando = false,
+  alDecidirMovida,
 }: PropsDePanelDeBoard) {
   const [filtros, setFiltros] = useState<Omit<FiltrosDelBoard, 'proyecto'>>({
     ...FILTROS_VACIOS,
@@ -356,17 +382,44 @@ export function PanelDeBoard({
                 columna.id === 'backlog' ? () => setBacklogAbierto((abierto) => !abierto) : undefined
               }
             >
-              {porColumna[columna.id].map((tarjeta) => (
-                <TarjetaDelBoard
-                  key={tarjeta.id}
-                  tarjeta={tarjeta}
-                  gestor={origenDe(tarjeta)}
-                  trabajando={trabajandoEn === tarjeta.id}
-                  error={errores[tarjeta.id] ?? null}
-                  alAccionar={alAccionar}
-                  alAbrir={(elegida) => setAbierta(elegida.id)}
-                />
-              ))}
+              {porColumna[columna.id].map((tarjeta) => {
+                const pieza = (
+                  <TarjetaDelBoard
+                    key={tarjeta.id}
+                    tarjeta={tarjeta}
+                    gestor={origenDe(tarjeta)}
+                    trabajando={trabajandoEn === tarjeta.id}
+                    error={errores[tarjeta.id] ?? null}
+                    alAccionar={alAccionar}
+                    alAbrir={(elegida) => setAbierta(elegida.id)}
+                  />
+                )
+                if (!alOrdenar) return pieza
+                // El vecino se elige entre lo VISIBLE y la lista que se manda
+                // lleva lo oculto: ver `components/board/orden.ts`.
+                const visiblesDeColumna = porColumna[columna.id]
+                const baseDeColumna = basePorColumna[columna.id]
+                return (
+                  <TarjetaOrdenable
+                    key={tarjeta.id}
+                    id={tarjeta.id}
+                    nombre={tarjeta.ticket.key ?? tarjeta.ticket.titulo ?? tarjeta.ticket.id}
+                    puedeSubir={puedeMover(visiblesDeColumna, tarjeta.id, -1)}
+                    puedeBajar={puedeMover(visiblesDeColumna, tarjeta.id, 1)}
+                    ocupada={ordenando}
+                    alMover={(delta) => {
+                      const orden = moverTarjeta(baseDeColumna, visiblesDeColumna, tarjeta.id, delta)
+                      if (orden) alOrdenar({ ...orden, columna: columna.id })
+                    }}
+                    alSoltarAntes={(arrastrada) => {
+                      const orden = soltarAntesDe(baseDeColumna, arrastrada, tarjeta.id)
+                      if (orden) alOrdenar({ ...orden, columna: columna.id })
+                    }}
+                  >
+                    {pieza}
+                  </TarjetaOrdenable>
+                )
+              })}
             </ColumnaDeTarjetas>
           ))}
           {/* El ultimo hueco a la derecha: sin el, la ultima columna queda
@@ -383,6 +436,7 @@ export function PanelDeBoard({
         alCerrar={() => setAbierta(null)}
         alAccionar={alAccionar}
         alAbrirExterno={alAbrirExterno}
+        alDecidirMovida={alDecidirMovida}
       />
     </div>
   )
@@ -522,6 +576,53 @@ export function VistaDeBoard({ proyectoId, navegar }: { proyectoId: string | nul
     [cliente, lectura],
   )
 
+  // EL ORDEN A MANO (spec 005, FR-005). Una peticion a la vez: dos gestos
+  // seguidos sobre la misma columna mandarian dos listas calculadas sobre el
+  // MISMO board viejo, y la segunda desharia la primera.
+  const [ordenando, setOrdenando] = useState(false)
+  const [errorDeOrden, setErrorDeOrden] = useState<ErrorDelServicio | null>(null)
+  const alOrdenar = useCallback(
+    async (orden: NuevoOrden) => {
+      if (!cliente || !orden.columna) return
+      const ruta = RUTAS_DE_ORDEN_Y_COLA.ordenDelBoard(orden.proyectoId)
+      setOrdenando(true)
+      setErrorDeOrden(null)
+      try {
+        await cliente.enviar('PUT', ruta, { columna: orden.columna, itemIds: orden.itemIds })
+        lectura?.releer()
+      } catch (fallo) {
+        setErrorDeOrden(comoErrorDelServicio(fallo, ruta))
+      } finally {
+        setOrdenando(false)
+      }
+    },
+    [cliente, lectura],
+  )
+
+  // «SEGUIR AQUI» O «SOLTARLA» (spec 005, FR-004). Con el «trabajando» y el
+  // error de la TARJETA, como Run: es una accion sobre ella, y su fallo se
+  // pinta en su detalle. Soltarla la saca del board al releer, y el detalle se
+  // cierra solo porque la tarjeta abierta ya no esta.
+  const alDecidirMovida = useCallback(
+    async (tarjeta: Tarjeta, decision: DecisionSobreMovida) => {
+      if (!cliente) return
+      setTrabajandoEn(tarjeta.id)
+      setErrores((previos) => {
+        const { [tarjeta.id]: _descartado, ...resto } = previos
+        return resto
+      })
+      try {
+        await decidirMovida(cliente, tarjeta, decision)
+        lectura?.releer()
+      } catch (fallo) {
+        setErrores((previos) => ({ ...previos, [tarjeta.id]: comoErrorDelServicio(fallo, 'el board') }))
+      } finally {
+        setTrabajandoEn(null)
+      }
+    },
+    [cliente, lectura],
+  )
+
   const [errorDeEnlace, setErrorDeEnlace] = useState<ErrorDelServicio | null>(null)
   const alAbrirExterno = useCallback(async (url: string) => {
     setErrorDeEnlace(null)
@@ -546,6 +647,7 @@ export function VistaDeBoard({ proyectoId, navegar }: { proyectoId: string | nul
   return (
     <>
       {errorDeEnlace ? <FalloDeLectura error={errorDeEnlace} className="px-6 pt-3" /> : null}
+      {errorDeOrden ? <FalloDeLectura error={errorDeOrden} className="px-6 pt-3" /> : null}
       <PanelDeBoard
         lectura={lectura}
         proyectoId={proyectoId}
@@ -560,6 +662,9 @@ export function VistaDeBoard({ proyectoId, navegar }: { proyectoId: string | nul
           setErrorDeTarea(null)
           setTareaNuevaAbierta(true)
         }}
+        alOrdenar={(orden) => void alOrdenar(orden)}
+        ordenando={ordenando}
+        alDecidirMovida={(tarjeta, decision) => void alDecidirMovida(tarjeta, decision)}
       />
       <DialogoDeTareaNueva
         abierto={tareaNuevaAbierta}

@@ -120,10 +120,41 @@ export function resolverEjecutor(deLaTarea, delProyecto) {
 }
 
 /**
+ * FR-034 sobre el ejecutor YA RESUELTO: el implementador de ESTA tarea contra el
+ * revisor de la flota. `null` si no chocan.
+ *
+ * UNA regla, en un solo sitio, y la usan los tres que la necesitan: el
+ * lanzamiento al componer la configuracion (`componerConfig`), el board al
+ * deshabilitar Run (via `problemaDeEjecucion`), y el hand-off al elegir a quien
+ * pasar la tarea. Tres copias de la comparacion son tres ocasiones de que el
+ * boton diga «adelante» a un Run que la ruta rechaza.
+ *
+ * La flota ya impide guardar un revisor igual al IMPLEMENTADOR de la flota; lo
+ * que no puede impedir es que la cascada (una tarea local que elige su runtime,
+ * un hand-off) llegue al del revisor por otro camino.
+ *
+ * @param {{runtime: string, de?: string}|null|undefined} ejecutor
+ * @param {{runtime: string, nombre: string}|null|undefined} revisor el de `flotaDelProyecto`
+ * @returns {ErrorDeServicio|null}
+ */
+export function choqueConElRevisor(ejecutor, revisor) {
+  if (!ejecutor?.runtime || !revisor || revisor.runtime !== ejecutor.runtime) return null;
+  return new ErrorDeServicio("revisor_comparte_runtime", {
+    revisor: revisor.nombre,
+    implementador: `el ejecutor de la tarea (resuelto desde ${ejecutor.de ?? "la cascada"})`,
+    runtime: ejecutor.runtime,
+  });
+}
+
+/**
  * Lo que impide lanzar con este ejecutor y este termino, como el error que lo
  * dice. `null` si se puede.
  *
- * @param {{ejecutor: {runtime: string, de: string}, termino: string, clave: string}} e
+ * `revisor`, si se da, es el de la flota: el choque con el se comprueba con
+ * `choqueConElRevisor`, la misma regla que el lanzamiento.
+ *
+ * @param {{ejecutor: {runtime: string, de: string}, termino: string, clave: string,
+ *          revisor?: {runtime: string, nombre: string}|null}} e
  * @returns {ErrorDeServicio|null}
  */
 export function problemaDeEjecucion(e) {
@@ -141,5 +172,5 @@ export function problemaDeEjecucion(e) {
       soportados: Object.keys(MONTABLE_POR_EL_MOTOR).filter((k) => MONTABLE_POR_EL_MOTOR[k] === null),
     });
   }
-  return null;
+  return choqueConElRevisor(e.ejecutor, e.revisor);
 }

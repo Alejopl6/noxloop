@@ -204,10 +204,14 @@ const URGENCIA: Partial<Record<TipoDeChip, number>> = {
   plan_listo: 1,
   necesita_criterios: 2,
   bloqueado: 3,
-  fallido: 4,
-  interrumpido: 5,
-  fase: 6,
-  en_cola: 7,
+  // Una movida (spec 005, FR-004) es un run vivo que espera una decision del
+  // operador —seguir aqui o soltarla—; sin entrada aqui desapareceria de
+  // «Runs activos» justo cuando pide algo.
+  movida: 4,
+  fallido: 5,
+  interrumpido: 6,
+  fase: 7,
+  en_cola: 8,
 }
 
 /**

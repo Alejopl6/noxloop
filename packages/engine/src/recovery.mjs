@@ -52,8 +52,10 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import {
   loadRun, saveRun, listRuns, transition, setTaskFields, clearLastFailure,
-  setActiveTask, listActiveTasks, clearActiveTask,
+  setActiveTask, listActiveTasks, clearActiveTask, traspasar, TRASPASABLES,
 } from "./state.mjs";
+// El mismo sobre de FR-034 que usa el cableado al cargar.
+import { revisorComparteRuntime } from "../../adapters/src/index.mjs";
 import { readySet, resumable } from "./scheduler.mjs";
 import { inspect } from "./lock.mjs";
 import { repoRoot } from "./repos.mjs";
@@ -749,6 +751,91 @@ export function destrabar(itemId, taskId, opts) {
     bloqueoPrevio,
     attempts: { ...despues.attempts },
   };
+}
+
+// ------------------------------------------------------------ hand-off
+
+/**
+ * Pasa una tarea a OTRO implementador (spec 005, US3, FR-007), o dice por que
+ * no, con causa y accion. SOLO valida y registra: quien la sigue es el driver,
+ * en el `resume` que viene despues (ver `comandos.mjs`).
+ *
+ * POR QUE AQUI Y NO EN EL SERVICIO. El servicio tambien lo comprueba —para
+ * contestar el 409 antes de lanzar nada—, pero entre su pregunta y este
+ * subproceso pueden pasar segundos, y el unico que puede afirmar el estado del
+ * run en el instante de escribir es el motor que lo escribe. Las dos guardas
+ * dicen lo mismo con el mismo codigo; esta es la que no se puede saltar.
+ *
+ * NO LANZA POR UN RECHAZO. Devuelve `{ok: false, codigo, causa, accion}`: es la
+ * forma que el lanzador del servicio sabe explicar, y un rechazo no es un fallo
+ * del motor — es un pedido que no tiene sentido ahora.
+ *
+ * @param {string} itemId
+ * @param {string} taskId
+ * @param {{home: string, runtime: string, agente?: string|null, nota?: string|null,
+ *   de: string|null, revisor?: string|null, registrados: string[], budgets?: object}} opts
+ *   `de` es el implementador EFECTIVO de la tarea hoy; `revisor`, el DECLARADO
+ *   (sin revisor declarado la revision ya corre en el implementador del recorrido,
+ *   y eso es un hueco que el cableado avisa, no un choque de este hand-off).
+ */
+export function pasarAOtroAgente(itemId, taskId, opts) {
+  const { home } = opts;
+  const no = (codigo, causa, accion) => ({ ok: false, item: itemId, task: taskId, codigo, causa, accion });
+
+  const run = loadRun(itemId, { home });
+  if (!run) return no("run_desconocido", `no hay recorrido para el item ${itemId}`, `planifica el item antes: \`noxloop plan ${itemId}\``);
+  const t = run.tasks.find((x) => x.id === taskId);
+  if (!t) {
+    return no("tarea_desconocida", `la tarea ${taskId} no existe en el recorrido del item ${itemId}`,
+      `mira las tareas del recorrido con \`noxloop status ${itemId}\``);
+  }
+
+  // PRIMERO lo que esta en vuelo: con otro proceso recorriendo el item, la
+  // tarea puede estar a mitad de una fase, y cambiarle el implementador por
+  // atras la dejaria con la fase de uno y el estado del otro.
+  const vivo = recorridoVivo(itemId, home);
+  if (vivo) {
+    return no("fase_en_vuelo", `no se puede pasar ${taskId} a otro agente: ${enCursoPorOtro(vivo)}`,
+      "Deten el run (o espera a que termine o se bloquee) y vuelve a pedir el hand-off.");
+  }
+
+  const runtime = String(opts.runtime || "").trim();
+  if (!runtime || !opts.registrados.includes(runtime)) {
+    return no("runtime_no_registrado",
+      `el runtime "${runtime}" no esta registrado en el motor. Los que hay: ${opts.registrados.join(", ") || "ninguno"}`,
+      "Elige uno de los runtimes registrados (Settings → Modelos dice cuales tienen sesion).");
+  }
+  if (opts.revisor && runtime === opts.revisor) {
+    // FR-034 con el mismo sobre que el cableado: el revisor revisaria lo que
+    // el mismo escribio.
+    const e = revisorComparteRuntime(runtime, `revisor (${opts.revisor})`, `implementador de ${taskId} (${runtime})`);
+    return no(e.codigo, e.causa, e.accion);
+  }
+  if (opts.de && runtime === opts.de) {
+    return no("handoff_mismo_runtime",
+      `${taskId} ya la implementa \`${runtime}\`: pasarsela a si mismo seria otro intento del mismo agente, sin decir por que`,
+      `Si quieres que \`${runtime}\` lo intente de nuevo, destrabala con nota (\`noxloop unstick ${itemId} --task ${taskId} --nota "..."\`); ` +
+        "si no, elige otro runtime.");
+  }
+  if (!TRASPASABLES.includes(t.status)) {
+    return no("handoff_sin_implementacion",
+      `${taskId} esta en "${t.status}": ya paso su GREEN con el gate verde (o esta integrada), y no le queda implementacion que pasar`,
+      "Si lo que falla es la revision o la cola, mira el detalle del run; un hand-off solo cambia quien implementa.");
+  }
+
+  let r;
+  try {
+    r = traspasar(run, taskId, {
+      runtime, agente: opts.agente ?? null, de: opts.de ?? null, motivo: opts.nota ?? null, budgets: opts.budgets,
+    }, { home });
+  } catch (e) {
+    return no("handoff_rechazado", e.message, "Mira el estado de la tarea con `noxloop status` antes de repetirlo.");
+  }
+  registrarDecision(itemId, {
+    task: taskId, decision: "handoff", nota: (opts.nota || "").trim() || null,
+    de: r.de, a: r.a, estado: r.estado, retomarEn: r.retomarEn, presupuesto: r.presupuesto,
+  }, { home });
+  return { ok: true, item: itemId, task: taskId, ...r };
 }
 
 const yaSeDestrabo = (run, taskId, destino) =>

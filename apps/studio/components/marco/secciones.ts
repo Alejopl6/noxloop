@@ -40,6 +40,7 @@ export const ETIQUETA_DE_SECCION: Record<Seccion, string> = {
   diseno: 'Diseno',
   bootstrap: 'Bootstrap',
   conexiones: 'Conexiones',
+  gestor: 'Gestor',
   flota: 'Flota',
   ciclos: 'Ciclos',
   credenciales: 'Credenciales',

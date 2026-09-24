@@ -1,5 +1,5 @@
-// El lanzador: el motor como subproceso del servicio, con una cola por
-// proyecto.
+// El lanzador: el motor como subproceso del servicio, con UNA cola global
+// (spec 005, FR-006) y el tope de cada proyecto ademas.
 //
 // -----------------------------------------------------------------------------
 // POR QUE UN SUBPROCESO Y NO UNA LLAMADA
@@ -38,6 +38,25 @@
 // lanzo (supuesto de la spec): al detenerse se matan los subprocesos, y lo que
 // quedo a medias es un archivo en disco que se retoma con Retry —desde el
 // disco, conservando lo integrado y los intentos consumidos (principio III)—.
+// El LIMITE si se guarda (en el almacen, `ajustes.mjs`): es una preferencia
+// del operador, no trabajo pendiente.
+//
+// -----------------------------------------------------------------------------
+// POR QUE LA COLA ES GLOBAL Y NO POR PROYECTO (spec 005, FR-006)
+// -----------------------------------------------------------------------------
+//
+// Lo que se agota no es del proyecto: es la CPU del portatil, la cuota del
+// modelo y la atencion del operador. Con una cola por proyecto, cinco
+// proyectos con tope 2 son diez agentes a la vez, y el limite que el operador
+// cree haber puesto no limita nada. Asi que hay UNA fila de espera, con un
+// limite global (`limite()`, leido en cada decision para que cambiarlo en
+// Settings valga sin reiniciar), y el tope de cada proyecto
+// (`maxParallelItems`) se respeta ademas.
+//
+// Un pedido cuyo proyecto esta en su tope NO bloquea a los de detras: se salta
+// y conserva su puesto. Si bloqueara, un proyecto con tope 1 y tres tickets en
+// cola pararia la maquina entera con huecos libres — justo lo contrario de lo
+// que el operador pidio al subir el limite.
 
 import { spawn as spawnDeNode } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -68,6 +87,9 @@ export const VARIABLES_DEL_ENTORNO_BASE = Object.freeze([
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
 ]);
+
+/** Runs simultaneos en toda la maquina cuando el operador no dijo otra cosa. */
+export const LIMITE_GLOBAL_POR_DEFECTO = 3;
 
 /** Cuanto de la salida de un subproceso se guarda para explicar un fallo. */
 const SALIDA_MAXIMA = 64 * 1024;
@@ -138,6 +160,7 @@ function resultadoDe(texto) {
  *   entornoBase?: Record<string, string>,
  *   emitir?: (tipo: string, datos: any, extra?: {project_id?: string|null}) => any,
  *   intervaloMs?: number,
+ *   limite?: () => number,
  * }} opts
  */
 export function crearLanzador(opts) {
@@ -150,33 +173,61 @@ export function crearLanzador(opts) {
     VARIABLES_DEL_ENTORNO_BASE.filter((k) => typeof process.env[k] === "string").map((k) => [k, String(process.env[k])]),
   );
   const intervaloMs = opts.intervaloMs ?? 1500;
+  /**
+   * El limite global, preguntado en CADA decision y no copiado al arrancar:
+   * el operador lo cambia en Settings y tiene que valer en el siguiente hueco.
+   * Un valor roto (no entero, menor que 1) cae al defecto en vez de parar la
+   * maquina entera con un limite 0.
+   */
+  const limite = () => {
+    const n = opts.limite ? Number(opts.limite()) : LIMITE_GLOBAL_POR_DEFECTO;
+    return Number.isInteger(n) && n >= 1 ? n : LIMITE_GLOBAL_POR_DEFECTO;
+  };
 
   /**
    * Lo que el servicio sabe de cada run que lanzo, por item.
    * @type {Map<string, any>}
    */
   const vivos = new Map();
-  /** La cola de cada proyecto, en orden de llegada. @type {Map<string, string[]>} */
-  const colas = new Map();
+  /** LA fila de espera, de todos los proyectos, en el orden en que arrancan. @type {string[]} */
+  const cola = [];
   /** La ultima firma emitida de cada run en vuelo, para no repetir eventos. */
   const firmas = new Map();
   let deteniendo = false;
   /** @type {any} */
   let sondeo = null;
 
-  const colaDe = (/** @type {string} */ p) => {
-    if (!colas.has(p)) colas.set(p, []);
-    return /** @type {string[]} */ (colas.get(p));
-  };
-  const activos = (/** @type {string} */ p) =>
-    [...vivos.values()].filter((v) => v.projectId === p && EN_VUELO.includes(v.estado)).length;
+  /** Los que ocupan hueco: en vuelo, o arrancando (preparando la credencial). */
+  const ocupan = (/** @type {any} */ v) => EN_VUELO.includes(v.estado);
+  const activos = (/** @type {string|null} */ p = null) =>
+    [...vivos.values()].filter((v) => ocupan(v) && (p === null || v.projectId === p)).length;
 
-  const posiciones = (/** @type {string} */ p) => {
-    colaDe(p).forEach((id, i) => {
+  const posiciones = () => {
+    cola.forEach((id, i) => {
       const v = vivos.get(id);
       if (v) v.posicion = i + 1;
     });
   };
+
+  /**
+   * La cola global (spec 005, FR-006): el limite, lo que corre y lo que espera
+   * con su puesto. Es lo que contesta `GET /v1/queue`.
+   */
+  function vistaDeCola() {
+    return {
+      limite: limite(),
+      corriendo: [...vivos.values()]
+        .filter(ocupan)
+        .map((v) => ({ itemId: v.itemId, projectId: v.projectId, estado: v.estado })),
+      esperando: cola
+        .map((id) => vivos.get(id))
+        .filter(Boolean)
+        .map((v) => ({ itemId: v.itemId, projectId: v.projectId, posicion: v.posicion })),
+    };
+  }
+
+  /** Si `v` puede arrancar YA: hay hueco global y su proyecto no esta en su tope. */
+  const cabe = (/** @type {any} */ v) => activos() < limite() && activos(v.projectId) < v.maxParalelo;
 
   /** @param {any} v */
   function avisar(v) {
@@ -203,15 +254,36 @@ export function crearLanzador(opts) {
     return e ? { itemId, estado: e.estado, posicion: e.posicion } : null;
   }
 
-  /** @param {string} p */
-  function liberar(p) {
-    const cola = colaDe(p);
-    while (cola.length && !deteniendo) {
-      const siguiente = vivos.get(/** @type {string} */ (cola[0]));
-      if (!siguiente || activos(p) >= siguiente.maxParalelo) break;
-      cola.shift();
-      posiciones(p);
-      void arrancar(siguiente);
+  /**
+   * Arranca, en orden de la fila, todo lo que quepa. Se llama cada vez que se
+   * libera un hueco, se sube el limite o se reordena. El que no cabe por el
+   * tope de SU proyecto se salta y conserva su puesto (ver la cabecera).
+   *
+   * Los que siguen esperando y cambiaron de puesto se avisan: la interfaz
+   * pinta «#2 en cola» y tiene que enterarse de que ahora es «#1».
+   */
+  function liberar() {
+    if (deteniendo) return;
+    const antes = new Map(cola.map((id, i) => [id, i + 1]));
+    for (let i = 0; i < cola.length && activos() < limite(); ) {
+      const v = vivos.get(/** @type {string} */ (cola[i]));
+      if (!v) {
+        cola.splice(i, 1);
+        continue;
+      }
+      if (!cabe(v)) {
+        i++;
+        continue;
+      }
+      cola.splice(i, 1);
+      // `arrancar` pasa a planificando/corriendo SINCRONICAMENTE, antes de su
+      // primer `await`: el siguiente `activos()` de este bucle ya lo cuenta.
+      void arrancar(v);
+    }
+    posiciones();
+    for (const id of cola) {
+      const v = vivos.get(id);
+      if (v && antes.get(id) !== v.posicion) avisar(v);
     }
   }
 
@@ -227,7 +299,7 @@ export function crearLanzador(opts) {
       v.preparado = null; // la primera vez se usa lo que el llamador ya preparo; despues se vuelve a pedir
     } catch (e) {
       pasar(v, "fallido", e && e.causa ? `${e.causa} ${e.accion ?? ""}`.trim() : String(e?.message ?? e));
-      liberar(v.projectId);
+      liberar();
       return;
     }
 
@@ -245,10 +317,14 @@ export function crearLanzador(opts) {
       // `--project` solo en `plan`: es el paso que CREA el run. `run` y
       // `resume` leen el que ya existe, con su proyecto escrito.
       if (paso === "plan") args.push("--project", v.projectId);
+      // Lo que el paso declara de mas: hoy el hand-off (`--task`, `--runtime`
+      // de `resume`, spec 005). Son argumentos NO secretos; si alguno llevara
+      // el valor de un secreto, `prepararLanzamiento` se niega a lanzar.
+      if (Array.isArray(preparado.argumentos)) args.push(...preparado.argumentos.map(String));
       lanzamiento = prepararLanzamiento({ comando: nodo, args, entorno, cwd: home });
     } catch (e) {
       pasar(v, "fallido", e && e.causa ? `${e.causa} ${e.accion ?? ""}`.trim() : String(e?.message ?? e));
-      liberar(v.projectId);
+      liberar();
       return;
     }
 
@@ -263,7 +339,7 @@ export function crearLanzador(opts) {
       });
     } catch (e) {
       pasar(v, "fallido", `no se pudo arrancar el motor: ${e.message}`);
-      liberar(v.projectId);
+      liberar();
       return;
     }
     v.hijo = hijo;
@@ -318,18 +394,18 @@ export function crearLanzador(opts) {
         v.pasos.shift();
         if (v.pasos.length) return void arrancar(v);
         pasar(v, "plan_listo");
-        return liberar(v.projectId);
+        return liberar();
       }
       if (r && r.question) pasar(v, "necesita_criterios", explicar(String(r.question)));
       else pasar(v, "fallido", explicar(r?.reason ? String(r.reason) : stderr));
-      return liberar(v.projectId);
+      return liberar();
     }
 
     // `run` y `resume`.
     if (codigo === 0 && r && r.pr) pasar(v, "terminado", null);
     else if (r && Array.isArray(r.blocked) && r.blocked.length) pasar(v, "terminado", explicar((r.humano || []).join("\n")));
     else pasar(v, codigo === 0 ? "terminado" : "fallido", codigo === 0 ? null : explicar(r?.reason ? String(r.reason) : stderr));
-    liberar(v.projectId);
+    liberar();
   }
 
   /**
@@ -377,11 +453,15 @@ export function crearLanzador(opts) {
       hijo: null,
     });
     vivos.set(v.itemId, v);
-    if (activos(v.projectId) >= v.maxParalelo || colaDe(v.projectId).length) {
-      colaDe(v.projectId).push(v.itemId);
-      posiciones(v.projectId);
+    // Se encola si no cabe, o si YA hay alguien de su proyecto esperando: sin
+    // lo segundo, un recien llegado adelantaria al que lleva un rato en la fila
+    // por el mero hecho de que acaba de liberarse un hueco en el mismo tick.
+    const esperaAlguienDelProyecto = cola.some((id) => vivos.get(id)?.projectId === v.projectId);
+    if (!cabe(v) || esperaAlguienDelProyecto) {
+      cola.push(v.itemId);
+      posiciones();
       pasar(v, "en_cola");
-      v.posicion = colaDe(v.projectId).indexOf(v.itemId) + 1;
+      v.posicion = cola.indexOf(v.itemId) + 1;
       return { codigo: 202, run: { itemId: v.itemId, estado: "en_cola", posicion: v.posicion } };
     }
     void arrancar(v);
@@ -437,6 +517,41 @@ export function crearLanzador(opts) {
 
     derivado,
 
+    /**
+     * La cola global (spec 005, FR-006): el limite, lo que corre y lo que
+     * espera con su puesto. Es lo que contesta `GET /v1/queue`.
+     */
+    cola: vistaDeCola,
+
+    /**
+     * Reordena lo que espera: los ids dados van primero, en ese orden; lo que
+     * no se nombra conserva su orden relativo DETRAS. Un id que no espera (ya
+     * arranco, o nunca existio) se ignora sin fallar: entre que la interfaz
+     * pinto la cola y el operador solto la fila, ese run pudo arrancar, y
+     * rechazar el reordenamiento entero por eso castiga al operador por una
+     * carrera que no ve.
+     *
+     * @param {string[]} orden
+     */
+    reordenar(orden) {
+      const pedidos = [...new Set(orden.map(String))].filter((id) => cola.includes(id));
+      const resto = cola.filter((id) => !pedidos.includes(id));
+      const antes = new Map(cola.map((id, i) => [id, i + 1]));
+      cola.splice(0, cola.length, ...pedidos, ...resto);
+      posiciones();
+      for (const id of cola) {
+        const v = vivos.get(id);
+        if (v && antes.get(id) !== v.posicion) avisar(v);
+      }
+      return vistaDeCola();
+    },
+
+    /** Vuelve a mirar la fila: tras cambiar el limite, para que subirlo valga ya. */
+    revisar() {
+      liberar();
+      return vistaDeCola();
+    },
+
     /** Mata los subprocesos: un run no sobrevive al servicio que lo lanzo. */
     async detener() {
       deteniendo = true;
@@ -463,7 +578,7 @@ export function crearLanzador(opts) {
           v.detalle = "el servicio se detuvo con el run en curso; se retoma desde el disco con Retry";
         }
       }
-      colas.clear();
+      cola.length = 0;
       await Promise.all(esperas);
     },
   };

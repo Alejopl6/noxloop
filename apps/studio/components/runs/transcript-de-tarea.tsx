@@ -17,6 +17,7 @@ import {
   resumirEntrada,
   type BloqueDeTranscript,
 } from '@/components/runs/transcript'
+import { runtimesDeLosEventos } from '@/components/runs/handoff'
 import {
   EVENTO_DE_TRANSCRIPT,
   RUTAS_DEL_TRANSCRIPT,
@@ -116,6 +117,14 @@ export function PanelDeTranscript({ transcript, error, cargando, alCargarMas, fa
                   <span className={cn('text-label-12', fase.tokens.medido ? 'text-ds-gray-900' : 'text-ds-gray-700')}>
                     {formatearTokens(fase.tokens)}
                   </span>
+                  {/* QUIEN LA HIZO (spec 005, FR-007): el motor estampa el
+                      runtime en cada evento, y tras un hand-off una fase la
+                      hicieron dos. Con uno solo tambien se dice. */}
+                  {runtimesDeLosEventos(fase.eventos).length > 0 ? (
+                    <span className="fuente-operativa text-label-12 text-ds-gray-700">
+                      por {runtimesDeLosEventos(fase.eventos).join(' → ')}
+                    </span>
+                  ) : null}
                 </button>
               )
             })}

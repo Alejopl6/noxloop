@@ -34,9 +34,11 @@
 import { accionDelEstado, avanceDe, gastoDe, EN_VUELO, TE_NECESITAN } from "./estado-del-run.mjs";
 import { exigirProyecto } from "./comun.mjs";
 import { bloqueoPara, bloqueosParaElBoard } from "./diagnostico.mjs";
-import { ejecutorDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ejecutor.mjs";
+import { ejecutorDelProyecto, flotaDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ejecutor.mjs";
+import { contextoDelGestor } from "./gestor.mjs";
 import { datosDelProyecto, diagnosticar, secretosDelGestor } from "./motor.mjs";
 import { estadosDeRuntimes } from "./runtimes.mjs";
+import { ordenarTarjetas, ordenesDe } from "./orden.mjs";
 import { runsConProyecto } from "./runs.mjs";
 import { puertoDeTareas } from "./tareas.mjs";
 
@@ -152,6 +154,39 @@ function chipDe(run, ticket, parte) {
 }
 
 /**
+ * El chip de una issue «movida» (spec 005, FR-004): tiene run en este proyecto
+ * y ya no cumple sus reglas. `destino` es donde vive hoy en el gestor, o null
+ * si el gestor no lo dice (y entonces no se inventa).
+ *
+ * @param {{destino: string|null, detalle: string}} movida
+ */
+function chipDeMovida(movida) {
+  return {
+    tipo: "movida",
+    texto: movida.destino ? `Movida · ${movida.destino}` : "Movida",
+    detalle: movida.detalle,
+    posicion: null,
+    destino: movida.destino,
+  };
+}
+
+/**
+ * La decision del operador que VALE para esta movida, o `null` (spec 005, US1
+ * esc. 4). Una decision se tomo para un destino: si la issue se fue despues a
+ * OTRO sitio, lo que se decidio ya no dice nada de esta movida y el chip vuelve
+ * a preguntar. Sin destino guardado (el gestor no lo dijo al decidir), vale
+ * para cualquiera: no hay con que compararla.
+ *
+ * @param {{decision: string, destino: string|null}|undefined|null} decision
+ * @param {{destino: string|null}} movida
+ */
+function decisionQueVale(decision, movida) {
+  if (!decision) return null;
+  if (decision.destino !== null && decision.destino !== undefined && decision.destino !== movida.destino) return null;
+  return decision;
+}
+
+/**
  * Quien ejecuta un ticket y como termina, resuelto en cascada (FR-031/032).
  * Solo una tarea LOCAL declara los suyos (en `raw`, que es de su proveedor);
  * un ticket de un gestor externo hereda del proyecto y termina en PR.
@@ -173,8 +208,9 @@ export function ejecucionDeTarjeta(ticket, parte) {
  * @param {any} run el run derivado, o `null`
  * @param {any} parte
  * @param {Map<string, any>} runtimes el estado de cada runtime, si se sabe
+ * @param {{destino: string|null, detalle: string}|null} [movida] si la issue salio de las reglas (spec 005, FR-004)
  */
-function tarjetaDe(ticket, run, parte, runtimes) {
+function tarjetaDe(ticket, run, parte, runtimes, movida = null) {
   let columna;
   if (run && run.estado === "pr_abierto") columna = "in_review";
   else if (run && EN_BLOQUEADO.includes(run.estado)) columna = "blocked";
@@ -198,7 +234,10 @@ function tarjetaDe(ticket, run, parte, runtimes) {
   if (lanza) {
     if (!parte.lanzable) motivo = parte.motivo ?? "el proyecto no se puede lanzar";
     else {
-      const problema = problemaDeEjecucion(ejecucion);
+      // Con el revisor de la flota: si el ejecutor de la tarea es su runtime,
+      // Run se deshabilita con el motivo exacto con el que el lanzamiento lo
+      // rechazaria (spec 005, FR-008) — la regla es `choqueConElRevisor`.
+      const problema = problemaDeEjecucion({ ...ejecucion, revisor: parte.revisor ?? null });
       if (problema) motivo = problema.causa;
       else if (runtimes?.get(ejecucion.ejecutor.runtime)?.conectado === false) {
         const e = runtimes.get(ejecucion.ejecutor.runtime);
@@ -232,7 +271,11 @@ function tarjetaDe(ticket, run, parte, runtimes) {
         : null,
     },
     columna,
-    chip: chipDe(run, ticket, parte),
+    // «Movida» (spec 005, FR-004) gana al chip del run: la columna y
+    // `run.estado` siguen diciendo en que va el run, y lo que el operador NO
+    // sabe es que la issue ya no es de este proyecto.
+    chip: movida ? chipDeMovida(movida) : chipDe(run, ticket, parte),
+    ...(movida ? { movida: { destino: movida.destino, detalle: movida.detalle } } : {}),
     avance: run?.avance ?? null,
     accion,
     run: run ? { itemId: run.itemId, estado: run.estado, pr: run.pr ?? null, gasto: run.gasto ?? null } : null,
@@ -247,6 +290,9 @@ function tarjetaDe(ticket, run, parte, runtimes) {
  *   partes: Array<{proyecto: any, gestor: string|null, listItems: boolean|null, tickets: any[], runs: any[],
  *                  nota: string|null, lanzable: boolean, tieneRepo: boolean, motivo: string|null,
  *                  ejecutorDelProyecto?: {runtime: string, agente: null}|null,
+ *                  revisor?: {runtime: string, nombre: string}|null,
+ *                  movidas?: Map<string, {destino: string|null, detalle: string}>,
+ *                  decisiones?: Map<string, {decision: "seguir"|"soltar", destino: string|null}>,
  *                  bloqueos?: import("./diagnostico.mjs").Problema[]}>,
  *   includeDone?: boolean,
  *   proyectos?: any[],
@@ -286,7 +332,17 @@ export function construirBoard(e) {
       if (vistos.has(id)) continue;
       vistos.add(id);
       const sintetico = { id, key: r.key ?? null, title: r.titulo ?? null, url: r.url ?? null, canonicalState: "todo" };
-      tarjetas.push(tarjetaDe(sintetico, r, parte, runtimes));
+      // «Movida» y lo que el operador decidio sobre ella (spec 005, US1 esc.
+      // 4). `seguir`: la tarjeta se queda, con el chip de su run —sigue siendo
+      // de este proyecto aunque ya no cumpla sus reglas—. `soltar`: deja de
+      // pintarse AQUI; el run en disco no se toca (es del motor, y el board no
+      // escribe), asi que sigue en `/v1/runs` y en la cola si estaba en ella.
+      // Una decision solo se mira en una movida: una issue que vuelve a cumplir
+      // las reglas entra por el bucle de arriba, y lo decidido no pinta nada.
+      const movida = parte.movidas?.get(id) ?? null;
+      const decision = movida ? decisionQueVale(parte.decisiones?.get(id), movida) : null;
+      if (decision?.decision === "soltar") continue;
+      tarjetas.push(tarjetaDe(sintetico, r, parte, runtimes, decision ? null : movida));
     }
   }
 
@@ -344,7 +400,7 @@ const SILENCIO = Object.freeze({ info() {}, warn() {}, error() {}, debug() {} })
  * @param {any} proyecto
  * @param {any} diag lo que devolvio `diagnosticar`
  * @param {boolean} includeDone
- * @returns {Promise<{tickets: any[], nota: string|null, aviso: any|null}>}
+ * @returns {Promise<{tickets: any[], nota: string|null, aviso: any|null, completo?: boolean, movidas?: Map<string, any>}>}
  */
 async function ticketsDe(p, proyecto, diag, includeDone) {
   const motor = p.estado.motor;
@@ -418,8 +474,13 @@ async function pedirTickets(p, proyecto, diag, includeDone) {
         nota = `Se muestran los primeros ${tickets.length} de ${total} tickets de \`${nombre}\`: hay ${total - tickets.length} mas en el gestor.`;
       } else if (pagina?.nextCursor) {
         nota = `Se muestran los primeros ${tickets.length} tickets de \`${nombre}\`: el gestor tiene mas y no dice cuantos.`;
+      } else if (tickets.length === 0) {
+        nota = notaDeReglas(ctx.options?.reglas, nombre);
       }
-      return { tickets, nota, aviso: null };
+      // `completo`: el listado trae TODO lo que las reglas dejan pasar. Solo
+      // entonces la ausencia de un ticket con run significa algo (FR-004).
+      const completo = !pagina?.nextCursor && !(total !== null && total > tickets.length);
+      return { tickets, nota, aviso: null, completo };
     }
 
     // LA DEGRADACION DECLARADA (FR-011). Sin `listItems`, lo que el motor si
@@ -458,6 +519,104 @@ async function pedirTickets(p, proyecto, diag, includeDone) {
       },
     };
   }
+}
+
+/**
+ * La nota de una regla de ruteo que no deja pasar nada (spec 005, FR-001,
+ * borde), o null si el proyecto no declara reglas.
+ *
+ * LAS REGLAS SE NOMBRAN. «No hay tickets» y «tus reglas no dejan pasar ninguno»
+ * piden cosas distintas —esperar trabajo o corregir un nombre de proyecto—, y
+ * un board vacio sin explicacion se lee como lo primero. `reglas` es la opcion
+ * que el proveedor declara en su `optionsSchema`; el servicio solo la lee para
+ * poder decirla.
+ *
+ * @param {any} reglas
+ * @param {string} nombre el proveedor
+ */
+function notaDeReglas(reglas, nombre) {
+  if (!reglas || typeof reglas !== "object") return null;
+  const partes = [];
+  if (typeof reglas.proyecto === "string" && reglas.proyecto.trim()) partes.push(`proyecto «${reglas.proyecto.trim()}»`);
+  const etiquetas = Array.isArray(reglas.etiquetas) ? reglas.etiquetas.filter((/** @type {any} */ e) => typeof e === "string" && e.trim()) : [];
+  if (etiquetas.length) partes.push(`etiquetas ${etiquetas.map((/** @type {string} */ e) => `«${e}»`).join(" o ")}`);
+  if (!partes.length) return null;
+  return (
+    `Las reglas de ruteo de este proyecto (${partes.join(" y ")}) no dejan pasar ningun ticket de \`${nombre}\`. ` +
+    "Revisalas en Settings del proyecto → Gestor: un nombre de proyecto o de etiqueta tiene que coincidir exacto con el del gestor."
+  );
+}
+
+/** Cuantas issues «movidas» se consultan al gestor por proyecto y pintada, como mucho. */
+export const MOVIDAS_POR_PINTADA = 10;
+
+/**
+ * Las issues con run que ya no devuelve el listado del proyecto, consultadas
+ * una por una con `getItem` (spec 005, FR-004). Devuelve `id → {destino,
+ * detalle}` solo para las que siguen abiertas en el gestor.
+ *
+ * SIN ROMPER LA CACHE. Lo consultado se guarda DENTRO de la entrada de cache
+ * del listado (`valor.movidas`): vence con ella a los 30 s y la invalida el
+ * mismo `PATCH /tracker` que cambia las reglas. Asi una pintada no cuesta un
+ * viaje por tarjeta, y cambiar las reglas no deja «movidas» viejas.
+ *
+ * SOLO CON EL LISTADO COMPLETO. Si el gestor corto la pagina, la issue puede
+ * estar en la siguiente: afirmar que se movio seria inventarlo.
+ *
+ * NUNCA LANZA: una consulta que falla deja la tarjeta como estaba.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} proyecto
+ * @param {any} diag
+ * @param {any} valor la entrada del listado (cacheada)
+ * @param {Array<{itemId: string, key?: string|null}>} candidatos
+ * @returns {Promise<Map<string, {destino: string|null, detalle: string}>>}
+ */
+async function movidasDe(p, proyecto, diag, valor, candidatos) {
+  /** @type {Map<string, {destino: string|null, detalle: string}|null>} */
+  const sabidas = valor.movidas instanceof Map ? valor.movidas : new Map();
+  valor.movidas = sabidas;
+  const mod = diag.modulo;
+  const faltan = candidatos.filter((c) => !sabidas.has(String(c.itemId))).slice(0, MOVIDAS_POR_PINTADA);
+  if (faltan.length && valor.completo && mod && typeof mod.getItem === "function" && diag.gestor?.origen !== "local") {
+    try {
+      const ctx = await contextoDelGestor(p, proyecto, diag);
+      for (const c of faltan) {
+        const id = String(c.itemId);
+        try {
+          const item = await mod.getItem(id, ctx);
+          // Borrada (null) o sin columna (cancelada, duplicada): no es una
+          // movida, es una issue que ya no es trabajo.
+          if (!item || !item.canonicalState) {
+            sabidas.set(id, null);
+            continue;
+          }
+          const destino = typeof item.project?.name === "string" && item.project.name ? item.project.name : null;
+          const clave = item.key ?? c.key ?? id;
+          sabidas.set(id, {
+            destino,
+            detalle:
+              `${clave} ya no cumple las reglas de este proyecto` +
+              (destino ? `: ahora esta en el proyecto «${destino}» de \`${diag.gestor.nombre}\`.` : ", y el gestor no dice adonde fue.") +
+              " El run sigue aqui hasta su PR. Decide en la tarjeta: «Seguir aqui» la deja en este board sin este " +
+              "aviso; «Soltarla» la quita de el (ni Linear ni el run se tocan). Para que vuelva a cumplirlas, " +
+              "ajusta las reglas en Settings del proyecto → Gestor.",
+          });
+        } catch {
+          sabidas.set(id, null);
+        }
+      }
+    } catch {
+      /* sin credencial no hay consulta: las tarjetas quedan como estaban */
+    }
+  }
+  /** @type {Map<string, {destino: string|null, detalle: string}>} */
+  const movidas = new Map();
+  for (const c of candidatos) {
+    const m = sabidas.get(String(c.itemId));
+    if (m) movidas.set(String(c.itemId), m);
+  }
+  return movidas;
 }
 
 /**
@@ -527,33 +686,47 @@ export async function board(p) {
     });
     if (pedido && pedido !== proyecto.id) continue;
 
-    const { tickets, nota, aviso } = await ticketsDe(p, proyecto, diag, pedirCerrados);
+    const valorDelListado = await ticketsDe(p, proyecto, diag, pedirCerrados);
+    const { tickets, nota, aviso } = valorDelListado;
     if (aviso) avisos.push(aviso);
+
+    const runsDelProyecto = runs
+      .filter((r) => r.proyecto && String(r.proyecto.id) === String(proyecto.id) && r.e)
+      .map((r) => ({
+        itemId: r.itemId,
+        estado: /** @type {any} */ (r.e).estado,
+        detalle: /** @type {any} */ (r.e).detalle,
+        posicion: /** @type {any} */ (r.e).posicion,
+        pr: r.run?.item?.pr ?? null,
+        avance: avanceDe(r.run, /** @type {any} */ (r.e).estado),
+        gasto: r.run ? gastoDe(r.run) : null,
+        titulo: r.run?.item?.title ?? null,
+        key: r.run?.item?.key ?? null,
+        url: r.run?.item?.url ?? null,
+      }));
+    // Los runs cuyo ticket el listado (con las reglas) ya no trae: candidatos a
+    // «movida» (spec 005, FR-004).
+    const listados = new Set(tickets.map((/** @type {any} */ t) => String(t.id)));
+    const fuera = runsDelProyecto.filter((r) => !listados.has(String(r.itemId)));
+    const movidas = fuera.length ? await movidasDe(p, proyecto, diag, valorDelListado, fuera) : new Map();
 
     partes.push({
       proyecto: { id: proyecto.id, nombre: proyecto.nombre },
       gestor: diag.gestor?.nombre ?? null,
       listItems: lista[lista.length - 1].listItems,
       tickets,
-      runs: runs
-        .filter((r) => r.proyecto && String(r.proyecto.id) === String(proyecto.id) && r.e)
-        .map((r) => ({
-          itemId: r.itemId,
-          estado: /** @type {any} */ (r.e).estado,
-          detalle: /** @type {any} */ (r.e).detalle,
-          posicion: /** @type {any} */ (r.e).posicion,
-          pr: r.run?.item?.pr ?? null,
-          avance: avanceDe(r.run, /** @type {any} */ (r.e).estado),
-          gasto: r.run ? gastoDe(r.run) : null,
-          titulo: r.run?.item?.title ?? null,
-          key: r.run?.item?.key ?? null,
-          url: r.run?.item?.url ?? null,
-        })),
+      runs: runsDelProyecto,
+      movidas,
+      // Lo que el operador decidio sobre sus movidas (spec 005, US1 esc. 4).
+      // Solo se LEE: pintar no escribe (SC-007), y por eso una decision que ya
+      // no aplica no se borra aqui (la olvida quien escribe: ver `movidas.mjs`).
+      decisiones: p.dep.almacen.movidas.delProyecto(String(proyecto.id)),
       nota,
       lanzable: diag.lanzable,
       tieneRepo: diag.tieneRepo,
       motivo: diag.problema ? diag.problema.causa : null,
       ejecutorDelProyecto: ejecutorDelProyecto(p.dep, proyecto.id),
+      revisor: flotaDelProyecto(p.dep, proyecto.id).revisor,
     });
   }
 
@@ -575,5 +748,9 @@ export async function board(p) {
   );
   for (const parte of partes) /** @type {any} */ (parte).bloqueos = bloqueos.get(String(parte.proyecto.id)) ?? [];
 
-  return { cuerpo: construirBoard({ partes, includeDone, proyectos: lista, avisos, runtimes }) };
+  const cuerpo = construirBoard({ partes, includeDone, proyectos: lista, avisos, runtimes });
+  // El orden a mano de cada columna (spec 005, FR-005), del almacen: lo
+  // ordenado primero, lo demas en el orden del gestor. Solo lee.
+  cuerpo.tarjetas = ordenarTarjetas(cuerpo.tarjetas, ordenesDe(p.dep, partes.map((x) => String(x.proyecto.id))));
+  return { cuerpo };
 }
