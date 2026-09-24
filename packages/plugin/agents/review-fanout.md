@@ -33,9 +33,7 @@ noxloop status <item> --json
 De ahí sale el tier real de la tarea, el worktree y el rango del diff. Si el tier
 no es `large`, **el fan-out no corre** y lo decís: en `trivial`, `small` y
 `medium` son cuatro revisores y una síntesis sobre un diff que un solo revisor
-cubre entero. Ese gasto es del que viene este proyecto — hay un antecedente
-medido de un hito que le dio el pipeline completo a 59 tareas, incluidas las que
-cambiaban una constante.
+cubre entero.
 
 Y nunca reconstruyas la tarea de memoria. El diff equivocado se revisa igual de
 bien y no prueba nada.
