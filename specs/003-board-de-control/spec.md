@@ -128,6 +128,20 @@ El operador abre Costos y ve lo gastado por proyecto y por run —dinero e invoc
 
 ---
 
+### User Story 6 - Ver qué cambió cada agente (Priority: P2)
+
+Desde «Abrir run», el operador ve las tareas del run y, por cada una, el diff exacto que dejó su agente: los archivos tocados con sus líneas, separados en el commit del test y el de la implementación. Sin abrir una terminal.
+
+**Why this priority**: es lo que permite confiar en lo que hace un agente sin leer el PR entero, y es la evidencia de que el test existió antes que el código (principio I), a la vista.
+
+**Independent Test**: un run del proveedor `fake` con dos tareas integradas; el detalle muestra por tarea sus archivos y el diff de cada uno de los dos commits, y coincide con `git diff` sobre la rama de la tarea.
+
+**Acceptance Scenarios**:
+
+1. **Given** un run con tareas integradas, **When** el operador abre el run, **Then** ve cada tarea con su estado, su agente y un resumen de archivos (+/−).
+2. **Given** una tarea, **When** la abre, **Then** ve el diff del commit de test y el del commit de implementación por separado, con el mensaje de cada commit.
+3. **Given** una tarea en curso, **When** la abre, **Then** ve el diff de lo que lleva hecho en su worktree respecto a su base, marcado como «sin commitear».
+
 ### Edge Cases
 
 - **Gestor que no sabe listar tickets.** Si un proveedor no declara la capacidad de listar, Backlog y Todo muestran lo que el motor sí conoce de ese proyecto —tickets asignados o mencionados y los que ya tienen run— y una nota en la columna que nombra el proveedor y la capacidad que le falta. Nunca un board vacío sin explicación.
@@ -184,6 +198,8 @@ El operador abre Costos y ve lo gastado por proyecto y por run —dinero e invoc
 - **FR-026**: La bandeja deja de ser un destino: sus entradas MUST aparecer como el chip «te necesita» de su tarjeta, en los runs activos y en el resumen superior, con la causa textual completa al abrirlas.
 
 **Runs y costos**
+
+- **FR-029**: El detalle de un run MUST mostrar, por tarea, el diff de cada uno de sus commits (test e implementación) y, si está en curso, el diff sin commitear de su worktree, leídos de git sin escribir nada.
 
 - **FR-027**: Runs MUST listar los runs de todos los proyectos, filtrables por proyecto y estado, con acceso al detalle de cada uno.
 - **FR-028**: Costos MUST mostrar el gasto por periodo, por proyecto y por run a partir de lo que cada run registra, y MUST distinguir «sin medir» de cero.

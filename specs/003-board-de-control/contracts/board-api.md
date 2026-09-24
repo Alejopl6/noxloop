@@ -100,6 +100,17 @@ Lista de runs de todos los proyectos: `{ items: [{ itemId, proyecto, titulo, est
   "runs": [ { "itemId", "proyecto", "titulo", "usd", "calls", "medido" } ] }
 ```
 
+### `GET /v1/runs/:itemId` (ya existe) y `GET /v1/runs/:itemId/tasks/:taskId/diff`
+
+```jsonc
+{ "tarea": { "id": "T001", "titulo", "estado", "agente": "claude-agent-sdk|codex|...", "rama" },
+  "commits": [ { "sha", "mensaje", "tipo": "test|impl|otro",
+                 "archivos": [ { "ruta", "estado": "A|M|D|R", "mas": 12, "menos": 3, "parche": "@@ ..." } ] } ],
+  "sinCommitear": null | { "archivos": [ /* mismo formato */ ] } }
+```
+
+Solo lectura (`git log`/`git diff` sobre la rama y el worktree de la tarea). Parches de más de 200 KB se cortan y lo dicen.
+
 ### Eventos SSE nuevos (`/v1/events`)
 
 - `run.cambio` `{ projectId, itemId, estado }`: al lanzar, encolar, cambiar de fase, terminar.
