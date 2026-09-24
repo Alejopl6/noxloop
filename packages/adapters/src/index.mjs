@@ -8,6 +8,7 @@ export { ErrorDeAdaptador } from "./errores.mjs";
 
 export {
   CLAVES_DE_CAPACIDAD,
+  CAPACIDADES_OPCIONALES,
   adaptarADriver,
   esRevision,
   normalizarPeticion,

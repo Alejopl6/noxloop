@@ -23,7 +23,8 @@
 // Los tres primeros aceptan "-" para decir "ninguno".
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 const [, , guionPath, vistoPath, hooksJson, ...resto] = process.argv;
 const args = resto[0] === "--" ? resto.slice(1) : resto;
@@ -81,6 +82,27 @@ if (!abortado && hooksJson && hooksJson !== "-") {
       abortado = true;
       break;
     }
+  }
+}
+
+// LO QUE LA FASE HACE EN EL ARBOL, si el guion lo dice: `fases.<FASE>.escribir`
+// ({ruta relativa al cwd: contenido}) y `fases.<FASE>.correr` ([[comando,
+// ...args]]). Existe para poder probar SIN MODELO lo que el motor hace con un
+// runtime sin hooks que se porta mal —escribir produccion en RED, tocar un
+// archivo ajeno en GREEN, mover una rama—: sin esto, la guarda posterior del
+// motor solo se podria probar con un doble en memoria, que no escribe en un
+// worktree de verdad.
+if (!abortado && guion.fases && typeof guion.fases === "object") {
+  const i = args.indexOf("--phase");
+  const paso = i >= 0 ? guion.fases[args[i + 1]] : null;
+  for (const [ruta, contenido] of Object.entries(paso?.escribir || {})) {
+    const destino = resolve(process.cwd(), ruta);
+    mkdirSync(dirname(destino), { recursive: true });
+    writeFileSync(destino, String(contenido));
+  }
+  for (const [comando, ...argsDelPaso] of paso?.correr || []) {
+    const r = spawnSync(comando, argsDelPaso, { cwd: process.cwd(), env: process.env, encoding: "utf8" });
+    if (r.status !== 0) process.stderr.write(`\`${comando}\` salio con ${r.status}: ${(r.stderr || "").trim()}\n`);
   }
 }
 

@@ -33,6 +33,8 @@ import { comoDato, recorteQueAvisa } from "./prompt.mjs";
 import { comandosPermitidos, entornoDeFase } from "./wiring.mjs";
 // El marcador con el que el revisor declara un bloqueo: ver `conVeredicto`.
 import { veredictoDeRevision } from "./runner.mjs";
+// El orden del TDD en un runtime sin hooks, forzado despues de la fase.
+import { fotoDeRamas, permitidosEnFase, verificarAlcance } from "./alcance-de-fase.mjs";
 
 const TIER_POR_DEFECTO = { model: null, effort: "high", gate: "full", review: true, fanout: false };
 
@@ -314,6 +316,12 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
       case "in_progress": {
         const r = await fase("RED", run, taskId, politica, deps);
         if (await cortoPorPresupuesto(r, itemId, taskId, deps)) return;
+        // Una fase RED que escribio fuera de sus tests NO llega a la
+        // verificacion del rojo: lo que escribio ya se revirtio, y la fase
+        // cuenta como fallida. Ver `alcance-de-fase.mjs`.
+        const alcanceRojo = atenderAlcance(r, itemId, taskId, "red", deps, budgets, bitacora);
+        if (alcanceRojo === "corta") return;
+        if (alcanceRojo === "sigue") break;
         run = loadRun(itemId, { home });
         const ev = verificarRojo(run, taskId, deps);
         if (ev.rojo) {
@@ -338,6 +346,9 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
       case "red": {
         const r = await fase("GREEN", run, taskId, politica, deps);
         if (await cortoPorPresupuesto(r, itemId, taskId, deps)) return;
+        const alcanceVerde = atenderAlcance(r, itemId, taskId, "green", deps, budgets, bitacora);
+        if (alcanceVerde === "corta") return;
+        if (alcanceVerde === "sigue") break;
         run = loadRun(itemId, { home });
         const ev = correrElTest(run, taskId, deps);
         if (ev.ok) {
@@ -373,6 +384,12 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
             extra: `Hay que resolver esto antes de seguir:\n${comoDato(t.lastFailure, "el fallo pendiente")}`,
           });
           if (await cortoPorPresupuesto(fix, itemId, taskId, deps)) return;
+          // El intento ya se conto arriba: aqui solo se decide si se corta. Y
+          // el fallo pendiente NO se limpia: el arreglo escribio donde no debia,
+          // asi que lo pendiente sigue pendiente.
+          const alcanceFix = atenderAlcance(fix, itemId, taskId, null, deps, budgets, bitacora);
+          if (alcanceFix === "corta") return;
+          if (alcanceFix === "sigue") break;
           clearLastFailure(loadRun(itemId, { home }), taskId, { home });
           break;
         }
@@ -470,6 +487,8 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
             extra: `El gate fallo:\n${comoDato(g.output, "salida del gate")}`,
           });
           if (await cortoPorPresupuesto(fix, itemId, taskId, deps)) return;
+          // Contado ya en el presupuesto del gate; solo la rama movida corta.
+          if (atenderAlcance(fix, itemId, taskId, null, deps, budgets, bitacora) === "corta") return;
         }
         break;
       }
@@ -684,6 +703,14 @@ async function revisionEnAbanico(run, taskId, politica, deps) {
 export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   const t = tareaDe(run, taskId);
 
+  // LA GUARDA POSTERIOR, solo si el cableado la encendio: la enciende para un
+  // runtime que declara `hooks: false`, porque ahi no hay hook que bloquee la
+  // escritura antes. Es un dato que trae `deps`, no una pregunta por el nombre
+  // del runtime (principio VI). Ver `alcance-de-fase.mjs`.
+  const guarda = deps.alcancePorElMotor === true && Boolean(t.worktree) && permitidosEnFase(nombre, t) !== null;
+  const ramas = guarda ? ramasProtegidas(run, t, deps) : [];
+  const ramasAntes = guarda ? fotoDeRamas(t.worktree, ramas) : null;
+
   // EL TECHO SE VERIFICA ANTES DE INVOCAR. Despues ya se pago.
   //
   // `limits.callsPerItem` estaba en el esquema y en los dos ejemplos (60 y 40)
@@ -756,7 +783,55 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   // Con el veredicto derivado si el runtime no lo trajo: un `PhaseResult` del
   // contrato de adaptadores no lleva `findings`, y sin esto la revision no
   // puede bloquear nada. Ver `conVeredicto`.
-  return conVeredicto(r) || { ok: false, budgetExhausted: false, findings: null, text: "la fase no devolvio nada" };
+  const res = conVeredicto(r) || { ok: false, budgetExhausted: false, findings: null, text: "la fase no devolvio nada" };
+  if (!guarda) return res;
+
+  // La tarea se RELEE del disco: un `noxloop add-target` durante la fase amplio
+  // lo que la fase podia tocar, y la foto de antes no lo sabe.
+  const fresca = tareaDe(loadRun(run.item.id, { home: deps.home }) || run, taskId);
+  const g = verificarAlcance({ fase: nombre, worktree: t.worktree, tarea: fresca, ramasAntes, ramas });
+  if (g.ok) return res;
+  return { ...res, ok: false, alcance: g, text: `${g.causa}${res.text ? `\n\n${res.text}` : ""}` };
+}
+
+/**
+ * Las ramas que ninguna fase puede mover: la base del item, por donde se la
+ * conozca. Si no se puede resolver, lista vacia — y la guarda de ramas no mira
+ * nada, en vez de inventar un nombre.
+ */
+function ramasProtegidas(run, t, deps) {
+  const ramas = new Set([run.item?.baseBranch, run.item?.prTarget, deps.config?.repos?.[t.repo]?.baseBranch]);
+  try {
+    ramas.add(deps.resolve?.(t.repo)?.baseBranch);
+  } catch { /* sin resolucion: se queda con lo que ya sabe */ }
+  return [...ramas].filter(Boolean);
+}
+
+/**
+ * Lo que el driver hace con una fase cuya guarda de alcance salto.
+ *
+ * - Una rama protegida movida bloquea EN EL ACTO: no es un intento fallido del
+ *   que se aprende, es el limite del principio IV cruzado, y lo desatasca una
+ *   persona.
+ * - Una escritura fuera de alcance consume el intento del bucle (`red` o
+ *   `green`) y, agotado, bloquea con la causa textual. Con `bucle: null` el
+ *   intento ya se conto en otro presupuesto y solo se registra.
+ *
+ * @returns {null | "sigue" | "corta"} `null` si no hubo nada que atender
+ */
+function atenderAlcance(r, itemId, taskId, bucle, deps, budgets, bitacora) {
+  if (!r?.alcance) return null;
+  const { home } = deps;
+  if (bucle) {
+    const b = bump(loadRun(itemId, { home }), taskId, bucle, { home, budgets });
+    bitacora.warn(`${r.alcance.causa} — intento ${b.count}/${b.budget}`);
+    if (!r.alcance.ramasMovidas.length && !b.exhausted) return "sigue";
+  } else {
+    bitacora.warn(r.alcance.causa);
+    if (!r.alcance.ramasMovidas.length) return "sigue";
+  }
+  transition(loadRun(itemId, { home }), taskId, "blocked", { home, failure: r.alcance.causa });
+  return "corta";
 }
 
 export function promptDeFase(nombre, run, t, extra) {

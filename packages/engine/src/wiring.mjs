@@ -14,7 +14,9 @@ import { validateProvider } from "../../../providers/contract.mjs";
 // La capa de runtimes. El motor NO la conocia: `grep -rn adapters` sobre
 // `packages/engine` devolvia una sola linea, y era la guarda de la
 // constitucion. El registro existia y no lo consultaba nadie.
-import { adaptarADriver, crearAdaptadorClaude, registroDeAdaptadores } from "../../adapters/src/index.mjs";
+import { adaptarADriver, crearAdaptadorClaude, crearAdaptadorCodex, registroDeAdaptadores } from "../../adapters/src/index.mjs";
+// Un runtime sin plugin recibe el texto del encargo, no el nombre del comando.
+import { conComandosExpandidos } from "./comandos-sin-plugin.mjs";
 // El entorno de un subproceso se CONSTRUYE. Ver `entornoDeFase` mas abajo.
 import { construirEntorno } from "../../vault/src/entorno.mjs";
 import { repoRoot } from "./repos.mjs";
@@ -317,6 +319,16 @@ function montarRuntime(config, opts) {
         if (e.tipo === "tool_use") opts.log.info(`${peticion.phase} ${peticion.taskId || ""}: ${e.detalle.nombre}`);
       },
     }),
+    // EL SEGUNDO RUNTIME, registrado para que `config.runtime: "codex"` —lo
+    // que el servicio escribe cuando la tarea o la flota lo eligen— resuelva.
+    // Sin hooks y sin plugin: lo primero lo cubre la guarda posterior del
+    // driver (`alcancePorElMotor`), lo segundo la expansion del encargo. Va
+    // SEGUNDO: sin eleccion explicita se sigue montando el de referencia.
+    crearAdaptadorCodex({
+      home: opts.home,
+      timeoutMs: (config.limits?.phaseTimeoutMin ?? 30) * 60_000,
+      entornoDisponible: opts.env || process.env,
+    }),
   ];
 
   const registro = registroDeAdaptadores(adaptadores);
@@ -397,11 +409,19 @@ export async function buildDeps(item, config, opts = {}) {
     registroDeRuntimes: registro,
     entorno,
     secretos,
-    // LA COSTURA, y es una linea. `adaptarADriver` convierte un `AgentAdapter`
-    // en la funcion que el driver ya inyectaba: el motor sigue llamando
-    // `deps.runPhase(...)` y no sabe —ni tiene por que— cual runtime hay
-    // detras.
-    runPhase: adaptarADriver(adaptador, { entorno }),
+    // LA COSTURA. `adaptarADriver` convierte un `AgentAdapter` en la funcion
+    // que el driver ya inyectaba: el motor sigue llamando `deps.runPhase(...)`
+    // y no sabe —ni tiene por que— cual runtime hay detras.
+    //
+    // Y ENCIMA, EL ENCARGO. Si el runtime no declara `comandos: true`, el
+    // `/noxloop-task ...` que construye el driver se le entrega expandido al
+    // texto del comando: se decide por la capacidad, no por el nombre.
+    runPhase: conComandosExpandidos(adaptarADriver(adaptador, { entorno }), () => adaptador.capabilities()),
+    // EL ORDEN DEL TDD SIN HOOKS. Un runtime que no puede correr el hook del
+    // paso RED dentro de su subproceso recibe la guarda del motor DESPUES de
+    // cada fase: lo escrito fuera de alcance se revierte y la fase falla. Ver
+    // `alcance-de-fase.mjs`. Con hooks no hace falta: el hook ya bloqueo antes.
+    alcancePorElMotor: adaptador.capabilities().hooks !== true,
     ...overrides,
   };
 }

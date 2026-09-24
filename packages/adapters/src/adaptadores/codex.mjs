@@ -11,9 +11,14 @@
 // retoma sesiones, no reporta coste, no corre hooks y habla otro protocolo de
 // salida (un evento por linea en vez de un objeto). Si el contrato estuviera
 // escrito a la medida del primero, aqui habria hecho falta un `if` en el motor.
-// No hizo falta ninguno — y por eso este adaptador es el REVISOR: hooks en
-// false lo deja fuera del rol de implementador, que es exactamente donde tiene
-// que estar.
+// No hizo falta ninguno.
+//
+// TAMBIEN PUEDE IMPLEMENTAR, y eso cambio. Con `hooks: false` el paso RED no lo
+// bloquea un hook dentro del subproceso: lo fuerza el MOTOR despues de cada
+// fase, mirando el worktree y revirtiendo lo que la fase escribio fuera de su
+// alcance (`packages/engine/src/alcance-de-fase.mjs`). Y con `comandos: false`
+// el motor le manda el texto del encargo en vez de `/noxloop-task ...`, que
+// este runtime no sabe expandir (`packages/engine/src/comandos-sin-plugin.mjs`).
 //
 // SU DEGRADACION MAS CARA ES `cost: false`. El techo de gasto de un hito no se
 // le puede aplicar. Eso no se arregla devolviendo ceros: se declara, y el motor
@@ -25,7 +30,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ejecutorDeProceso, entornoDeclarado, estadoDeAutenticacion } from "../autenticacion.mjs";
-import { normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
+import { esRevision, normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
 import { lanzar, leerLanzamiento } from "../proceso.mjs";
 import { leerResultadoJsonl } from "../salida.mjs";
 
@@ -107,11 +112,15 @@ export function crearAdaptadorCodex(opts = {}) {
         cost: false,
         // El nivel de razonamiento si viaja, por configuracion del comando.
         effort: true,
-        // No hay mecanismo de hooks en su subproceso. Es la degradacion que lo
-        // deja fuera del rol de implementador, y es correcta: sin el hook del
-        // paso RED, el principio I depende de que el prompt se acuerde.
+        // No hay mecanismo de hooks en su subproceso. Lo que el hook del paso
+        // RED hace ANTES, con este runtime lo hace el motor DESPUES de la fase:
+        // lee el worktree, revierte lo ajeno y cuenta el intento.
         hooks: false,
         models: "desconocido",
+        // No carga el plugin: `/noxloop-task ...` le llegaria como texto sin
+        // significado. Declararlo es lo que hace que el motor le mande el
+        // encargo expandido.
+        comandos: false,
       };
     },
 
@@ -170,6 +179,12 @@ export function crearAdaptadorCodex(opts = {}) {
       ];
       if (peticion.model) args.push("-m", peticion.model);
       if (peticion.effort) args.push("-c", `model_reasoning_effort=${peticion.effort}`);
+      // EL SANDBOX, POR FASE. `codex exec` arranca en solo lectura: como
+      // implementador no podria escribir ni el test. Las fases que escriben
+      // piden el worktree escribible; la revision se queda en solo lectura, que
+      // es lo que una revision tiene que ser. Lo que la fase escriba fuera de
+      // su alcance DENTRO del worktree lo revierte el motor despues.
+      args.push("--sandbox", esRevision(peticion.phase) ? "read-only" : "workspace-write");
       args.push(peticion.prompt);
 
       try {
@@ -321,7 +336,7 @@ export function fixturesDeContrato({ dir }) {
         resume: null,
         model: "un-modelo",
         effort: "alto",
-        prompt: "/noxloop-task IT-1 T-1 --phase GREEN",
+        prompt: "# /noxloop-task — una fase, una tarea\n\nFase: GREEN. El encargo, expandido por el motor.",
         tier: "normal",
         env: { CODEX_CENTINELA: "valor-centinela-de-la-boveda-9137" },
         ...over,

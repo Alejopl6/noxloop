@@ -24,8 +24,14 @@
 // LO QUE EL MOTOR NO SABE HACER SE DECLARA (principio X)
 // -----------------------------------------------------------------------------
 //
-// El motor monta como implementador SOLO runtimes con hooks: el paso RED lo
-// fuerza un hook (principio I), y el adaptador de Codex declara `hooks: false`.
+// El motor monta como implementador los runtimes que tiene REGISTRADOS. Con
+// hooks, el paso RED lo bloquea un hook dentro del subproceso (principio I);
+// sin hooks —Codex— lo fuerza el motor despues de cada fase, revirtiendo lo que
+// la fase escribio fuera de su alcance (`packages/engine/src/alcance-de-fase.mjs`),
+// y le manda el encargo expandido en vez de un comando de plugin que no sabe
+// leer (`packages/engine/src/comandos-sin-plugin.mjs`). Un runtime que el motor
+// no registra sigue sin poder lanzarse.
+//
 // El termino `changes` y `commit` tampoco: el recorrido del motor acaba siempre
 // en el PR abierto. Las dos cosas se guardan en la tarea —son la eleccion del
 // operador— y se niegan AL LANZAR con el hueco escrito, y el board deshabilita
@@ -40,17 +46,21 @@ export const RUNTIME_GENERAL = "claude-agent-sdk";
 export const RUNTIMES_CONOCIDOS = Object.freeze(["claude-agent-sdk", "codex"]);
 
 /**
- * Los que el motor puede montar como implementador, con el porque de los que
- * no. Es una tabla de CAPACIDADES del motor, no de marcas: cuando el adaptador
- * de Codex tenga hooks, sale de aqui.
+ * Los que el motor puede montar como implementador (`null`), con el porque de
+ * los que no. Es una tabla de lo que el motor REGISTRA en `wiring.mjs`, no de
+ * marcas.
+ *
+ * Codex estuvo aqui con su porque —«declara `hooks: false`»— hasta que el motor
+ * empezo a forzar el orden del TDD despues de la fase en los runtimes sin
+ * hooks. El rojo lo sigue concediendo el motor corriendo el test (principio
+ * II); lo que cambio es quien impide que la produccion llegue antes: el hook,
+ * bloqueando, o el motor, revirtiendo y contando el intento.
  *
  * @type {Readonly<Record<string, string|null>>}
  */
 export const MONTABLE_POR_EL_MOTOR = Object.freeze({
   "claude-agent-sdk": null,
-  codex:
-    "su adaptador declara `hooks: false`, y sin el hook que fuerza el paso RED el test primero dependeria de que el " +
-    "prompt se acuerde (principio I). El motor no lo monta como implementador.",
+  codex: null,
 });
 
 /** Los terminos que el motor sabe cumplir hoy. */

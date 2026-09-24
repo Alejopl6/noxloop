@@ -158,13 +158,20 @@ test("FR-031/032: el ejecutor y el termino que el motor NO sabe cumplir deshabil
   await conServicio({ motor: { intervaloMs: 0, ejecutarAutenticacion: autenticacion(["claude-agent-sdk", "codex"]) } }, async (svc) => {
     const p = await proyectoActivo(svc, { conexiones: [] });
     const codex = (await crear(svc, p.id, { titulo: "con codex", ejecutor: { runtime: "codex" } })).cuerpo.tarea;
+    const otro = (await crear(svc, p.id, { titulo: "con otro", ejecutor: { runtime: "runtime-inventado" } })).cuerpo.tarea;
     const commit = (await crear(svc, p.id, { titulo: "solo commit", termino: "commit" })).cuerpo.tarea;
     const board = await (await pedir(svc, `/v1/board?project=${p.id}`)).json();
 
+    // Codex YA es implementador: sin hooks, el motor fuerza el orden del TDD
+    // despues de cada fase, sobre el worktree (packages/engine/src/alcance-de-fase.mjs).
     const deCodex = board.tarjetas.find((x) => x.ticket.id === codex.id);
     assert.deepEqual(deCodex.ejecutor, { runtime: "codex", agente: null });
-    assert.equal(deCodex.accion.habilitada, false);
-    assert.match(deCodex.accion.motivo, /codex/);
+    assert.equal(deCodex.accion.habilitada, true, deCodex.accion.motivo);
+
+    // Lo que sigue sin poder montarse es un runtime que el motor no tiene registrado.
+    const deOtro = board.tarjetas.find((x) => x.ticket.id === otro.id);
+    assert.equal(deOtro.accion.habilitada, false);
+    assert.match(deOtro.accion.motivo, /runtime-inventado/);
 
     const deCommit = board.tarjetas.find((x) => x.ticket.id === commit.id);
     assert.equal(deCommit.accion.habilitada, false);
@@ -174,7 +181,7 @@ test("FR-031/032: el ejecutor y el termino que el motor NO sabe cumplir deshabil
     const r = await pedir(svc, `/v1/projects/${p.id}/runs`, json({ itemId: commit.id }));
     assert.equal(r.status, 409);
     assert.equal((await r.json()).error.codigo, "termino_sin_soporte");
-    const r2 = await pedir(svc, `/v1/projects/${p.id}/runs`, json({ itemId: codex.id }));
+    const r2 = await pedir(svc, `/v1/projects/${p.id}/runs`, json({ itemId: otro.id }));
     assert.equal(r2.status, 409);
     assert.equal((await r2.json()).error.codigo, "ejecutor_sin_soporte");
   });
