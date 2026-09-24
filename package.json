@@ -21,6 +21,7 @@
     "studio:dev": "npm run dev --workspace=@noxloop/studio",
     "studio:build": "npm run build --workspace=@noxloop/studio",
     "desktop": "npm run tauri:dev --workspace=@noxloop/desktop",
+    "abrir": "bash scripts/abrir-escritorio.sh",
     "desktop:build": "npm run tauri:build --workspace=@noxloop/desktop"
   },
   "devDependencies": {
