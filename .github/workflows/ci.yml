@@ -368,6 +368,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # `bundle.resources` declara los paquetes de terceros que viajan con el
+      # servicio (`node_modules/<paquete>`), y `tauri-build` exige que existan
+      # en disco aunque solo se compile: sin esto, `resource path
+      # ../../../node_modules/form-data doesn't exist`.
+      - name: dependencias de Node
+        run: npm ci
+
       - name: preparar el sidecar para compilar
         env:
           NOXLOOP_SIDECAR_ENLAZADO_OK: "1"
