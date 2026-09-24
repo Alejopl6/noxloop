@@ -149,6 +149,19 @@ fn url_de_la_marca(linea: &str) -> Option<String> {
 /// file" que apunta a `target/debug` y no menciona el paquete del repositorio,
 /// que es donde hay que mirar.
 fn ruta_del_servicio(app: &AppHandle) -> Result<PathBuf, String> {
+    // EN DESARROLLO MANDA EL ARBOL, no la copia. La copia de `target/debug`
+    // solo lleva lo declarado en `bundle.resources`, y ahi no viajan ni
+    // `providers/` ni el binario del motor: el servicio arrancaba, el board se
+    // pintaba, y Run fallaba con `pieza_ausente`. Ademas la copia puede estar
+    // vieja. En un build de release no hay arbol, y se usa lo empaquetado.
+    if cfg!(debug_assertions) {
+        let del_arbol = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../packages/service/bin/noxloop-service.mjs");
+        if del_arbol.exists() {
+            return Ok(del_arbol);
+        }
+    }
+
     if let Ok(empaquetada) = app
         .path()
         .resolve(ENTRADA_SERVICIO, BaseDirectory::Resource)
@@ -181,13 +194,33 @@ fn ruta_del_servicio(app: &AppHandle) -> Result<PathBuf, String> {
 /// servicio es codigo `.mjs` que viaja como recurso. Por eso el primer argumento
 /// es la ruta del script. La decision y su motivo estan en `research.md` §1
 /// (Node SEA no soporta macOS x64; `vercel/pkg` esta archivado).
+/// El binario del llavero, si viaja junto al ejecutable de la aplicacion.
+///
+/// Es el que usa el servicio para montar la boveda sin frase de paso
+/// (`NOXLOOP_LLAVERO`, ver `packages/service/src/dependencias.mjs`). Si no
+/// esta, no se inventa una ruta: el servicio declara la ausencia con su causa.
+fn llavero_junto_a(directorio: &std::path::Path) -> Option<PathBuf> {
+    let candidato = directorio.join("noxloop-llavero");
+    candidato.exists().then_some(candidato)
+}
+
 fn arrancar_el_daemon(app: &AppHandle, token: &str) -> Result<CommandChild, String> {
     let script = ruta_del_servicio(app)?;
 
-    let (mut eventos, hijo) = app
+    let mut orden = app
         .shell()
         .sidecar(SIDECAR)
-        .map_err(|e| format!("No se pudo resolver el sidecar '{SIDECAR}': {e}"))?
+        .map_err(|e| format!("No se pudo resolver el sidecar '{SIDECAR}': {e}"))?;
+    if let Some(llavero) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
+        .and_then(|d| llavero_junto_a(&d))
+    {
+        // Una RUTA, no un secreto: va por entorno igual que el resto.
+        orden = orden.env("NOXLOOP_LLAVERO", llavero.to_string_lossy().to_string());
+    }
+
+    let (mut eventos, hijo) = orden
         .args([
             script.to_string_lossy().to_string(),
             // Puerto efimero: el sistema elige uno libre y el servicio lo anuncia
@@ -402,6 +435,16 @@ pub fn run() {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn el_llavero_se_encuentra_junto_al_ejecutable_y_si_no_esta_no_se_inventa() {
+        let dir = std::env::temp_dir().join(format!("llavero-junto-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(llavero_junto_a(&dir), None);
+        std::fs::write(dir.join("noxloop-llavero"), b"").unwrap();
+        assert_eq!(llavero_junto_a(&dir), Some(dir.join("noxloop-llavero")));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     // La comprobacion que T035 pide de verdad —cerrar la aplicacion y que no
     // quede ningun proceso del servicio— no se puede escribir aca: necesita una
