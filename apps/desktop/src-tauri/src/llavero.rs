@@ -59,7 +59,9 @@ impl Orden {
     pub fn partir(args: &[String]) -> Result<Orden, String> {
         let verbo = args
             .first()
-            .ok_or_else(|| "falta la orden: guardar, recuperar, existe, borrar o disponible".to_string())?
+            .ok_or_else(|| {
+                "falta la orden: guardar, recuperar, existe, borrar o disponible".to_string()
+            })?
             .clone();
         if !["guardar", "recuperar", "existe", "borrar", "disponible"].contains(&verbo.as_str()) {
             return Err(format!(
@@ -112,7 +114,10 @@ impl Orden {
 /// Devuelve lo que hay que escribir en stdout. El unico caso en que eso es un
 /// secreto es `recuperar`, y ese tubo va directo al servicio que lo pidio.
 pub fn correr(orden: &Orden, entrada: &mut dyn Read) -> Result<String, String> {
-    let referencia = orden.referencia.clone().unwrap_or_else(|| SONDA.to_string());
+    let referencia = orden
+        .referencia
+        .clone()
+        .unwrap_or_else(|| SONDA.to_string());
     let entrada_del_llavero = keyring::Entry::new(&orden.servicio, &referencia)
         .map_err(|e| format!("no se pudo abrir el llavero del sistema: {e}"))?;
 
@@ -137,7 +142,11 @@ pub fn correr(orden: &Orden, entrada: &mut dyn Read) -> Result<String, String> {
             let existe = match entrada_del_llavero.get_password() {
                 Ok(_) => true,
                 Err(keyring::Error::NoEntry) => false,
-                Err(e) => return Err(format!("el llavero no pudo responder por {referencia}: {e}")),
+                Err(e) => {
+                    return Err(format!(
+                        "el llavero no pudo responder por {referencia}: {e}"
+                    ))
+                }
             };
             Ok(format!("{{\"existe\":{existe}}}"))
         }
