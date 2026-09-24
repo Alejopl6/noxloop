@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { ejecutorDeProceso, entornoDeclarado, estadoDeAutenticacion } from "../autenticacion.mjs";
 import { normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
 import { lanzar, leerLanzamiento } from "../proceso.mjs";
+import { emisorDeEventos, eventosDeMensajeClaude } from "../eventos.mjs";
 import { esCorteDePresupuesto, leerResultadoJson } from "../salida.mjs";
 
 const PAQUETE = "@anthropic-ai/claude-agent-sdk";
@@ -303,9 +304,12 @@ export function crearAdaptadorClaude(opts = {}) {
         );
       }
 
+      // El transcript de la fase, si quien llama lo pidio. Normalizado aqui:
+      // el motor no sabe —ni tiene por que— que esto es Claude.
+      const emitir = emisorDeEventos(opcionesDeFase.alEvento);
       const salida = query
-        ? await porSdk({ sdk: query, peticion, hooks, herramientas, directoriosExtra, alLanzar, alProgreso })
-        : await porCli({ comando, argsPrefijo, peticion, hooks, herramientas, directoriosExtra, timeoutMs, alLanzar, signal: opcionesDeFase.signal });
+        ? await porSdk({ sdk: query, peticion, hooks, herramientas, directoriosExtra, alLanzar, alProgreso, emitir })
+        : await porCli({ comando, argsPrefijo, peticion, hooks, herramientas, directoriosExtra, timeoutMs, alLanzar, signal: opcionesDeFase.signal, emitir });
 
       return { ...salida, degradaciones };
     },
@@ -352,7 +356,7 @@ async function porCli(p) {
         }
       },
     });
-    return traducirCli(l);
+    return traducirCli(l, p.emitir);
   } catch (e) {
     return resultadoDeFase({
       ok: false,
@@ -362,8 +366,11 @@ async function porCli(p) {
   }
 }
 
-/** @param {import("../proceso.mjs").Lanzamiento} l */
-function traducirCli(l) {
+/**
+ * @param {import("../proceso.mjs").Lanzamiento} l
+ * @param {(e: any) => void} [emitir]
+ */
+function traducirCli(l, emitir = () => {}) {
   if (l.cancelado) {
     return resultadoDeFase({ ok: false, subtype: "cancelada", text: `la fase se cancelo${l.stderr ? `: ${l.stderr.trim()}` : ""}` });
   }
@@ -375,6 +382,15 @@ function traducirCli(l) {
       text: `el runtime salio con ${l.code} sin dejar un resultado legible.\n${l.stderr.trim() || l.stdout.trim()}`,
     });
   }
+  // POR EL CLI SOLO HAY RESULTADO, y se dice asi: `--output-format json` es
+  // un objeto al final, sin los mensajes de en medio. El transcript de este
+  // camino tiene una linea —el resultado, con sus tokens si los hubo—, que es
+  // menos que el del SDK pero no inventa nada.
+  emitir({
+    tipo: crudo.isError ? "error" : "resultado",
+    contenido: crudo.isError && !crudo.texto ? `el runtime termino con error (${crudo.subtype ?? "sin subtipo"})` : crudo.texto,
+    ...(crudo.tokens ? { tokens: crudo.tokens } : {}),
+  });
   const budgetExhausted = esCorteDePresupuesto(crudo.subtype);
   return resultadoDeFase({
     // Codigo de salida y `is_error`. El texto que devolvio el modelo no entra
@@ -426,9 +442,14 @@ async function porSdk(p) {
   let sessionId = null;
   let final = null;
   let texto = "";
+  const nombresDeHerramientas = new Map();
+  const emitir = p.emitir || (() => {});
   try {
     for await (const m of p.sdk({ prompt: peticion.prompt, options })) {
       if (m?.type === "system" && m.subtype === "init" && m.session_id) sessionId = m.session_id;
+      // EL TRANSCRIPT, MENSAJE A MENSAJE: el mismo stream que ya se recorre
+      // para el resultado, traducido a los cinco tipos del contrato.
+      for (const e of eventosDeMensajeClaude(m, nombresDeHerramientas)) emitir(e);
       // EL PROGRESO SE EMITE MIENTRAS PASA. Una fase puede durar minutos: sin
       // esto, quien mira la bitacora ve una linea al empezar y nada hasta que
       // termina, y no puede distinguir una fase trabajando de una colgada.

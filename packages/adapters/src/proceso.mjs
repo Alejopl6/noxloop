@@ -85,12 +85,13 @@ export function secretoEnArgv(env, textos, nombres) {
  * @param {{
  *   comando: string, args: string[], env: Record<string,string>, cwd: string,
  *   secretos?: readonly string[],
- *   signal?: AbortSignal, timeoutMs?: number, alLanzar?: (l: any) => void
+ *   signal?: AbortSignal, timeoutMs?: number, alLanzar?: (l: any) => void,
+ *   alLinea?: (linea: string) => void
  * }} plan
  * @returns {Promise<Lanzamiento>}
  */
 export async function lanzar(plan) {
-  const { comando, args, env, cwd, secretos, signal, timeoutMs, alLanzar } = plan;
+  const { comando, args, env, cwd, secretos, signal, timeoutMs, alLanzar, alLinea } = plan;
 
   const colado = secretoEnArgv(env, [comando, ...args], secretos);
   if (colado) {
@@ -149,7 +150,30 @@ export async function lanzar(plan) {
       reloj.unref?.();
     }
 
-    hijo.stdout.on("data", (t) => { registro.stdout += t; });
+    // LA SALIDA POR LINEAS, MIENTRAS PASA. Un runtime que habla un evento por
+    // linea deja ver lo que hace sin esperar a que termine: es lo que hace que
+    // el transcript de una fase de veinte minutos se lea en vivo y no al final
+    // (SC-002). `stdout` se sigue acumulando entero: el resultado se lee de
+    // ahi, y un callback que falla no puede quitarle nada.
+    let pendiente = "";
+    const entregar = (/** @type {string} */ linea) => {
+      if (!alLinea) return;
+      try {
+        alLinea(linea);
+      } catch {
+        /* quien mira la salida no decide nada sobre ella */
+      }
+    };
+    hijo.stdout.on("data", (t) => {
+      registro.stdout += t;
+      if (!alLinea) return;
+      pendiente += t;
+      let i;
+      while ((i = pendiente.indexOf("\n")) >= 0) {
+        entregar(pendiente.slice(0, i).replace(/\r$/, ""));
+        pendiente = pendiente.slice(i + 1);
+      }
+    });
     hijo.stderr.on("data", (t) => { registro.stderr += t; });
     hijo.on("error", (e) => {
       terminado = true;
@@ -159,6 +183,10 @@ export async function lanzar(plan) {
     hijo.on("close", (code) => {
       terminado = true;
       if (reloj) clearTimeout(reloj);
+      // La ultima linea puede no terminar en salto: se entrega igual, o un
+      // runtime que no cierra su ultima linea perderia el evento del resultado.
+      if (pendiente) entregar(pendiente);
+      pendiente = "";
       registro.code = code;
       resolver(registro);
     });

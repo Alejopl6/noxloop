@@ -6,7 +6,7 @@
 // `spawn`: que el entorno que recibe el hijo sea EXACTAMENTE `req.env`, que el
 // directorio de trabajo sea el worktree, que ningun valor del entorno aparezca
 // en `argv`, que cancelar mate el proceso y no deje huerfanos, y que los hooks
-// corran DENTRO. Un doble en memoria hace pasar las once pruebas del contrato
+// corran DENTRO. Un doble en memoria hace pasar las pruebas del contrato
 // sin probar ninguna de esas cinco.
 //
 // LO QUE NO HACE: no decide nada. Lo que imprime y con que codigo sale lo dice
@@ -118,7 +118,14 @@ if (!abortado) {
     const i = args.indexOf("--resume");
     const retomada = i >= 0 ? args[i + 1] : null;
     const exito = guion.exito !== false;
-    process.stdout.write(
+    // LO QUE EL RUNTIME VA DICIENDO, antes del resultado: `eventos` son
+    // mensajes con la forma de Claude (`assistant`, `user`), uno por linea,
+    // como `stream-json`. Es lo que deja probar el transcript en vivo sin
+    // modelo. Con `pausaMs` entre uno y otro, el stream tarda lo que tarda un
+    // runtime de verdad y se puede ver crecer.
+    const eventos = Array.isArray(guion.eventos) ? guion.eventos : [];
+    const pausa = Number.isInteger(guion.pausaMs) && guion.pausaMs > 0 ? guion.pausaMs : 0;
+    const lineaFinal =
       JSON.stringify({
         type: "result",
         // Retomar de verdad: si se pidio una sesion, se sigue en ella. Un
@@ -132,8 +139,26 @@ if (!abortado) {
         // coste que reportar, y un cero fingiria uno medido.
         total_cost_usd: guion.usd ?? null,
         result: guion.texto ?? "el adaptador fake no invoco ningun modelo: no hay red, ni credenciales, ni modelo",
-      }) + "\n",
-    );
+        // Los tokens, SOLO si el guion los trae: sin modelo no hay nada que
+        // contar, y el transcript tiene que decir «sin medir», no cero.
+        ...(guion.usage ? { usage: guion.usage } : {}),
+      }) + "\n";
     process.exitCode = exito ? 0 : 1;
+    if (!pausa) {
+      for (const ev of eventos) process.stdout.write(JSON.stringify(ev) + "\n");
+      process.stdout.write(lineaFinal);
+    } else {
+      // Encadenado y no con `setInterval`: el proceso termina solo cuando no
+      // queda nada pendiente, que es la regla de la cabecera (nada de exit).
+      const siguiente = (/** @type {number} */ n) => {
+        if (n < eventos.length) {
+          process.stdout.write(JSON.stringify(eventos[n]) + "\n");
+          setTimeout(() => siguiente(n + 1), pausa);
+        } else {
+          process.stdout.write(lineaFinal);
+        }
+      };
+      siguiente(0);
+    }
   }
 }

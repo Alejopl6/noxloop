@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { ejecutorDeProceso, entornoDeclarado, estadoDeAutenticacion } from "../autenticacion.mjs";
 import { esRevision, normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
 import { lanzar, leerLanzamiento } from "../proceso.mjs";
+import { emisorDeEventos, eventosDeLineaCodex, jsonDeLinea } from "../eventos.mjs";
 import { leerResultadoJsonl } from "../salida.mjs";
 
 /**
@@ -205,8 +206,18 @@ export function crearAdaptadorCodex(opts = {}) {
       }
       args.push(peticion.prompt);
 
+      // EL TRANSCRIPT, LINEA A LINEA: `codex exec --json` ya habla un evento
+      // por linea, asi que se traduce mientras el proceso corre y no al final.
+      const emitir = emisorDeEventos(opcionesDeFase.alEvento);
+      const estadoDelTranscript = { ultimoMensaje: "" };
+
       try {
         const l = await lanzar({
+          alLinea: opcionesDeFase.alEvento
+            ? (linea) => {
+                for (const e of eventosDeLineaCodex(jsonDeLinea(linea), estadoDelTranscript)) emitir(e);
+              }
+            : undefined,
           comando,
           args,
           env: peticion.env,

@@ -67,8 +67,94 @@
  *   (`HOME`, `USER`, `CODEX_HOME`...); viajan en `env` pero no cuentan como secretos
  * @property {() => AdapterCapabilities} capabilities
  * @property {() => Promise<{ok: boolean, causa?: string, accion?: string}>} preflight
- * @property {(req: PhaseRequest, opts?: {signal?: AbortSignal}) => Promise<PhaseResult>} runPhase
+ * @property {(req: PhaseRequest, opts?: OpcionesDeFase) => Promise<PhaseResult>} runPhase
  */
+
+/**
+ * Lo que acompaña a una fase sin ser parte de la PETICION.
+ *
+ * `alEvento` va aqui y no en `PhaseRequest` a proposito: la peticion es dato
+ * —se valida, se registra, viaja por la costura— y una funcion metida en ella
+ * no es ninguna de las tres cosas. Es OPCIONAL para quien llama: sin el, la
+ * fase corre igual. El adaptador que lo recibe, emite.
+ *
+ * @typedef {object} OpcionesDeFase
+ * @property {AbortSignal} [signal]
+ * @property {(evento: EventoDeTranscript) => void} [alEvento] lo que el runtime va diciendo y haciendo,
+ *   ya normalizado, MIENTRAS pasa. Ver `TIPOS_DE_EVENTO`
+ */
+
+/**
+ * Los tokens de una invocacion, tal como el runtime los reporto.
+ *
+ * Un campo que el runtime no da va en `null`, nunca en `0`: la interfaz tiene
+ * que poder decir «sin medir», y un cero fingido lo borra. Es la misma regla
+ * que `usd` con `cost: false`.
+ *
+ * @typedef {object} TokensDeInvocacion
+ * @property {number} entrada
+ * @property {number} salida
+ * @property {number|null} cacheLectura
+ * @property {number|null} cacheEscritura
+ */
+
+/**
+ * Un evento del transcript de una fase, agnostico del runtime.
+ *
+ * @typedef {object} EventoDeTranscript
+ * @property {string} t instante ISO 8601 en que el adaptador lo vio
+ * @property {"texto"|"herramienta"|"resultado_herramienta"|"resultado"|"error"} tipo
+ * @property {string} contenido siempre texto; la entrada de una herramienta va resumida como JSON
+ * @property {string} [herramienta] el nombre, en `herramienta` y `resultado_herramienta`
+ * @property {TokensDeInvocacion} [tokens] solo si el runtime los reporto, en `resultado` o `error`
+ */
+
+/**
+ * Los cinco tipos del transcript, y ni uno mas.
+ *
+ * CINCO Y CERRADOS porque quien los pinta —la interfaz, un log— no puede
+ * preguntar por el runtime (principio VI). Cada runtime habla su protocolo; el
+ * adaptador lo traduce a esto o no lo emite. Lo que no encaja —el razonamiento
+ * interno, los parciales del stream— se queda fuera: no es lo que el agente
+ * dijo ni lo que hizo.
+ *
+ * @type {readonly string[]}
+ */
+export const TIPOS_DE_EVENTO = Object.freeze(["texto", "herramienta", "resultado_herramienta", "resultado", "error"]);
+
+const CAMPOS_DE_TOKENS = ["entrada", "salida", "cacheLectura", "cacheEscritura"];
+
+/**
+ * @param {any} ev
+ * @returns {{ok: boolean, problems: string[]}}
+ */
+export function validarEvento(ev) {
+  /** @type {string[]} */
+  const problems = [];
+  if (!ev || typeof ev !== "object") return { ok: false, problems: ["el evento no es un objeto"] };
+  if (!TIPOS_DE_EVENTO.includes(ev.tipo)) {
+    problems.push(`tipo: ${JSON.stringify(ev.tipo)} no es uno de ${TIPOS_DE_EVENTO.join(", ")}`);
+  }
+  if (typeof ev.t !== "string" || Number.isNaN(Date.parse(ev.t)) || !/^\d{4}-\d{2}-\d{2}T/.test(ev.t)) {
+    problems.push("t: tiene que ser un instante ISO 8601");
+  }
+  if (typeof ev.contenido !== "string") problems.push("contenido: tiene que ser texto");
+  if (ev.herramienta != null && typeof ev.herramienta !== "string") problems.push("herramienta: tiene que ser texto");
+  if (ev.tokens != null) {
+    if (typeof ev.tokens !== "object") {
+      problems.push("tokens: tiene que ser un objeto");
+    } else {
+      for (const k of CAMPOS_DE_TOKENS) {
+        const v = ev.tokens[k];
+        const opcional = k.startsWith("cache");
+        // Un «0» de texto o un NaN es un cero fingido: se lee como medido.
+        const bien = (opcional && v === null) || (typeof v === "number" && Number.isFinite(v) && v >= 0);
+        if (!bien) problems.push(`tokens.${k}: tiene que ser un numero >= 0${opcional ? " o null" : ""}`);
+      }
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
 
 /** @type {readonly string[]} */
 export const CLAVES_DE_CAPACIDAD = Object.freeze(["resume", "cost", "effort", "hooks", "models"]);
@@ -327,13 +413,19 @@ export function validarResultado(resultado, caps) {
  *
  * @param {AgentAdapter} adaptador
  * @param {{entorno?: Record<string,string> | ((fase: any) => Record<string,string>), signal?: AbortSignal}} [opts]
- * @returns {(fase: any) => Promise<PhaseResult>}
+ * @returns {(fase: any, llamada?: OpcionesDeFase) => Promise<PhaseResult>}
  */
 export function adaptarADriver(adaptador, opts) {
   const { entorno } = opts || {};
-  return async (fase) => {
+  // El segundo argumento lleva lo que acompaña a la fase sin ser peticion:
+  // hoy, `alEvento` para el transcript. Solo se pasa si vino, para que un
+  // adaptador que compara sus opciones no vea un campo `undefined` de mas.
+  return async (fase, /** @type {OpcionesDeFase} */ llamada = {}) => {
     const env = fase?.env ?? (typeof entorno === "function" ? entorno(fase) : entorno);
-    return adaptador.runPhase({ ...fase, env }, { signal: opts?.signal });
+    return adaptador.runPhase(
+      { ...fase, env },
+      { signal: llamada.signal ?? opts?.signal, ...(llamada.alEvento ? { alEvento: llamada.alEvento } : {}) },
+    );
   };
 }
 
