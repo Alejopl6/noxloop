@@ -432,6 +432,25 @@ export interface AltaDeProyecto {
    * valor por defecto: es una funcion escondida.
    */
   autonomia?: string
+  /**
+   * Spec 003, US8: `true` da de alta Y activa en la misma peticion por el modo
+   * rapido. La respuesta es entonces un `ResultadoDelModoRapido`.
+   */
+  rapido?: boolean
+}
+
+/**
+ * `POST /v1/projects/:id/quickstart` (y `POST /v1/projects` con `rapido`).
+ *
+ * `pasos` dice que decidio el modo rapido en cada etapa; `huecos`, lo que dejo
+ * sin hacer a proposito —la constitution que no escribio en el repositorio, el
+ * revisor que falta— con su accion. Se pintan: un activado sin huecos a la
+ * vista se leeria como «esta todo configurado», y no lo esta.
+ */
+export interface ResultadoDelModoRapido {
+  proyecto: Proyecto
+  pasos: Array<{ etapa: string; hecho: string }>
+  huecos: Array<{ etapa: string; causa: string; accion: string }>
 }
 
 /**

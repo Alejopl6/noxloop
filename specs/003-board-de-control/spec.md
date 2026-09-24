@@ -157,6 +157,22 @@ El operador pulsa **Nueva tarea**, elige proyecto y repo, escribe título, plan 
 3. **Given** una tarea local, **When** el motor la mueve de estado, **Then** el board lo refleja: el gestor local implementa el mismo contrato que Linear.
 4. **Given** una tarea, **When** el operador elige su ejecutor (runtime y agente) y cómo termina (sin commitear, commit o PR), **Then** el run usa esa elección y, si no la hay, la del repo, luego la del proyecto y luego la general.
 
+### User Story 8 - Un proyecto es nombre + carpeta, y al board en un clic (Priority: P1)
+
+El operador pulsa **+** en Proyectos, escribe un nombre, elige la carpeta del repositorio y pulsa **Crear y abrir board**: el proyecto queda `ACTIVE` y se abre su board. Un proyecto que ya existe y no está `ACTIVE` muestra en la lista lateral **Activar** (un clic, el mismo modo rápido) además de **Configurar** (el asistente completo). Decisión del operador (2026-09-24): «el concepto debe ser simple»; referente: Nodal, donde un proyecto es nombre + repo (ver `research-nodal.md`).
+
+**Why this priority**: el board solo muestra proyectos `ACTIVE` y llegar ahí exigía recorrer siete pantallas. El operador tenía tres proyectos en `CREATED` que el board ignoraba.
+
+**Independent Test**: sobre un repositorio git desechable, `POST /v1/projects/:id/quickstart` lleva el proyecto de `CREATED` a `ACTIVE` pasando por las cinco transiciones con su guarda, el árbol del repositorio queda byte a byte igual, y el proyecto aparece en `GET /v1/board` (`packages/service/test/modo-rapido.test.mjs`).
+
+**Acceptance Scenarios**:
+
+1. **Given** un proyecto en `CREATED` sobre un repositorio git, **When** el operador pulsa Activar, **Then** el servicio escanea, acepta los hallazgos pendientes tal como se detectaron, fija la constitution mínima que el núcleo deriva del snapshot, omite con motivo cada recomendación del bootstrap, declara el gestor local y la flota por defecto, y el proyecto queda `ACTIVE` con cada transición y cada etapa en la auditoría.
+2. **Given** el mismo caso, **When** termina, **Then** el repositorio del operador no cambió en ningún byte: la constitution queda en el almacén y la respuesta lo declara como hueco, junto con las recomendaciones omitidas y el revisor que falte.
+3. **Given** una carpeta sin `.git`, un escaneo que no termina o un tracker propio sin conexión viva, **When** se pulsa Activar, **Then** la respuesta es `409 modo_rapido_detenido` nombrando la etapa, y el proyecto queda en el estado al que llegó —lo anterior no se deshace— con **Configurar** como salida.
+4. **Given** Codex conectado, **When** se declara la flota por defecto, **Then** implementa `claude-agent-sdk` y revisa `codex`; **Given** Codex sin conectar, **Then** solo se declara el implementador y el revisor que falta se dice como hueco (FR-034 de la 002: runtime distinto).
+5. **Given** un proyecto con flota ya declarada, **When** se activa, **Then** se respeta la flota tal cual.
+
 ### Edge Cases
 
 - **Gestor que no sabe listar tickets.** Si un proveedor no declara la capacidad de listar, Backlog y Todo muestran lo que el motor sí conoce de ese proyecto —tickets asignados o mencionados y los que ya tienen run— y una nota en la columna que nombra el proveedor y la capacidad que le falta. Nunca un board vacío sin explicación.
@@ -207,7 +223,7 @@ El operador pulsa **Nueva tarea**, elige proyecto y repo, escribe título, plan 
 **Navegación y Settings**
 
 - **FR-022**: La navegación lateral MUST tener como destinos principales exactamente Board, Runs, Costos y Settings, más la lista de proyectos y la lista de runs activos con su estado.
-- **FR-023**: Crear un proyecto MUST abrir el asistente de establecimiento, y al llegar a `ACTIVE` MUST llevar al board de ese proyecto.
+- **FR-023**: Crear un proyecto MUST ofrecer el asistente de establecimiento («Configuración completa»), y al llegar a `ACTIVE` MUST llevar al board de ese proyecto. (Revisado el 2026-09-24: la acción principal del «+» es ahora el modo rápido, FR-033.)
 - **FR-024**: Settings del proyecto MUST reunir constitution, guidelines, diseño, bootstrap, conexiones del proyecto, flota y autonomía. Settings general MUST reunir herramientas y conexiones, credenciales, flota por defecto y auditoría.
 - **FR-025**: Toda pantalla existente de la spec 002 MUST seguir alcanzable desde Settings o desde ⌘K; ninguna MUST quedar alcanzable solo por dirección.
 - **FR-026**: La bandeja deja de ser un destino: sus entradas MUST aparecer como el chip «te necesita» de su tarjeta, en los runs activos y en el resumen superior, con la causa textual completa al abrirlas.
@@ -217,6 +233,13 @@ El operador pulsa **Nueva tarea**, elige proyecto y repo, escribe título, plan 
 - **FR-030**: El producto MUST incluir un gestor de tareas local que implemente el contrato de proveedor, cuyo único escritor es el servicio, con tareas de clave `<PREFIJO>-<n>` por proyecto, plan markdown, criterios, prioridad, etiquetas, ejecutor y modo de término.
 - **FR-031**: El ejecutor de una tarea MUST resolverse en cascada tarea → repo → proyecto → general, y MUST poder ser cualquier runtime conectado (Claude o OpenAI) con un agente opcional.
 - **FR-032**: El modo de término MUST ser uno de sin commitear, commit o PR; ninguno mergea (principio IV).
+
+**El modo rápido (US8)**
+
+- **FR-033**: El servicio MUST exponer `POST /v1/projects/:id/quickstart` y aceptar `rapido: true` en `POST /v1/projects`, y ambos MUST llevar el proyecto a `ACTIVE` sin preguntar nada más, pidiendo cada transición al almacén con su guarda —sin saltarse ninguna— y produciendo el artefacto de cada etapa: snapshot (escaneo, o el último completo) con los hallazgos pendientes aceptados; la constitution mínima derivada del snapshot; el bootstrap con cada recomendación pendiente omitida con motivo; el gestor local declarado; la flota por defecto. Cada etapa MUST dejar su evento de auditoría (`proyecto.modo_rapido`) además del de la transición. Sobre un proyecto ya `ACTIVE` MUST contestar 200 sin hacer nada.
+- **FR-034**: El modo rápido MUST NOT escribir en el repositorio del operador (FR-026 de la 002: nada se escribe sin decisión explícita): la constitution queda en el almacén y el bootstrap se omite; la respuesta MUST declarar como huecos lo que no escribió y lo que falta, con su acción. Si una etapa no se puede dar, MUST responder `409 modo_rapido_detenido` nombrando la etapa en la causa y en `objeto.etapa`, y dejar el proyecto en el estado al que llegó. La lista lateral MUST ofrecer «Activar» y «Configurar» en cada proyecto no `ACTIVE`, y el «+» MUST pedir solo nombre y carpeta, con «Crear y abrir board» como acción principal y «Configuración completa» como secundaria.
+- **FR-035**: La guarda `conexion_viva` MUST darse por satisfecha, sin conexión externa, en un proyecto que declaró el gestor local (tiene su secuencia de claves, `local_task_sequence`) y no tiene un tracker propio declarado. Un proyecto con tracker propio —en cualquier estado— MUST seguir exigiendo que ese tracker esté vivo: la guarda no se relaja para un gestor externo.
+- **FR-036**: La flota por defecto del modo rápido MUST ser un implementador sobre `claude-agent-sdk` y, si Codex está conectado, un revisor sobre `codex` (runtime distinto, FR-034 de la 002). Sin Codex MUST declararse solo el implementador y el revisor que falta como hueco. Una flota ya declarada MUST respetarse.
 
 **Runs y costos**
 

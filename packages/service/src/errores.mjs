@@ -256,6 +256,18 @@ export const CATALOGO = {
     accion: (d) => d.comoConseguirlo,
   },
 
+  // Spec 003, US8. El modo rapido para EN la etapa que no pudo dar y deja el
+  // proyecto donde llego: las etapas anteriores ya tienen su artefacto y no se
+  // deshacen. La etapa va en la causa y en `objeto.etapa`, para que la
+  // interfaz mande al paso del asistente sin leer prosa.
+  modo_rapido_detenido: {
+    estado: 409,
+    causa: (d) =>
+      `El modo rapido se detuvo en la etapa \`${d.etapa}\` del proyecto \`${d.nombre}\`, que queda en ` +
+      `\`${d.estado}\`: ${d.hallado}. Lo que ya se hizo antes de esa etapa se conserva.`,
+    accion: (d) => d.comoConseguirlo,
+  },
+
   // ---- El puente proyecto-motor (spec 003) --------------------------------
   //
   // TRES CODIGOS Y NO UNO, porque cada uno manda a un sitio distinto. Un
@@ -342,10 +354,10 @@ export const CATALOGO = {
   },
 
   // FR-031, y el hueco declarado en vez de rellenado (principio X): el motor
-  // monta como implementador SOLO los runtimes con hooks, porque el paso RED lo
-  // fuerza un hook (principio I). Lanzar igual con otro runtime seria un run
-  // sin el test primero; lanzar con el de referencia en su lugar seria ignorar
-  // la eleccion del operador sin decirselo.
+  // monta como implementador SOLO los runtimes que registra (con hooks, o sin
+  // ellos con la guarda posterior de `alcance-de-fase.mjs`). Lanzar igual con
+  // otro seria un run que muere al cargar; lanzar con el de referencia en su
+  // lugar seria ignorar la eleccion del operador sin decirselo.
   ejecutor_sin_soporte: {
     estado: 409,
     causa: (d) =>

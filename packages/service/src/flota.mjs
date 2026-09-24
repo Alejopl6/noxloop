@@ -256,6 +256,19 @@ export async function unAgente(p) {
 /** @param {import("./rutas.mjs").Peticion} p */
 export async function activar(p) {
   const proyecto = exigirProyecto(p.dep, p.parametros.id);
+  return { cuerpo: activarProyecto(p, proyecto, "flota validada y activada") };
+}
+
+/**
+ * La activacion, compartida por `POST /activate` y el modo rapido (US8): la
+ * misma comprobacion de FR-034 y la misma transicion con guarda. Dos caminos a
+ * `ACTIVE` con dos comprobaciones distintas serian dos verdades.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {any} proyecto
+ * @param {string} motivo
+ */
+export function activarProyecto(p, proyecto, motivo) {
   const agentes = p.dep.almacen.agentes.porProyecto(proyecto.id);
 
   // FR-034, y va PRIMERO. Ver la cabecera.
@@ -273,12 +286,8 @@ export async function activar(p) {
   }
 
   const actualizado = p.dep.almacen.proyectos.transicionar(proyecto.id, "ACTIVE", { actor: "operador" });
-  p.estado.bus.emitir(
-    "proyecto.estado",
-    { estado: actualizado.estado, motivo: "flota validada y activada" },
-    { project_id: proyecto.id },
-  );
-  return { cuerpo: { proyecto: actualizado, flota: agentes.map((a) => conJson(a, JSON_DEL_AGENTE)) } };
+  p.estado.bus.emitir("proyecto.estado", { estado: actualizado.estado, motivo }, { project_id: proyecto.id });
+  return { proyecto: actualizado, flota: agentes.map((/** @type {any} */ a) => conJson(a, JSON_DEL_AGENTE)) };
 }
 
 // ---------------------------------------------------------------------------

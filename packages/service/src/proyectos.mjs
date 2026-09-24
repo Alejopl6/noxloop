@@ -28,6 +28,7 @@ import { ENUMS } from "../../store/src/index.mjs";
 
 import { coleccion, comprobarIfMatch, etagDe, exigir, exigirProyecto, slugDe } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
+import { activarRapido } from "./modo-rapido.mjs";
 
 /** Los tres origenes, tal como los declara el modelo de datos. */
 const ORIGENES = ENUMS["project.origen"];
@@ -228,6 +229,15 @@ async function crear(p) {
   // hay un proyecto nuevo hasta que alguien recarga — y entonces "la interfaz
   // no se actualiza" se lee como un fallo de la interfaz.
   p.estado.bus.emitir("proyecto.estado", { estado: proyecto.estado, motivo: "alta" }, { project_id: proyecto.id });
+
+  // `rapido: true` (spec 003, US8): el alta y el modo rapido en una peticion,
+  // que es lo que pide «Crear y abrir board». Si el modo rapido para en una
+  // etapa, el 409 lo dice con el id del proyecto en `objeto`: el alta ya esta
+  // hecha y no se deshace, y la interfaz manda a terminarlo desde ahi.
+  if (cuerpo.rapido === true) {
+    const activado = await activarRapido(p, proyecto);
+    return { codigo: 201, cuerpo: activado, cabeceras: { etag: etagDe(activado.proyecto) } };
+  }
 
   return { codigo: 201, cuerpo: { proyecto }, cabeceras: { etag: etagDe(proyecto) } };
 }

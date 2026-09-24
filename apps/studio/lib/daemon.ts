@@ -15,10 +15,12 @@
  */
 
 import type {
+  AltaDeProyecto,
   Board,
   DiffDeTarea,
   EstadoDeRuntime,
   RespuestaDeLanzamiento,
+  ResultadoDelModoRapido,
   RunListado,
   Salud,
   TareaCreada,
@@ -444,6 +446,16 @@ export interface ClienteServicio {
   /** `PATCH /v1/tasks/:id`. Los mismos campos. */
   editarTarea(tareaId: string, cambios: Partial<TareaNueva>): Promise<TareaCreada>
 
+  /* --- Spec 003 · US8 · el modo rapido ---------------------------------- */
+
+  /**
+   * `POST /v1/projects/:id/quickstart`. Lleva el proyecto a ACTIVE por sus
+   * guardas sin preguntar nada mas. Sin tope de espera corto: escanea el repo.
+   */
+  activarRapido(proyectoId: string): Promise<ResultadoDelModoRapido>
+  /** `POST /v1/projects` con `rapido: true`: alta y activacion en una peticion. */
+  crearProyectoRapido(alta: Omit<AltaDeProyecto, 'rapido'>): Promise<ResultadoDelModoRapido>
+
   /* --- Modelos: los runtimes de agente ---------------------------------- */
 
   /** `GET /v1/runtimes`, desenvuelto del sobre. */
@@ -539,7 +551,20 @@ export const RUTAS = {
   claveDeRuntime(runtime: string): string {
     return `/v1/runtimes/${encodeURIComponent(runtime)}/api-key`
   },
+  proyectos(): string {
+    return '/v1/projects'
+  },
+  quickstart(proyectoId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/quickstart`
+  },
 } as const
+
+/**
+ * Cuanto se espera al modo rapido. Escanea el repositorio entero en un hilo del
+ * servicio: con el tope general de 15 s, un repo grande daria «el servicio no
+ * contesto» mientras el servicio sigue trabajando y termina bien.
+ */
+export const ESPERA_DEL_MODO_RAPIDO_MS = 10 * 60_000
 
 /** Saca `items` de un sobre de coleccion, o deja pasar un array desnudo. */
 function desenvolver<T>(cuerpo: unknown): T[] {
@@ -626,6 +651,14 @@ export function crearCliente(origen: OrigenServicio): ClienteServicio {
     getUsage: (periodo = {}, opciones = {}) => obtener<Uso>(RUTAS.uso(periodo), opciones),
     crearTarea: (proyectoId, tarea) => enviar<TareaCreada>('POST', RUTAS.tareas(proyectoId), tarea),
     editarTarea: (tareaId, cambios) => enviar<TareaCreada>('PATCH', RUTAS.tarea(tareaId), cambios),
+    activarRapido: (proyectoId) =>
+      pedir<ResultadoDelModoRapido>('POST', RUTAS.quickstart(proyectoId), {}, {
+        esperaMaximaMs: ESPERA_DEL_MODO_RAPIDO_MS,
+      }),
+    crearProyectoRapido: (alta) =>
+      pedir<ResultadoDelModoRapido>('POST', RUTAS.proyectos(), { ...alta, rapido: true }, {
+        esperaMaximaMs: ESPERA_DEL_MODO_RAPIDO_MS,
+      }),
     getRuntimes: async (opciones = {}) =>
       desenvolver<EstadoDeRuntime>(await obtener<unknown>(RUTAS.runtimes(), opciones)),
     iniciarSesionDeRuntime: (runtime) =>

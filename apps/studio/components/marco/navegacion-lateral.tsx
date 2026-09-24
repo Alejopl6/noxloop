@@ -1,11 +1,15 @@
 'use client'
 
-import { useId, type ReactNode } from 'react'
+import { useCallback, useId, useState, type ReactNode } from 'react'
 import { ChartColumn, Kanban, Plus, Search, Settings2, SquareActivity } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { comoErrorDelServicio, type ErrorDelServicio } from '@/lib/daemon'
 import { esAjusteDeProyecto, type Navegar, type Ruta } from '@/lib/ruta'
 import { ETAPA_PENDIENTE, type Board, type Proyecto } from '@/lib/tipos'
+import { Spinner } from '@/components/ui/indicador-de-carga'
+import { useServicio } from '@/components/proveedor-servicio'
+import { DialogoNuevoProyecto } from '@/components/marco/dialogo-nuevo-proyecto'
 import {
   DESTINOS_PRINCIPALES,
   ETIQUETA_DE_SECCION,
@@ -40,7 +44,20 @@ import { useBoard } from '@/components/board/contexto-board'
  * UN PROYECTO A MEDIO ESTABLECER NO LLEVA A UN BOARD VACIO (US4, escenario
  * 3): lleva al asistente, que retoma en la etapa que le falta. Un board vacio
  * de un proyecto que no puede tener tarjetas se lee como «no hay tickets».
+ *
+ * Y TIENE DOS SALIDAS, NO UNA (US8, FR-034). «Activar» lo lleva a ACTIVE en
+ * un clic por el modo rapido —las cinco guardas de verdad, sin escribir en el
+ * repositorio— y abre su board; «Configurar» abre el asistente completo. Antes
+ * solo existia la segunda, y el operador acumulaba proyectos en `CREATED` que
+ * el board ignoraba.
  */
+
+/** El modo rapido de la lista: quien esta activandose y que fallo en cada fila. */
+export interface ActivacionRapida {
+  activar: (proyectoId: string) => void
+  trabajandoEn: string | null
+  errores: Record<string, ErrorDelServicio>
+}
 
 const ICONO_DE_DESTINO: Record<DestinoPrincipal, typeof Kanban> = {
   board: Kanban,
@@ -62,6 +79,10 @@ export interface PropsDePanelLateral {
   board: Board | null
   /** Lo que va al pie: el estado del servicio y del gestor, el tema. */
   pie?: ReactNode
+  /** El «+». Sin el, abre el asistente (el catalogo de pantallas no tiene servicio). */
+  alCrearProyecto?: () => void
+  /** «Activar» en los proyectos no ACTIVE. Sin el, solo se ofrece «Configurar». */
+  activacion?: ActivacionRapida
   className?: string
 }
 
@@ -101,6 +122,8 @@ export function PanelLateral({
   proyectos,
   board,
   pie,
+  alCrearProyecto,
+  activacion,
   className,
 }: PropsDePanelLateral) {
   const base = useId()
@@ -197,14 +220,14 @@ export function PanelLateral({
           <TituloDeBloque
             id={`${base}-proyectos`}
             accion={
-              // CREAR ES ABRIR EL ASISTENTE (FR-023). No hay un formulario de
-              // alta suelto en el lateral: el asistente ya es el alta, y al
-              // llegar a ACTIVE deja al operador en el board del proyecto.
+              // CREAR ES NOMBRE Y CARPETA (FR-033, revisa FR-023): el dialogo
+              // crea y activa por el modo rapido, con la configuracion completa
+              // como salida secundaria. Sin dialogo montado, el asistente.
               <button
                 type="button"
                 aria-label="Crear proyecto"
                 title="Crear proyecto"
-                onClick={() => navegar({ seccion: 'asistente', id: null })}
+                onClick={() => (alCrearProyecto ? alCrearProyecto() : navegar({ seccion: 'asistente', id: null }))}
                 className="flex size-6 items-center justify-center rounded-md text-ds-gray-900 transition-colors hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000"
               >
                 <Plus aria-hidden="true" className="size-3.5" />
@@ -224,6 +247,8 @@ export function PanelLateral({
                 const activoEnElBoard = proyecto.estado === 'ACTIVE'
                 const pendiente = ETAPA_PENDIENTE[proyecto.estado]
                 const esEste = proyectoMarcado === proyecto.id
+                const activandose = activacion?.trabajandoEn === proyecto.id
+                const errorDeActivar = activacion?.errores[proyecto.id] ?? null
                 return (
                   <li key={proyecto.id} className="group/proyecto relative">
                     <button
@@ -241,7 +266,9 @@ export function PanelLateral({
                             : { seccion: 'asistente', id: proyecto.id },
                         )
                       }
-                      className={`flex h-8 w-full items-center gap-2 rounded-md pl-2.5 pr-8 text-left text-label-13 transition-colors ${
+                      className={`flex h-8 w-full items-center gap-2 rounded-md pl-2.5 ${
+                        activoEnElBoard || !activacion ? 'pr-8' : 'pr-[7.5rem]'
+                      } text-left text-label-13 transition-colors ${
                         esEste
                           ? 'bg-ds-gray-alpha-200 text-ds-gray-1000'
                           : 'text-ds-gray-900 hover:bg-ds-gray-alpha-100 hover:text-ds-gray-1000'
@@ -253,10 +280,41 @@ export function PanelLateral({
                         style={{ backgroundColor: colorDeProyecto(proyecto) }}
                       />
                       <span className="min-w-0 flex-1 truncate">{proyecto.nombre}</span>
-                      {activoEnElBoard ? null : (
+                      {activoEnElBoard || activacion ? null : (
                         <span className="shrink-0 text-label-12 text-ds-amber-900">Configurar</span>
                       )}
                     </button>
+                    {!activoEnElBoard && activacion ? (
+                      // LAS DOS SALIDAS, SIEMPRE A LA VISTA y no al pasar el
+                      // raton: son la razon de que la fila este aqui.
+                      <div className="absolute right-1 top-1 flex h-6 items-center gap-0.5">
+                        <button
+                          type="button"
+                          disabled={activacion.trabajandoEn !== null}
+                          title={`Activar ${proyecto.nombre} en un clic: lee el repositorio, lo deja listo sin escribir nada en el y abre su board`}
+                          onClick={() => activacion.activar(proyecto.id)}
+                          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-label-12 text-ds-blue-900 transition-colors hover:bg-ds-gray-alpha-200 disabled:opacity-50"
+                        >
+                          {activandose ? <Spinner tamano="sm" etiqueta={`Activando ${proyecto.nombre}`} /> : null}
+                          {activandose ? 'Activando' : 'Activar'}
+                        </button>
+                        <button
+                          type="button"
+                          title={`Configuracion completa de ${proyecto.nombre}: el asistente, en la etapa que le falta`}
+                          onClick={() => navegar({ seccion: 'asistente', id: proyecto.id })}
+                          className="flex h-6 items-center rounded-md px-1.5 text-label-12 text-ds-amber-900 transition-colors hover:bg-ds-gray-alpha-200"
+                        >
+                          Configurar
+                        </button>
+                      </div>
+                    ) : null}
+                    {errorDeActivar ? (
+                      // El 409 del modo rapido nombra la etapa en la que paro;
+                      // la salida es «Configurar», que retoma ahi.
+                      <p role="alert" className="px-2.5 pb-1 text-label-12 text-ds-red-900" title={errorDeActivar.accion}>
+                        {errorDeActivar.causa} {errorDeActivar.accion}
+                      </p>
+                    ) : null}
                     {activoEnElBoard ? (
                       // Settings del proyecto, a un clic y sin ocupar sitio: el
                       // engranaje aparece al pasar por la fila o al llegarle el
@@ -380,23 +438,64 @@ export function NavegacionLateral({
   proyectos,
   pie,
   className,
-}: Omit<PropsDePanelLateral, 'board'>) {
+}: Omit<PropsDePanelLateral, 'board' | 'alCrearProyecto' | 'activacion'>) {
   const compartido = useBoard()
   const board = compartido?.lectura.datos ?? null
-  return (
-    <PanelLateral
-      ruta={ruta}
-      navegar={navegar}
-      alAbrirComandos={alAbrirComandos}
-      proyectos={proyectos}
-      board={board}
-      pie={
-        <div className="flex flex-col gap-2">
-          <EstadoDeGestores board={board} />
-          {pie}
-        </div>
+  const { cliente } = useServicio()
+  const [creando, setCreando] = useState(false)
+  const [trabajandoEn, setTrabajandoEn] = useState<string | null>(null)
+  const [errores, setErrores] = useState<Record<string, ErrorDelServicio>>({})
+
+  // POR EL CLIENTE Y NO POR `useMutacion`: cada fila necesita su propio error,
+  // y el modo rapido escanea el repositorio, asi que no puede vivir con el tope
+  // de 15 s de una peticion normal (`ESPERA_DEL_MODO_RAPIDO_MS`). Nada se
+  // escribe aqui: se le pide al servicio (principio VIII). La lista se relee
+  // sola con el evento `proyecto.estado` que el servicio emite en cada etapa.
+  const activar = useCallback(
+    async (proyectoId: string) => {
+      setErrores(({ [proyectoId]: _quitado, ...resto }) => resto)
+      if (!cliente) {
+        setErrores((previos) => ({
+          ...previos,
+          [proyectoId]: comoErrorDelServicio(
+            new Error('esta interfaz no tiene conexion con el servicio de control'),
+            'activar el proyecto',
+          ),
+        }))
+        return
       }
-      className={className}
-    />
+      setTrabajandoEn(proyectoId)
+      try {
+        const r = await cliente.activarRapido(proyectoId)
+        navegar({ seccion: 'board', id: r.proyecto.id })
+      } catch (fallo: unknown) {
+        setErrores((previos) => ({ ...previos, [proyectoId]: comoErrorDelServicio(fallo, 'activar el proyecto') }))
+      } finally {
+        setTrabajandoEn(null)
+      }
+    },
+    [cliente, navegar],
+  )
+
+  return (
+    <>
+      <PanelLateral
+        ruta={ruta}
+        navegar={navegar}
+        alAbrirComandos={alAbrirComandos}
+        proyectos={proyectos}
+        board={board}
+        alCrearProyecto={() => setCreando(true)}
+        activacion={{ activar: (id) => void activar(id), trabajandoEn, errores }}
+        pie={
+          <div className="flex flex-col gap-2">
+            <EstadoDeGestores board={board} />
+            {pie}
+          </div>
+        }
+        className={className}
+      />
+      <DialogoNuevoProyecto abierto={creando} alCerrar={() => setCreando(false)} navegar={navegar} />
+    </>
   )
 }

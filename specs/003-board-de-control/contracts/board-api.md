@@ -225,3 +225,48 @@ Escribe `connection.capacidades.opcionesDelGestor` y `.stateMap` de la conexión
 validadas contra el `optionsSchema` del proveedor (clave desconocida, tipo, `required`) y con el `stateMap`
 total sobre los cinco canónicos (sin `backlog`). → `{ gestor: { nombre, conexion, opciones, stateMap } }`.
 Conexión del espacio de trabajo → `409 gestor_compartido`; gestor local o ninguno → `409 sin_gestor`.
+
+## 6. El modo rápido (US8, FR-033..036)
+
+`POST /v1/projects/:id/quickstart` (cuerpo vacío) y `POST /v1/projects {origen, nombre, ruta_local, rapido: true}`
+(este con `201`). Llevan el proyecto a `ACTIVE` por las cinco transiciones del almacén, cada una con su guarda:
+
+| Etapa | Estado | Artefacto que produce | Qué NO hace |
+|---|---|---|---|
+| `repositorio` | — | comprueba `.git` en `ruta_local` | no ejecuta `git` |
+| `snapshot` | `CREATED → DISCOVERED` | escanea (o usa el último completo) y acepta los hallazgos `pendiente` | no toca los ya decididos |
+| `constitution` | `DISCOVERED → CONSTITUTED` | fija la constitution que `proponerConstitution` deriva del snapshot | no la escribe en el repo |
+| `bootstrap` | `CONSTITUTED → BOOTSTRAPPED` | analiza si no hay recomendaciones y omite cada `pendiente` con motivo | no aplica ninguna |
+| `conexion` | `BOOTSTRAPPED → CONNECTED` | declara el gestor local (`local_task_sequence`) si el motor ve el local | no relaja la guarda con tracker propio |
+| `flota` | `CONNECTED → ACTIVE` | implementador `claude-agent-sdk`; revisor `codex` si está conectado | no reemplaza una flota declarada |
+
+Respuesta:
+
+```json
+{
+  "proyecto": { "id": "58523418-…", "estado": "ACTIVE", "nombre": "Payments" },
+  "pasos": [
+    { "etapa": "snapshot", "hecho": "snapshot nuevo con 37 hallazgo(s) aceptado(s) tal como se detectaron" },
+    { "etapa": "constitution", "hecho": "constitution 0.1.0 derivada del snapshot, fijada sin escribir en el repositorio" },
+    { "etapa": "bootstrap", "hecho": "2 recomendacion(es) del bootstrap, 2 omitida(s) por el modo rapido" },
+    { "etapa": "conexion", "hecho": "gestor local declarado: las tareas propias del proyecto, con claves `PAY-<n>`" },
+    { "etapa": "flota", "hecho": "flota por defecto: implementador sobre `claude-agent-sdk`" }
+  ],
+  "huecos": [
+    { "etapa": "constitution", "causa": "la constitution 0.1.0 vive solo en el almacen: no se escribio `CONSTITUTION.md` …", "accion": "Revisala y fijala desde Settings del proyecto -> Constitution …" },
+    { "etapa": "flota", "causa": "sin revisor: FR-034 exige que revise un runtime distinto …", "accion": "Conecta Codex desde Settings -> Modelos …" }
+  ]
+}
+```
+
+- Sobre un proyecto ya `ACTIVE`: `200` con `pasos: []`.
+- Una etapa que no se puede dar: `409 modo_rapido_detenido`, con la etapa en la causa y en
+  `error.objeto = { tipo: "proyecto", id, etapa, estado }`. El proyecto queda en el estado al que llegó; con
+  `rapido: true` el alta ya está hecha y el `objeto.id` dice cuál es.
+- Auditoría: la transición de siempre (`proyecto.transicion`, actor `operador (modo rapido)`) y un
+  `proyecto.modo_rapido` por etapa con `{ etapa, hecho }`.
+- Eventos: `proyecto.estado` en cada etapa, los `scan.*` del escaneo y `board.invalidado` al final.
+- `conexion_viva` (almacén): una conexión viva, o el gestor local declarado sin tracker propio. Con un tracker
+  propio en cualquier estado, solo cuenta que esté vivo.
+- Cliente: `activarRapido(id)` y `crearProyectoRapido(alta)` en `apps/studio/lib/daemon.ts`, con tope de espera
+  de 10 minutos (escanea el repositorio).

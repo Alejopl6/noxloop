@@ -135,6 +135,18 @@ const PROVOCADORES = {
     return (await r.json()).error;
   },
 
+  // Spec 003, US8: una carpeta sin `.git` para el modo rapido en su primera
+  // etapa, antes de escanear nada.
+  modo_rapido_detenido: async (svc) => {
+    const r = await pedirJson(svc, "/v1/projects", "POST", {
+      origen: "nuevo",
+      nombre: "Sin Git",
+      ruta_local: carpetaDePrueba(),
+    });
+    const { proyecto } = await r.json();
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/quickstart`, "POST", {})).json()).error;
+  },
+
   proyecto_no_activo: async (svc) => {
     const proyecto = await proyectoDePrueba(svc, "Sin Activar");
     const r = await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { item: "T-1" });
@@ -204,11 +216,14 @@ const PROVOCADORES = {
     return (await (await pedirJson(svc, `/v1/tasks/${tarea.id}`, "DELETE")).json()).error;
   },
 
-  // Run sobre una tarea local cuyo ejecutor el motor no monta como implementador.
+  // Run sobre una tarea local cuyo ejecutor el motor no tiene registrado.
+  // Antes el provocador era `codex`; desde que el motor fuerza el TDD despues
+  // de la fase en los runtimes sin hooks, codex SI se monta como implementador
+  // y el unico camino real al 409 es un runtime que el registro no conoce.
   ejecutor_sin_soporte: async (svc) => {
-    const proyecto = await proyectoActivo(svc, { nombre: "Con Codex", conexiones: [] });
+    const proyecto = await proyectoActivo(svc, { nombre: "Con Runtime Inventado", conexiones: [] });
     const tarea = (
-      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", ejecutor: { runtime: "codex" } })).json()
+      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", ejecutor: { runtime: "runtime-inventado" } })).json()
     ).tarea;
     return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
   },

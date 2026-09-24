@@ -30,6 +30,7 @@ import * as tareas from "./tareas.mjs";
 import * as runtimes from "./runtimes.mjs";
 import * as gestor from "./gestor.mjs";
 import * as diff from "./diff.mjs";
+import * as modoRapido from "./modo-rapido.mjs";
 
 export const TABLA = crearTabla([
   // ---- Salud y sesion -----------------------------------------------------
@@ -53,6 +54,9 @@ export const TABLA = crearTabla([
   // Se declara ANTES que `/v1/projects/:id` en la lectura, aunque el orden no
   // importe: la tabla pone lo literal por delante de lo parametrico al montar.
   { patron: "/v1/templates", metodos: ["GET"], manejar: proyectos.plantillas },
+  // El modo rapido (spec 003, US8): las cinco etapas por sus guardas en UNA
+  // decision del operador, sin escribir en su repositorio. `POST` y nada mas.
+  { patron: "/v1/projects/:id/quickstart", metodos: ["POST"], manejar: modoRapido.quickstart },
 
   // ---- Discovery · etapa 01 -----------------------------------------------
   { patron: "/v1/projects/:id/scan", metodos: ["POST"], manejar: escaneo.arrancarEscaneo },

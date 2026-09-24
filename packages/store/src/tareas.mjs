@@ -161,6 +161,37 @@ export function repositorioDeTareas(base) {
 
     porId,
 
+    /**
+     * Declara que el proyecto usa el gestor LOCAL: deja su secuencia de claves
+     * sin crear ninguna tarea (spec 003, US8, FR-035).
+     *
+     * POR QUE LA SECUENCIA ES LA DECLARACION Y NO UNA COLUMNA NUEVA. La guarda
+     * `conexion_viva` tiene que IR A BUSCAR un artefacto, nunca aceptar un
+     * parametro que diga «usa el gestor local» (principio II). La fila de
+     * `local_task_sequence` ya es exactamente eso: existe desde la primera
+     * tarea propia, fija el prefijo con el que se van a citar, y no se borra
+     * mientras el proyecto viva. Declararla antes de la primera tarea es
+     * adelantar lo que la primera tarea haria igual.
+     *
+     * Idempotente: una segunda declaracion no reinicia la numeracion ni cambia
+     * el prefijo — `PAY-12` ya puede estar citado en un PR.
+     *
+     * @param {string} projectId
+     * @returns {{prefijo: string}}
+     */
+    declararGestorLocal(projectId) {
+      const proyecto = base.consultarUno("SELECT id, nombre FROM project WHERE id = ?", [projectId]);
+      if (!proyecto) fallar("proyecto_desconocido", { id: projectId });
+      return base.enTransaccion(() => {
+        base.escribir("INSERT OR IGNORE INTO local_task_sequence (project_id, prefijo, ultimo) VALUES (?, ?, 0)", [
+          proyecto.id,
+          prefijoDe(String(proyecto.nombre)),
+        ]);
+        const { prefijo } = base.consultarUno("SELECT prefijo FROM local_task_sequence WHERE project_id = ?", [proyecto.id]);
+        return { prefijo: String(prefijo) };
+      });
+    },
+
     /** El prefijo vigente del proyecto, o el que tendria si todavia no tiene tareas. */
     prefijoDelProyecto(/** @type {string} */ projectId) {
       const s = base.consultarUno("SELECT prefijo FROM local_task_sequence WHERE project_id = ?", [projectId]);
