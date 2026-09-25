@@ -52,7 +52,10 @@ async function depsCon(adaptador) {
 test("codex: su fase recibe lo que su sesion local necesita, y su key si esta en la boveda", async () => {
   const deps = await depsCon(crearAdaptadorCodex());
   const env = deps.entorno();
-  for (const v of ["HOME", "USER", "PATH", "CODEX_HOME", "OPENAI_API_KEY"]) {
+  // El PATH viaja AMPLIADO (ver `binarios.mjs`): el de la maquina primero,
+  // intacto, y detras las carpetas donde los instaladores dejan los binarios.
+  assert.ok(env.PATH.startsWith(LA_MAQUINA.PATH), `la fase no recibe el PATH de la maquina: ${env.PATH}`);
+  for (const v of ["HOME", "USER", "CODEX_HOME", "OPENAI_API_KEY"]) {
     assert.equal(env[v], LA_MAQUINA[v], `la fase de codex no recibe ${v}: correria con "no autenticado"`);
   }
   assert.equal(Object.hasOwn(env, "GITHUB_TOKEN"), false, "viajo una variable que nadie declaro");
@@ -62,7 +65,10 @@ test("codex: su fase recibe lo que su sesion local necesita, y su key si esta en
 test("claude: su fase recibe USER (el llavero) y CLAUDE_CONFIG_DIR si el operador la movio", async () => {
   const deps = await depsCon(crearAdaptadorClaude({ hooks: { hooks: {} } }));
   const env = deps.entorno();
-  for (const v of ["HOME", "USER", "PATH", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"]) {
+  // El PATH viaja AMPLIADO (ver `binarios.mjs`): el de la maquina primero,
+  // intacto, y detras las carpetas donde los instaladores dejan los binarios.
+  assert.ok(env.PATH.startsWith(LA_MAQUINA.PATH), `la fase no recibe el PATH de la maquina: ${env.PATH}`);
+  for (const v of ["HOME", "USER", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"]) {
     assert.equal(env[v], LA_MAQUINA[v], `la fase de claude no recibe ${v}`);
   }
   assert.equal(Object.hasOwn(env, "GITHUB_TOKEN"), false);

@@ -26,8 +26,16 @@
 // elegidos; aqui se le suma el nombre y si hay key guardada, nada mas.
 
 import { spawn as spawnDeNode } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 
-import { RUNTIMES_CON_SESION, ejecutorDeProceso, estadoDeAutenticacion } from "../../adapters/src/autenticacion.mjs";
+import {
+  RUNTIMES_CON_SESION,
+  archivoDeSesion,
+  ejecutorDeProceso,
+  estadoDeAutenticacion,
+  rutaDeSesionVencida,
+} from "../../adapters/src/autenticacion.mjs";
+import { pathAmpliado, resolverBinario } from "../../adapters/src/binarios.mjs";
 import { coleccion, noEsta } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
 import { VARIABLES_DEL_ENTORNO_BASE } from "./lanzador.mjs";
@@ -124,6 +132,155 @@ async function estadoDe(p, runtime) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// La sesion vencida
+// ---------------------------------------------------------------------------
+//
+// EL CASO QUE ESTO CUBRE, medido: `codex login status` contesto "Logged in using
+// ChatGPT" con el token vencido, y la fase fallo con "Your access token could
+// not be refreshed". La pregunta al binario no lo ve —mira que el token este
+// guardado, no que lo acepten—; el error de la fase si. El adaptador lo
+// reconoce (`subtype: "sin_sesion"`), el motor deja la señal en el home
+// (`rutaDeSesionVencida`) y aqui se RECUERDA por runtime, en memoria y con su
+// hora, para que `GET /v1/runtimes`, el board y el diagnostico digan «sesion
+// vencida» en vez de «conectado».
+//
+// SE OLVIDA con prueba de que la sesion volvio, y solo con eso:
+//   - el login lanzado desde la app (`POST /v1/runtimes/:id/login`);
+//   - una API key guardada o quitada (la credencial ya es otra);
+//   - el archivo de sesion del runtime reescrito DESPUES del fallo (un `codex
+//     login` hecho desde la terminal): el preflight lo ve por su fecha;
+//   - una fase buena de ese runtime despues del fallo (señal «ok» del motor).
+// Un "Logged in" del binario NO la olvida: es justo lo que mintio.
+
+/**
+ * Lo que se sabe de la sesion de cada runtime: la ultima señal, con su hora.
+ * Vive en el motor del servicio; sin motor (una prueba de una ruta suelta), en
+ * un mapa de este modulo.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @returns {Map<string, {estado: "vencida"|"ok", hora: string, causa?: string, accion?: string}>}
+ */
+function memoriaDeSesiones(p) {
+  const motor = p.estado.motor;
+  if (motor) {
+    if (!motor.sesiones) motor.sesiones = new Map();
+    return motor.sesiones;
+  }
+  return SESIONES_SIN_MOTOR;
+}
+const SESIONES_SIN_MOTOR = new Map();
+
+/**
+ * La hora de pared, y NO `motor.reloj`: se compara con la que el motor escribe
+ * en su señal (otro proceso, `new Date()`), y un reloj inyectado para la cache
+ * del board mezclaria dos escalas.
+ */
+function ahoraISO() {
+  return new Date().toISOString();
+}
+
+const msDe = (/** @type {string|undefined} */ hora) => {
+  const n = Date.parse(String(hora ?? ""));
+  return Number.isNaN(n) ? -Infinity : n;
+};
+
+/**
+ * Recuerda que la sesion de un runtime vencio. Lo usa quien vea el fallo en
+ * este proceso; el motor, que corre aparte, deja la señal en el home.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {string} runtime
+ * @param {{causa?: string, accion?: string, hora?: string}} datos
+ */
+export function recordarSesionVencida(p, runtime, datos) {
+  memoriaDeSesiones(p).set(runtime, { estado: "vencida", hora: datos.hora ?? ahoraISO(), causa: datos.causa, accion: datos.accion });
+}
+
+/**
+ * Olvida la sesion vencida: hay prueba de que volvio. Se guarda como «ok» con
+ * su hora, para que una señal vieja del motor no la resucite.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {string} runtime
+ */
+export function olvidarSesionVencida(p, runtime) {
+  memoriaDeSesiones(p).set(runtime, { estado: "ok", hora: ahoraISO() });
+}
+
+/**
+ * La sesion vencida de un runtime, o `null`. Antes de contestar incorpora lo
+ * que el motor dejo en el home y lo que dice el archivo de sesion del runtime,
+ * si son MAS NUEVOS que lo que ya se sabia.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {string} runtime
+ * @param {Record<string, string>} env el de la pregunta, para ubicar el archivo de sesion
+ * @returns {{hora: string, causa?: string, accion?: string}|null}
+ */
+export function sesionVencida(p, runtime, env) {
+  const memoria = memoriaDeSesiones(p);
+  let sabido = memoria.get(runtime) ?? null;
+
+  if (p.estado.home) {
+    try {
+      const senal = JSON.parse(readFileSync(rutaDeSesionVencida(p.estado.home, runtime), "utf8"));
+      if ((senal?.estado === "vencida" || senal?.estado === "ok") && msDe(senal.hora) > msDe(sabido?.hora)) {
+        sabido = {
+          estado: senal.estado,
+          hora: String(senal.hora),
+          ...(typeof senal.causa === "string" ? { causa: senal.causa } : {}),
+          ...(typeof senal.accion === "string" ? { accion: senal.accion } : {}),
+        };
+        memoria.set(runtime, sabido);
+      }
+    } catch {
+      /* sin señal del motor: vale lo que ya se sabia */
+    }
+  }
+  if (sabido?.estado !== "vencida") return null;
+
+  // Un login hecho FUERA de la app: el runtime reescribio su archivo de sesion
+  // despues del fallo. Solo se mira la fecha; el contenido es la credencial.
+  const archivo = archivoDeSesion(runtime, env);
+  if (archivo) {
+    try {
+      const cambio = statSync(archivo).mtimeMs;
+      if (cambio > msDe(sabido.hora)) {
+        memoria.set(runtime, { estado: "ok", hora: new Date(cambio).toISOString() });
+        return null;
+      }
+    } catch {
+      /* sin archivo (Claude en macOS usa el llavero): no hay prueba, sigue vencida */
+    }
+  }
+  return { hora: sabido.hora, causa: sabido.causa, accion: sabido.accion };
+}
+
+/**
+ * El estado de la pregunta al binario, corregido con la sesion vencida si la
+ * hay. Se aplica FUERA de la cache: una señal nueva del motor tiene que verse
+ * en la siguiente pintada, no dentro de treinta segundos.
+ *
+ * @param {import("./rutas.mjs").Peticion} p
+ * @param {string} runtime
+ * @param {any} valor
+ */
+function conSesionVencida(p, runtime, valor) {
+  const { env } = entornoDeLaPregunta(p, runtime);
+  const v = sesionVencida(p, runtime, env);
+  if (!v) return valor;
+  const nombre = /** @type {any} */ (NOMBRES)[runtime] ?? runtime;
+  return {
+    ...valor,
+    conectado: false,
+    detalle: `sesion vencida: ${nombre} rechazo su credencial en una fase (${v.hora})`,
+    causa: v.causa ?? `${nombre} rechazo su credencial al correr una fase: la sesion vencio o la API key ya no vale.`,
+    accion: v.accion ?? `Vuelve a iniciar sesion (\`${valor.comoIniciarSesion?.comando?.join(" ") ?? runtime}\`) o pega una API key nueva en Settings → Modelos.`,
+    sesionVencida: { hora: v.hora },
+  };
+}
+
 /**
  * Los estados de varios runtimes, con la cache del board. `fresco` la salta y
  * la renueva: es lo que pide la pantalla de Modelos despues de un login.
@@ -151,12 +308,12 @@ export async function estadosDeRuntimes(p, runtimes, opts = {}) {
     }
     const guardado = cache.get(runtime);
     if (!opts.fresco && guardado && ahora - guardado.ts < ttl) {
-      salida.set(runtime, guardado.valor);
+      salida.set(runtime, conSesionVencida(p, runtime, guardado.valor));
       continue;
     }
     const valor = await estadoDe(p, runtime);
     cache.set(runtime, { ts: ahora, valor });
-    salida.set(runtime, valor);
+    salida.set(runtime, conSesionVencida(p, runtime, valor));
   }
   return salida;
 }
@@ -200,7 +357,12 @@ export async function iniciarSesion(p) {
   const lanzarLogin =
     p.estado.motor?.lanzarLogin ??
     ((/** @type {string[]} */ a, /** @type {Record<string, string>} */ entorno) => {
-      const hijo = spawnDeNode(a[0], a.slice(1), { env: entorno, detached: true, stdio: "ignore" });
+      // POR SU RUTA ABSOLUTA y con el PATH ampliado: desde una app de macOS
+      // `claude` a secas da ENOENT, y el login de un runtime puede necesitar
+      // `node` o el navegador por su nombre. Ver `binarios.mjs`.
+      const conPath = { ...entorno, PATH: pathAmpliado(entorno) };
+      const binario = resolverBinario(a[0], { env: conPath }) ?? a[0];
+      const hijo = spawnDeNode(binario, a.slice(1), { env: conPath, detached: true, stdio: "ignore" });
       // Un binario que no esta emite `error` despues: sin este manejador, el
       // proceso del servicio se cae por una excepcion que nadie espera.
       hijo.on("error", () => {});
@@ -214,6 +376,9 @@ export async function iniciarSesion(p) {
     });
   }
   lanzarLogin([...argv], env);
+  // Un login lanzado es la accion que la sesion vencida pedia: se olvida. Si el
+  // operador lo abandona, la siguiente fase lo volvera a marcar.
+  olvidarSesionVencida(p, runtime);
   olvidarEstados(p);
   return { codigo: 202, cuerpo: { iniciado: true, runtime, comando: argv.join(" "), abreNavegador: true } };
 }
@@ -241,6 +406,8 @@ export async function claveDeRuntime(p) {
     if (!existente) throw noEsta("API key de runtime", runtime, "`GET /v1/runtimes` (`claveGuardada`)");
     await boveda.borrar(existente.ref_boveda);
     await p.dep.recargarRedaccion();
+    // Otra credencial: lo que vencio era la de antes.
+    olvidarSesionVencida(p, runtime);
     olvidarEstados(p);
     return { cuerpo: { quitada: true, runtime } };
   }
@@ -294,6 +461,8 @@ export async function claveDeRuntime(p) {
     });
   }
 
+  // Otra credencial: lo que vencio era la de antes.
+  olvidarSesionVencida(p, runtime);
   olvidarEstados(p);
   const [estado] = (await estadosDeRuntimes(p, [runtime], { fresco: true })).values();
   return { codigo: existente ? 200 : 201, cuerpo: estado };

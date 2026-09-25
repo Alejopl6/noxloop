@@ -7,8 +7,8 @@
 // donde armar las piezas de verdad, y no puede ser el CLI: un CLI con la logica
 // de cableado adentro no se puede probar.
 
-import { join } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { validateProvider } from "../../../providers/contract.mjs";
 // La capa de runtimes. El motor NO la conocia: `grep -rn adapters` sobre
@@ -19,8 +19,10 @@ import {
   crearAdaptadorClaude,
   crearAdaptadorCodex,
   esRevision,
+  pathAmpliado,
   registroDeAdaptadores,
   revisorComparteRuntime,
+  rutaDeSesionVencida,
 } from "../../adapters/src/index.mjs";
 // Un runtime sin plugin recibe el texto del encargo, no el nombre del comando.
 import { conComandosExpandidos } from "./comandos-sin-plugin.mjs";
@@ -269,6 +271,14 @@ export function entornoDeFase(config, opts = {}) {
     // distingue "no esta" de "esta vacia", y un PATH vacio es peor que ninguno.
     if (typeof valor === "string" && valor !== "") variables[nombre] = valor;
   }
+
+  // EL PATH, AMPLIADO con las carpetas donde los instaladores dejan `node`,
+  // `git`, `gh`, `npm`, `claude` y `codex`. Una app de macOS abierta desde el
+  // Dock recibe `/usr/bin:/bin:/usr/sbin:/sbin`, y con eso el agente arranca y
+  // no encuentra ni `node` para correr el test que acaba de escribir. No es
+  // heredar nada: son rutas de carpetas, ninguna credencial. Lo que el operador
+  // tenia primero en su PATH sigue primero. Ver `binarios.mjs`.
+  variables.PATH = pathAmpliado({ PATH: variables.PATH, HOME: variables.HOME });
 
   variables.CI = "1";
   // El limite de autonomia no puede depender de que la tarea activa se
@@ -538,10 +548,16 @@ export async function buildDeps(item, config, opts = {}) {
     // QUE RUNTIME corre la fase, que es lo que el transcript estampa en cada
     // evento: despues de un hand-off, la fase GREEN la hicieron dos.
     const transcript = await transcriptDeFase(home, fase, env, secretos, id);
+    // LO QUE UNA REVISION PUEDE CORRER, ademas de leer: el gate del repositorio
+    // de la tarea. El runtime lo traduce a su lista cerrada de permisos (Claude:
+    // `dontAsk` con `Bash(<gate>:*)`); sin esto el revisor no podria correr los
+    // tests y afirmaria que pasan sin verlos, o se quedaria pidiendo permiso.
+    const gate = esRevision(fase?.phase) ? gateDeLaTarea(config, fase?.task) : [];
     const r = await costuraDe(id)(
-      { ...fase, env, secretos },
+      { ...fase, env, secretos, ...(gate.length ? { comandosPermitidos: gate } : {}) },
       transcript ? { alEvento: transcript.alEvento } : {},
     );
+    anotarSesion(home, id, r);
     try {
       transcript?.cerrar(r);
     } catch {
@@ -587,6 +603,60 @@ export async function buildDeps(item, config, opts = {}) {
       adaptadorPorId(runtimeDeFase({ phase: "GREEN", task: tarea })).capabilities().hooks !== true,
     ...overrides,
   };
+}
+
+/**
+ * El gate declarado del repositorio de una tarea, completo y corto, sin
+ * repetir. Es lo que la revision puede correr.
+ *
+ * @param {any} config
+ * @param {any} tarea
+ * @returns {string[]}
+ */
+export function gateDeLaTarea(config, tarea) {
+  const repo = config?.repos?.[tarea?.repo];
+  if (!repo || typeof repo !== "object") return [];
+  return [...new Set([repo.gate, repo.fastGate].filter((x) => typeof x === "string" && x.trim()))];
+}
+
+/**
+ * Deja en el home la ultima señal de sesion del runtime que corrio la fase,
+ * para que el servicio la lea (ver `rutaDeSesionVencida`).
+ *
+ * «vencida» si la fase fallo porque el runtime rechazo su credencial (`subtype:
+ * "sin_sesion"`), con la causa y la accion que dio el adaptador. «ok» si una
+ * fase de ese runtime termino bien DESPUES de una vencida: es la prueba de que
+ * la sesion volvio, mejor que `codex login status`, que dice "Logged in" con el
+ * token vencido. Una fase buena sin vencida previa no escribe nada: el caso
+ * normal no toca disco.
+ *
+ * Nunca lanza: es un aviso para el board, no parte del veredicto de la fase.
+ *
+ * @param {string|undefined} home
+ * @param {string} runtime
+ * @param {any} r
+ */
+export function anotarSesion(home, runtime, r) {
+  if (!home || !r) return;
+  const ruta = rutaDeSesionVencida(home, runtime);
+  try {
+    if (r.subtype === "sin_sesion") {
+      mkdirSync(dirname(ruta), { recursive: true });
+      writeFileSync(ruta, JSON.stringify({
+        runtime,
+        estado: "vencida",
+        hora: new Date().toISOString(),
+        ...(typeof r.causa === "string" ? { causa: r.causa } : {}),
+        ...(typeof r.accion === "string" ? { accion: r.accion } : {}),
+      }));
+      return;
+    }
+    if (r.ok === true && existsSync(ruta) && JSON.parse(readFileSync(ruta, "utf8"))?.estado === "vencida") {
+      writeFileSync(ruta, JSON.stringify({ runtime, estado: "ok", hora: new Date().toISOString() }));
+    }
+  } catch {
+    /* sin disco donde avisar, la fase ya dijo lo suyo en su resultado */
+  }
 }
 
 /**

@@ -29,8 +29,16 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ejecutorDeProceso, entornoDeclarado, estadoDeAutenticacion } from "../autenticacion.mjs";
-import { esRevision, normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
+import { ejecutorDeProceso, entornoDeclarado, errorDeSesion, estadoDeAutenticacion } from "../autenticacion.mjs";
+import { resolverBinario } from "../binarios.mjs";
+import {
+  PROMPT_DESATENDIDO,
+  conSesionReconocida,
+  esRevision,
+  normalizarPeticion,
+  resultadoDeFase,
+  validarPeticion,
+} from "../contrato.mjs";
 import { lanzar, leerLanzamiento } from "../proceso.mjs";
 import { emisorDeEventos, eventosDeLineaCodex, jsonDeLinea } from "../eventos.mjs";
 import { leerResultadoJsonl } from "../salida.mjs";
@@ -82,7 +90,10 @@ export const VARIABLES_DE_SESION = Object.freeze(["HOME", "USER", "LOGNAME", "PA
  */
 export function crearAdaptadorCodex(opts = {}) {
   const {
-    comando = "codex",
+    // SIN `comando` se busca `codex` en cada fase (PATH de la fase, carpetas de
+    // los instaladores y `~/.codex/bin`): desde una app de macOS el nombre a
+    // secas da ENOENT. Ver `binarios.mjs`.
+    comando: comandoDeclarado = null,
     argsPrefijo = [],
     timeoutMs = 30 * 60_000,
     alLanzar,
@@ -95,9 +106,13 @@ export function crearAdaptadorCodex(opts = {}) {
     directoriosDelPlan = [],
   } = opts;
 
+  /** La ruta ABSOLUTA del binario para una fase con este entorno. */
+  const binarioPara = (/** @type {Record<string, string>} */ env) =>
+    comandoDeclarado ?? resolverBinario("codex", { env }) ?? "codex";
+
   /** El ejecutor del preflight, apuntado al binario que este adaptador usa de verdad. */
   const ejecutar = ejecutarAutenticacion
-    ?? ((/** @type {string[]} */ argv, /** @type {any} */ o) => ejecutorDeProceso([comando, ...argsPrefijo, ...argv.slice(1)], o));
+    ?? ((/** @type {string[]} */ argv, /** @type {any} */ o) => ejecutorDeProceso([binarioPara(o?.env ?? {}), ...argsPrefijo, ...argv.slice(1)], o));
 
   return {
     id: "codex",
@@ -204,6 +219,16 @@ export function crearAdaptadorCodex(opts = {}) {
       if (peticion.phase === "PLAN") {
         for (const d of directoriosDelPlan) args.push("--add-dir", d);
       }
+      // LAS INSTRUCCIONES DE FASE DESATENDIDA (ver `PROMPT_DESATENDIDO`), como
+      // instrucciones de desarrollador y NO antepuestas al encargo: el contrato
+      // exige que el prompt llegue integro (`capacidades-honestas`). `codex exec
+      // --help` (0.137.0) no tiene `--append-system-prompt`; su equivalente es
+      // la clave `developer_instructions`, verificada contra el binario sin
+      // gastar cuota: con `--strict-config`, `-c clave_que_no_existe=...` falla
+      // con "unknown configuration field" y `-c developer_instructions=...` pasa.
+      // El valor va como cadena TOML (JSON.stringify la produce valida): si no
+      // parseara, codex lo tomaria literal con las comillas dentro.
+      args.push("-c", `developer_instructions=${JSON.stringify(PROMPT_DESATENDIDO)}`);
       args.push(peticion.prompt);
 
       // EL TRANSCRIPT, LINEA A LINEA: `codex exec --json` ya habla un evento
@@ -218,7 +243,7 @@ export function crearAdaptadorCodex(opts = {}) {
                 for (const e of eventosDeLineaCodex(jsonDeLinea(linea), estadoDelTranscript)) emitir(e);
               }
             : undefined,
-          comando,
+          comando: binarioPara(peticion.env),
           args,
           env: peticion.env,
           // Cuales de esas variables son secretas. Sin esto se miran todas, y el
@@ -254,8 +279,37 @@ export function crearAdaptadorCodex(opts = {}) {
   };
 }
 
-/** @param {import("../proceso.mjs").Lanzamiento} l */
+/**
+ * @param {import("../proceso.mjs").Lanzamiento} l
+ */
 function traducir(l) {
+  // LA SESION VENCIDA, reconocida por su error: lo que el runtime dijo como
+  // error (`turn.failed`, `error`) y su stderr, nunca los mensajes del agente.
+  // Es el caso medido: `codex login status` decia "Logged in using ChatGPT" y
+  // la fase murio con "Your access token could not be refreshed".
+  return conSesionReconocida("codex", traducirSinSesion(l), `${erroresDelStream(l.stdout)}\n${l.stderr || ""}`, errorDeSesion);
+}
+
+/** Los mensajes de error del stream de `codex exec --json`, y nada mas. */
+function erroresDelStream(/** @type {string} */ stdout) {
+  /** @type {string[]} */
+  const errores = [];
+  for (const linea of String(stdout || "").split("\n")) {
+    const t = linea.trim();
+    if (!t.startsWith("{")) continue;
+    try {
+      const ev = JSON.parse(t);
+      if (ev?.type !== "error" && ev?.type !== "turn.failed") continue;
+      for (const m of [ev.message, ev.error?.message]) if (typeof m === "string") errores.push(m);
+    } catch {
+      /* ruido entre eventos */
+    }
+  }
+  return errores.join("\n");
+}
+
+/** @param {import("../proceso.mjs").Lanzamiento} l */
+function traducirSinSesion(l) {
   if (l.cancelado) {
     return resultadoDeFase({ ok: false, subtype: "cancelada", text: `la fase se cancelo${l.stderr ? `: ${l.stderr.trim()}` : ""}` });
   }

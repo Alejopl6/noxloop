@@ -9,6 +9,7 @@ export { ErrorDeAdaptador, revisorComparteRuntime } from "./errores.mjs";
 export {
   CLAVES_DE_CAPACIDAD,
   CAPACIDADES_OPCIONALES,
+  PROMPT_DESATENDIDO,
   TIPOS_DE_EVENTO,
   adaptarADriver,
   esRevision,
@@ -36,13 +37,19 @@ export {
 export { PRUEBAS_DEL_CONTRATO, pruebasDelContrato } from "./suite.mjs";
 export { registroDeAdaptadores } from "./registro.mjs";
 export { lanzar, leerLanzamiento, secretoEnArgv } from "./proceso.mjs";
+// Encontrar el binario de un runtime y ampliar el PATH de una fase: una app de
+// macOS no hereda el PATH de la terminal.
+export { carpetasConocidas, pathAmpliado, resolverBinario } from "./binarios.mjs";
 export { esCorteDePresupuesto, leerResultadoJson, leerResultadoJsonl, leerResultadoStreamJson } from "./salida.mjs";
 
 // Si un runtime tiene con que invocar al modelo (sesion local o API key), para
 // el preflight y para la pantalla de modelos.
 export {
   RUNTIMES_CON_SESION,
+  archivoDeSesion,
   ejecutorDeProceso,
+  errorDeSesion,
+  rutaDeSesionVencida,
   entornoDeclarado,
   estadoDeAutenticacion,
 } from "./autenticacion.mjs";
