@@ -119,6 +119,7 @@ export function sdkDisponible() {
  *   comando?: string,
  *   argsPrefijo?: string[],
  *   hooks?: object|null,
+ *   pluginCargado?: boolean,
  *   herramientas?: readonly string[],
  *   sdk?: ((opts: any) => AsyncIterable<any>)|null,
  *   resolverSdk?: () => {disponible: boolean, motivo: string|null},
@@ -136,6 +137,9 @@ export function crearAdaptadorClaude(opts = {}) {
     comando = "claude",
     argsPrefijo = [],
     hooks = null,
+    // Si el plugin de noxloop viaja cargado con este runtime. Por defecto no:
+    // el motor no lo carga, y la mayoria de las maquinas no lo tienen.
+    pluginCargado = false,
     herramientas = HERRAMIENTAS_POR_DEFECTO,
     sdk = null,
     resolverSdk = sdkDisponible,
@@ -209,11 +213,11 @@ export function crearAdaptadorClaude(opts = {}) {
         // entere. Una lista corta inventada haria que la pantalla ofreciera
         // solo esos, que es peor que decir que no se sabe.
         models: "desconocido",
-        // Entiende `/noxloop-task ...` como comando: el plugin de noxloop lo
-        // expande al texto de `packages/plugin/commands/`. Lo que esto afirma es
-        // que el runtime SABE expandir comandos de plugin; que el plugin este
-        // instalado en la maquina es asunto del doctor, no del contrato.
-        comandos: true,
+        // Entiende `/noxloop-task ...` solo si el plugin de noxloop esta
+        // CARGADO. Medido en un run real: sin el plugin, Claude no reconocio
+        // `/noxloop-plan` y paso la fase explorando el home para adivinar que
+        // se le pedia. Por defecto el motor le manda la fase entera.
+        comandos: Boolean(pluginCargado),
       };
     },
 

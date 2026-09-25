@@ -43,8 +43,15 @@ test("un adaptador que no declara `comandos` sigue siendo valido: su ausencia es
   assert.equal(validarAdaptador(base({})).ok, true);
 });
 
-test("los tres adaptadores dicen la verdad: solo el que carga el plugin entiende los comandos", () => {
-  assert.equal(crearAdaptadorClaude({ hooks: { hooks: {} } }).capabilities().comandos, true);
+// MEDIDO EN UN RUN REAL (2026-09-24): con `comandos: true`, Claude recibio
+// `/noxloop-plan ...` sin el plugin de noxloop instalado, no lo reconocio, y
+// paso la fase explorando el home para adivinar que se le pedia. Que el
+// runtime SEPA expandir comandos no sirve si el plugin no esta cargado, y el
+// motor no lo carga. Solo se declara `true` cuando quien monta el adaptador
+// afirma que el plugin viaja con el (`pluginCargado: true`).
+test("los tres adaptadores dicen la verdad: Claude sin el plugin cargado recibe la fase entera", () => {
+  assert.equal(crearAdaptadorClaude({ hooks: { hooks: {} } }).capabilities().comandos, false);
+  assert.equal(crearAdaptadorClaude({ hooks: { hooks: {} }, pluginCargado: true }).capabilities().comandos, true);
   assert.equal(crearAdaptadorCodex().capabilities().comandos, false);
   assert.equal(crearAdaptadorFake().capabilities().comandos, false);
 });

@@ -217,7 +217,13 @@ function estadoDeTareaEnVuelo(t) {
   let opciones = [];
   let porQue = "";
 
-  if (!worktreeExiste) {
+  if (!worktreeExiste && !t.worktree && t.status === "in_progress" && !t.redVerified) {
+    // CORTADA ANTES DE EMPEZAR: el driver la marco en vuelo y el proceso murio
+    // antes de abrir su worktree. No hay trabajo que perder ni donde pudiera
+    // estar, asi que se relanza sola desde `pending` —que es quien crea el
+    // worktree— en vez de ofrecer solo `bloquear`, que dejaba sin salida una
+    // tarea que no llego a hacer nada.
+  } else if (!worktreeExiste) {
     requiereDecision = true;
     // No se ofrece `completar`: no hay nada que completar. Y no se ofrece
     // `registrar` porque dejaria la tarea en un estado del que el driver no
