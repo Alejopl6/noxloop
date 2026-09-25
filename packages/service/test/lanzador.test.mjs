@@ -143,6 +143,19 @@ test("PRINCIPIO IX: el secreto va en el entorno del subproceso, nunca en argv, y
   assert.deepEqual(Object.keys(opciones.env).sort(), ["GITHUB_TOKEN", "HOME", "NOXLOOP_HOME", "PATH"]);
 });
 
+// DESDE LA APP INSTALADA el servicio hereda el PATH minimo de una app GUI de
+// macOS (`/usr/bin:/bin`), y el motor corre el gate (`npm test`) y `gh` en su
+// propio proceso: sin ampliar el PATH no encuentra ninguno de los dos.
+test("el motor recibe el PATH ampliado: con el PATH de una app GUI igual encuentra npm y gh de Homebrew", async (t) => {
+  const { falso, lanzador, pedido } = montar();
+  t.after(() => lanzador.detener());
+  await lanzador.lanzar(pedido("2"));
+  await hasta(() => falso.llamadas.length === 1, "el plan");
+  const path = falso.llamadas[0].opciones.env.PATH.split(":");
+  assert.equal(path[0], "/usr/bin", "el PATH recibido va primero");
+  assert.ok(path.includes("/opt/homebrew/bin"), `el motor no vera npm ni gh de Homebrew: ${path.join(":")}`);
+});
+
 test("L0/L1: planifica y PARA en `plan_listo`; aprobar lanza `run`", async (t) => {
   const { falso, lanzador, pedido } = montar();
   t.after(() => lanzador.detener());

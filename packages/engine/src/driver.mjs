@@ -1076,6 +1076,16 @@ export function excedeLlamadas(run, techo) {
 }
 
 async function cortoPorPresupuesto(r, itemId, taskId, deps) {
+  // SESION VENCIDA: tampoco es un fallo del codigo, y reintentar con la misma
+  // sesion da el mismo error y quema los intentos de la tarea. Se bloquea en
+  // el acto con la accion que la arregla, que el adaptador ya sabe decir.
+  if (r?.subtype === "sin_sesion") {
+    transition(loadRun(itemId, { home: deps.home }), taskId, "blocked", {
+      home: deps.home,
+      failure: [r.causa || r.text || "la sesion del runtime esta vencida", r.accion].filter(Boolean).join(" "),
+    });
+    return true;
+  }
   if (!r?.budgetExhausted) return false;
   // Un corte por presupuesto NO es que la tarea este mal: es que la invocacion
   // se quedo sin plata a mitad. Tratarlo como fallo del codigo manda a revisar

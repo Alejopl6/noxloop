@@ -129,3 +129,28 @@ test("un revisor que FALLA no aprueba: la tarea no se integra, y se bloquea con 
   assert.match(t.lastFailure, /access token could not be refreshed/);
   assert.equal(r.pr ?? null, null, "se abrio un PR con una tarea sin revisar");
 });
+
+// Una SESION VENCIDA no es un fallo del codigo: reintentar con la misma sesion
+// da lo mismo y solo quema los intentos de la tarea. Se bloquea en el acto con
+// la accion que la arregla (`codex login` / `claude auth login`).
+test("una fase que falla por sesion vencida bloquea la tarea en el acto, con la accion, sin gastar reintentos", async () => {
+  const e = escenario();
+  let llamadas = 0;
+  e.primero.runPhase = async () => {
+    llamadas++;
+    return {
+      ok: false, sessionId: null, usd: null, budgetExhausted: false,
+      subtype: "sin_sesion",
+      text: "la sesion de codex esta vencida",
+      causa: "la sesion de codex esta vencida: el runtime no pudo renovar su token",
+      accion: "Corre `codex login` y vuelve a lanzar la tarea.",
+    };
+  };
+
+  await ejecutarComando("run", "1", e.config, e.opciones);
+  const t = loadRun("1", { home: e.home }).tasks[0];
+
+  assert.equal(t.status, "blocked");
+  assert.match(t.lastFailure, /codex login/);
+  assert.equal(llamadas, 1, "reintento con una sesion vencida: quema intentos sin poder avanzar");
+});

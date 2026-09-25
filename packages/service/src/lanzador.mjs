@@ -63,6 +63,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { construirEntorno, prepararLanzamiento } from "../../vault/src/index.mjs";
+import { pathAmpliado } from "../../adapters/src/binarios.mjs";
 import { EN_VUELO, avanceDe, estadoDelRun } from "./estado-del-run.mjs";
 
 /** El binario del motor, por defecto el del monorepo. */
@@ -169,9 +170,15 @@ export function crearLanzador(opts) {
   const bin = opts.binDelMotor ?? BIN_DEL_MOTOR;
   const nodo = opts.nodo ?? process.execPath;
   const emitir = opts.emitir ?? (() => {});
-  const entornoBase = opts.entornoBase ?? Object.fromEntries(
+  const entornoRecibido = opts.entornoBase ?? Object.fromEntries(
     VARIABLES_DEL_ENTORNO_BASE.filter((k) => typeof process.env[k] === "string").map((k) => [k, String(process.env[k])]),
   );
+  // EL PATH AMPLIADO, tambien para el proceso del motor. Desde la app
+  // instalada el servicio hereda el PATH minimo de una app GUI de macOS, y el
+  // gate (`npm test`) y `gh` corren en el proceso del motor, no en una fase:
+  // sin esto no encontraria ninguno de los dos. Es una lista de carpetas, no
+  // un secreto.
+  const entornoBase = { ...entornoRecibido, PATH: pathAmpliado(entornoRecibido) };
   const intervaloMs = opts.intervaloMs ?? 1500;
   /**
    * El limite global, preguntado en CADA decision y no copiado al arrancar:
