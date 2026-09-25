@@ -85,8 +85,10 @@ test("POST /runs valida ANTES de lanzar: sin `itemId` 400, sin repo 409 `sin_rep
     assert.equal(sinItem.status, 400);
     assert.equal((await sinItem.json()).error.codigo, "cuerpo_invalido");
 
-    const sinRepo = await proyectoActivo(svc, { nombre: "Sin Repo", ruta: repoConRemoto({ remoto: null }).repo });
-    const r1 = await post(svc, `/v1/projects/${sinRepo.id}/runs`, { itemId: "2" });
+    // Sin remoto se lanza en `commit`: lo que no se puede es pedir un PR.
+    const sinRepo = await proyectoActivo(svc, { nombre: "Sin Repo", ruta: repoConRemoto({ remoto: null }).repo, conexiones: [] });
+    const conPr = await (await post(svc, `/v1/projects/${sinRepo.id}/tasks`, { titulo: "con PR", termino: "pr" })).json();
+    const r1 = await post(svc, `/v1/projects/${sinRepo.id}/runs`, { itemId: conPr.tarea.id });
     assert.equal(r1.status, 409);
     assert.equal((await r1.json()).error.codigo, "sin_repo");
 

@@ -31,7 +31,7 @@ import { join } from "node:path";
 
 import { coleccion, exigir, exigirProyecto, noEsta } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
-import { datosDelProyecto, prepararMotor, secretosDelGestor } from "./motor.mjs";
+import { datosDelProyecto, prepararMotor, secretosDelGestor, terminoPorDefecto } from "./motor.mjs";
 import {
   MONTABLE_POR_EL_MOTOR, choqueConElRevisor, ejecutorDelProyecto, flotaDelProyecto, problemaDeEjecucion, resolverEjecutor,
 } from "./ejecutor.mjs";
@@ -240,21 +240,25 @@ function motorDe(p) {
  * el error si el motor no lo sabe cumplir.
  *
  * Solo una tarea LOCAL declara ejecutor y termino: un ticket de Linear no tiene
- * donde, y hereda del proyecto y termina en PR.
+ * donde, y hereda del proyecto — su ejecutor, y su termino (`pr` con remoto,
+ * `commit` sin el: `terminoPorDefecto`).
  *
  * @param {any} dep
  * @param {any} proyecto
  * @param {any} gestor el de `datosDelProyecto`
  * @param {string} itemId
+ * @param {string|null} [remoto] el de `datosDelProyecto`
  */
-export function ejecucionDe(dep, proyecto, gestor, itemId) {
+export function ejecucionDe(dep, proyecto, gestor, itemId, remoto = null) {
   const tarea = gestor?.origen === "local" ? dep.almacen.tareas.porId(itemId) : null;
   const ejecutor = resolverEjecutor(tarea?.ejecutor ?? null, ejecutorDelProyecto(dep, proyecto.id));
-  const termino = tarea ? String(tarea.termino) : "pr";
+  const termino = tarea ? String(tarea.termino) : terminoPorDefecto(remoto);
   // Con el revisor de la flota: la misma comprobacion de FR-034 que hace el
-  // board (`choqueConElRevisor`), dicha antes de componer nada.
+  // board (`choqueConElRevisor`), dicha antes de componer nada. Y el `pr` sin
+  // remoto, con el proyecto para que `sin_repo` lo nombre.
   const problema = problemaDeEjecucion({
     ejecutor, termino, clave: tarea ? String(tarea.clave) : itemId, revisor: flotaDelProyecto(dep, proyecto.id).revisor,
+    sinRemoto: remoto ? null : proyecto,
   });
   return { ejecutor, termino, problema, tarea };
 }
@@ -312,7 +316,7 @@ function preparador(p, projectId, itemId, extra = {}) {
       });
     }
     const datos = datosDelProyecto(dep, proyecto, { raizDeProveedores: motor.raizDeProveedores });
-    const { ejecutor, problema } = ejecucionDe(dep, proyecto, datos.gestor, itemId);
+    const { ejecutor, termino, problema } = ejecucionDe(dep, proyecto, datos.gestor, itemId, datos.remoto);
     if (problema) throw problema;
 
     const { ruta, config, gestor, modulo } = await prepararMotor(dep, proyecto, {
@@ -321,6 +325,9 @@ function preparador(p, projectId, itemId, extra = {}) {
       cargarGestor: motor.cargarGestor,
       maxParallelItems: motor.maxParalelo,
       ejecutor,
+      // El termino YA RESUELTO viaja al motor: es lo que decide si su ultimo
+      // paso abre un PR o deja la rama lista en el repositorio local.
+      termino: /** @type {"pr"|"commit"} */ (termino),
     });
     /** @type {Record<string, string>} */
     const secretos = { ...(await secretosDelGestor(dep, proyecto, gestor, modulo?.requiredEnv ?? [], "lanzar_runner")) };
@@ -755,6 +762,9 @@ export async function listaDeRuns(/** @type {import("./rutas.mjs").Peticion} */ 
       posicion: r.e?.posicion ?? null,
       avance: avanceDe(r.run, r.e?.estado ?? null),
       pr: r.run?.item?.pr ?? null,
+      // Con el termino `commit` el final no es un PR sino esta rama, en el
+      // repositorio del operador. `null` en cualquier otro caso.
+      rama: r.run?.item?.ramaLista?.rama ?? null,
       gasto: r.run ? gastoDe(r.run) : null,
       creado: r.run?.createdAt ?? null,
       actualizado: r.run?.updatedAt ?? null,

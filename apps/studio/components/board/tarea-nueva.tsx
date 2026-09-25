@@ -135,7 +135,10 @@ export function FormularioDeTareaNueva({
   const [etiquetaEscrita, setEtiquetaEscrita] = useState('')
   const [runtime, setRuntime] = useState('')
   const [agente, setAgente] = useState('')
-  const [termino, setTermino] = useState<TerminoDeTarea>('pr')
+  // `null` hasta que el operador elige: sin eleccion el servicio pone el del
+  // proyecto (`pr` con remoto, `commit` sin el). Mandar siempre `pr` hacia que
+  // cada tarea de un proyecto sin remoto naciera sin poderse lanzar.
+  const [termino, setTermino] = useState<TerminoDeTarea | null>(null)
   const [intentado, setIntentado] = useState(false)
 
   // Si el filtro de proyecto del board cambia con el dialogo cerrado, el
@@ -176,7 +179,7 @@ export function FormularioDeTareaNueva({
       prioridad: PRIORIDADES.find((opcion) => opcion.valor === prioridad)?.numero ?? null,
       etiquetas: [...etiquetas, ...pendientes],
       ejecutor: runtime ? { runtime, agente: agente.trim() || null } : null,
-      termino,
+      ...(termino ? { termino } : {}),
     }
     const hecho = await alEnviar(proyecto, tarea)
     if (hecho) {
@@ -392,12 +395,20 @@ export function FormularioDeTareaNueva({
         />
       </div>
 
-      <Segmentado
-        etiqueta="Como termina"
-        opciones={TERMINOS}
-        valor={termino}
-        alCambiar={setTermino}
-      />
+      <div className="flex flex-col gap-1.5">
+        <Segmentado
+          etiqueta="Como termina"
+          opciones={TERMINOS}
+          // Sin eleccion no se marca ninguna: el servicio decide por el proyecto.
+          valor={(termino ?? '') as TerminoDeTarea}
+          alCambiar={setTermino}
+        />
+        {termino ? null : (
+          <p className="text-copy-13 text-ds-gray-900">
+            Sin elegir, la del proyecto: pull request si tiene remoto, commit en una rama local si no.
+          </p>
+        )}
+      </div>
 
       {error ? (
         <Note tipo="error" titulo={error.causa}>

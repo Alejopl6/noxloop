@@ -14,7 +14,8 @@
 //      anterior.
 //   2. Un PR abierto manda sobre todo lo que quede en disco: es el final del
 //      recorrido (principio IV), aunque haya tareas bloqueadas —un PR con tres
-//      bloqueadas y su diagnostico es un exito—.
+//      bloqueadas y su diagnostico es un exito—. Con el termino `commit` el
+//      final es la RAMA LISTA en el repositorio del operador, y manda igual.
 //   3. Lo que el servicio sabe y el disco no: el plan que no se pudo hacer
 //      (`necesita_criterios`, `fallido`) no deja archivo de run.
 //   4. Un motor vivo de otra sesion (lock con pid vivo) esta corriendo.
@@ -48,6 +49,9 @@ export const ESTADOS_DEL_RUN = Object.freeze([
   "fallido",
   "interrumpido",
   "pr_abierto",
+  // El final del termino `commit`: la rama del ticket, commiteada en el
+  // repositorio del operador, sin empujar. Es a `commit` lo que `pr_abierto` a `pr`.
+  "rama_lista",
   "terminado",
 ]);
 
@@ -130,6 +134,7 @@ export function estadoDelRun(run, vivo, extra = {}) {
     return { estado: vivo.estado, detalle: vivo.detalle ?? null, posicion: vivo.posicion ?? null };
   }
   if (run?.item?.pr) return { estado: "pr_abierto", detalle: String(run.item.pr), posicion: null };
+  if (run?.item?.ramaLista?.rama) return { estado: "rama_lista", detalle: String(run.item.ramaLista.rama), posicion: null };
   if (vivo && ["fallido", "necesita_criterios", "plan_listo"].includes(vivo.estado)) {
     return { estado: vivo.estado, detalle: vivo.detalle ?? null, posicion: null };
   }

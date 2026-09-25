@@ -402,7 +402,8 @@ export function crearLanzador(opts) {
     }
 
     // `run` y `resume`.
-    if (codigo === 0 && r && r.pr) pasar(v, "terminado", null);
+    // El final bueno: el PR abierto, o —con el termino `commit`— la rama lista.
+    if (codigo === 0 && r && (r.pr || r.rama)) pasar(v, "terminado", null);
     else if (r && Array.isArray(r.blocked) && r.blocked.length) pasar(v, "terminado", explicar((r.humano || []).join("\n")));
     else pasar(v, codigo === 0 ? "terminado" : "fallido", codigo === 0 ? null : explicar(r?.reason ? String(r.reason) : stderr));
     liberar();

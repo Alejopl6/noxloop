@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Clock3,
   ClipboardList,
+  GitBranch,
   GitPullRequestArrow,
   OctagonAlert,
   Pause,
@@ -30,7 +31,7 @@ import type { ChipDeTarjeta, TipoDeChip } from '@/lib/tipos'
  *                                       movida (seguir aqui o soltarla)
  *   rojo   se rompio                    bloqueado, fallido
  *   azul   esta en marcha               fase k/N
- *   verde  termino bien                 PR listo
+ *   verde  termino bien                 PR listo, rama lista
  *   gris   espera, sin juicio           en cola, interrumpido, sin repo
  *
  * INTERRUMPIDO VA EN GRIS Y NO EN ROJO a proposito: el servicio se detuvo con
@@ -43,6 +44,11 @@ import type { ChipDeTarjeta, TipoDeChip } from '@/lib/tipos'
  * decide si la tarjeta sigue aqui o la suelta (el detalle ofrece los dos
  * botones). Nada fallo, asi que tampoco es rojo. El icono son dos flechas en
  * sentidos opuestos: se fue a otro sitio, y puede volver.
+ *
+ * RAMA LISTA VA EN VERDE COMO EL PR (spec 006): es el final del termino
+ * `commit` — el trabajo quedo commiteado en una rama del repositorio local y no
+ * se empujo nada. El icono es una rama, no el del PR: no hay PR que abrir, y
+ * confundirlos mandaria al operador a buscarlo en la forja.
  *
  * EL ICONO ES LA SENAL NO CROMATICA que la doctrina exige al lado de todo
  * color. Sin checkmarks ni equis: ninguno de estos estados es un si/no.
@@ -58,6 +64,7 @@ const ESTILO_DE_CHIP: Record<TipoDeChip, { tono: TonoDeBadge; Icono: Icono; porD
   fallido: { tono: 'error', Icono: CircleAlert, porDefecto: 'Fallido' },
   fase: { tono: 'informativo', Icono: CircleDashed, porDefecto: 'En curso' },
   pr_listo: { tono: 'exito', Icono: GitPullRequestArrow, porDefecto: 'PR listo' },
+  rama_lista: { tono: 'exito', Icono: GitBranch, porDefecto: 'Rama lista' },
   en_cola: { tono: 'neutral', Icono: Clock3, porDefecto: 'En cola' },
   interrumpido: { tono: 'neutral', Icono: Pause, porDefecto: 'Interrumpido' },
   sin_repo: { tono: 'neutral', Icono: Unplug, porDefecto: 'Sin repo' },

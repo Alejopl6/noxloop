@@ -160,6 +160,7 @@ test("FR-031/032: el ejecutor y el termino que el motor NO sabe cumplir deshabil
     const codex = (await crear(svc, p.id, { titulo: "con codex", ejecutor: { runtime: "codex" } })).cuerpo.tarea;
     const otro = (await crear(svc, p.id, { titulo: "con otro", ejecutor: { runtime: "runtime-inventado" } })).cuerpo.tarea;
     const commit = (await crear(svc, p.id, { titulo: "solo commit", termino: "commit" })).cuerpo.tarea;
+    const changes = (await crear(svc, p.id, { titulo: "sin commitear", termino: "changes" })).cuerpo.tarea;
     const board = await (await pedir(svc, `/v1/board?project=${p.id}`)).json();
 
     // Codex YA es implementador: sin hooks, el motor fuerza el orden del TDD
@@ -173,12 +174,16 @@ test("FR-031/032: el ejecutor y el termino que el motor NO sabe cumplir deshabil
     assert.equal(deOtro.accion.habilitada, false);
     assert.match(deOtro.accion.motivo, /runtime-inventado/);
 
+    // `commit` ya lo cumple el motor (la rama queda en el repositorio local);
+    // `changes` —parar antes de commitear— todavia no, y se dice.
     const deCommit = board.tarjetas.find((x) => x.ticket.id === commit.id);
-    assert.equal(deCommit.accion.habilitada, false);
-    assert.match(deCommit.accion.motivo, /commit/);
+    assert.equal(deCommit.accion.habilitada, true, deCommit.accion.motivo);
+    const deChanges = board.tarjetas.find((x) => x.ticket.id === changes.id);
+    assert.equal(deChanges.accion.habilitada, false);
+    assert.match(deChanges.accion.motivo, /changes/);
 
     // Y la ruta dice lo mismo que el boton: el 409 con el hueco, no un run que muere.
-    const r = await pedir(svc, `/v1/projects/${p.id}/runs`, json({ itemId: commit.id }));
+    const r = await pedir(svc, `/v1/projects/${p.id}/runs`, json({ itemId: changes.id }));
     assert.equal(r.status, 409);
     assert.equal((await r.json()).error.codigo, "termino_sin_soporte");
     const r2 = await pedir(svc, `/v1/projects/${p.id}/runs`, json({ itemId: otro.id }));

@@ -77,11 +77,15 @@ function hacerDespachador(config, opts) {
     }
 
     const corrida = /** @type {any} */ (await ejecutar(String(item.id), config, { ...opts, comando: "run" }));
+    // Con `termino: commit` el final es la rama lista, no un PR: tambien es
+    // un despacho que salio bien.
+    const entregado = Boolean(corrida.pr || (corrida.termino === "commit" && corrida.rama));
     return {
-      ok: Boolean(corrida.pr),
-      porque: corrida.pr ? undefined : (corrida.reason || corrida.humano?.join(" ")),
+      ok: entregado,
+      porque: entregado ? undefined : (corrida.reason || corrida.humano?.join(" ")),
       clase: "transitorio",
       pr: corrida.pr || null,
+      ...(corrida.rama ? { rama: corrida.rama } : {}),
     };
   };
 }
@@ -376,6 +380,27 @@ async function ejecutar(itemId, config, opts) {
     const aMedias = resumable(run);
     if (aMedias.length) {
       opts.log.info(`retomando ${aMedias.length} tarea(s) que quedaron en vuelo: ${aMedias.join(", ")}`);
+      // REBOBINAR ANTES DE RECORRER. El conjunto listo excluye a proposito lo
+      // que esta en vuelo, asi que sin esto una tarea cortada a mitad de fase
+      // no la levantaba nadie y el recorrido cortaba por estancado al instante
+      // (medido en un run real al matar el motor en RED). `prepararReanudacion`
+      // relanza lo que se puede relanzar sin riesgo y pide decision —con su
+      // causa— para lo que tiene trabajo sin commitear: eso no se adivina.
+      const prep = /** @type {any} */ (prepararReanudacion(itemId, { home: config.home, config }));
+      if (!prep.ok) {
+        const pendientes = (prep.requiereDecision || []).map((/** @type {any} */ d) => `${d.task}: ${d.motivo ?? d.porque ?? ""}`.trim());
+        return {
+          ok: false,
+          reason: prep.motivo,
+          requiereDecision: prep.requiereDecision ?? [],
+          humano: [
+            `no se puede retomar ${itemId}: ${prep.motivo}`,
+            ...pendientes.map((/** @type {string} */ x) => `  · ${x}`),
+            "Mira `noxloop diagnose` para ver que quedo en cada worktree: commitea o descarta esos cambios y vuelve a retomar.",
+          ],
+        };
+      }
+      for (const a of prep.advertencias || []) opts.log.warn(a);
     }
   }
 
@@ -422,7 +447,12 @@ async function ejecutar(itemId, config, opts) {
     return { ...r, humano };
   }
 
-  if (r.pr) {
+  if (r.termino === "commit" && r.rama) {
+    // Sin PR, y a proposito: decir «sin PR» aqui se leeria como un fallo.
+    humano.push(`rama lista: ${r.rama} (${r.commits.length} commit(s) sobre ${r.base}, sin empujar)`);
+    humano.push(`miralo con: git log ${r.base}..${r.rama}`);
+    humano.push(`integradas: ${r.integrated.join(", ") || "ninguna"}`);
+  } else if (r.pr) {
     humano.push(`PR ${r.prAlreadyExisted ? "(ya existia) " : ""}${r.pr}`);
     humano.push(`integradas: ${r.integrated.join(", ") || "ninguna"}`);
   } else {

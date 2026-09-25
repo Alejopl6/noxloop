@@ -32,10 +32,16 @@
 // leer (`packages/engine/src/comandos-sin-plugin.mjs`). Un runtime que el motor
 // no registra sigue sin poder lanzarse.
 //
-// El termino `changes` y `commit` tampoco: el recorrido del motor acaba siempre
-// en el PR abierto. Las dos cosas se guardan en la tarea —son la eleccion del
-// operador— y se niegan AL LANZAR con el hueco escrito, y el board deshabilita
-// Run con el mismo motivo. Lo que no se hace es lanzar igual con otra cosa.
+// El termino: el motor cumple `pr` (el PR abierto) y `commit` (la rama del
+// ticket commiteada en el repositorio del operador, sin empujar nada). El
+// termino `changes` —parar antes de commitear— todavia no: el recorrido
+// commitea el test y la implementacion por separado, que es la evidencia del
+// orden TDD. Se guarda en la tarea —es la eleccion del operador— y se niega AL
+// LANZAR con el hueco escrito, y el board deshabilita Run con el mismo motivo.
+// Lo que no se hace es lanzar igual con otra cosa.
+//
+// Y `pr` sin remoto tampoco: no hay contra que abrirlo. Se dice con
+// `sin_repo`, que ofrece terminar en `commit`.
 
 import { ErrorDeServicio } from "./errores.mjs";
 
@@ -63,8 +69,8 @@ export const MONTABLE_POR_EL_MOTOR = Object.freeze({
   codex: null,
 });
 
-/** Los terminos que el motor sabe cumplir hoy. */
-export const TERMINOS_DEL_MOTOR = Object.freeze(["pr"]);
+/** Los terminos que el motor sabe cumplir hoy (`termino` en su configuracion). */
+export const TERMINOS_DEL_MOTOR = Object.freeze(["pr", "commit"]);
 
 /**
  * El ejecutor del proyecto: el runtime de su implementador, o `null`.
@@ -153,13 +159,25 @@ export function choqueConElRevisor(ejecutor, revisor) {
  * `revisor`, si se da, es el de la flota: el choque con el se comprueba con
  * `choqueConElRevisor`, la misma regla que el lanzamiento.
  *
+ * `sinRemoto`, si se da, es el proyecto cuando NO tiene remoto: entonces `pr`
+ * no se puede cumplir y se dice con `sin_repo`, que ofrece `commit`.
+ *
  * @param {{ejecutor: {runtime: string, de: string}, termino: string, clave: string,
- *          revisor?: {runtime: string, nombre: string}|null}} e
+ *          revisor?: {runtime: string, nombre: string}|null,
+ *          sinRemoto?: {id: string, nombre: string, ruta_local: string}|null}} e
  * @returns {ErrorDeServicio|null}
  */
 export function problemaDeEjecucion(e) {
   if (!TERMINOS_DEL_MOTOR.includes(e.termino)) {
     return new ErrorDeServicio("termino_sin_soporte", { clave: e.clave, termino: e.termino });
+  }
+  if (e.termino === "pr" && e.sinRemoto) {
+    return new ErrorDeServicio("sin_repo", {
+      nombre: e.sinRemoto.nombre,
+      ruta: e.sinRemoto.ruta_local,
+      id: e.sinRemoto.id,
+      clave: e.clave,
+    });
   }
   const porque = Object.hasOwn(MONTABLE_POR_EL_MOTOR, e.ejecutor.runtime)
     ? MONTABLE_POR_EL_MOTOR[e.ejecutor.runtime]

@@ -85,6 +85,26 @@ export function loadConfig(file, opts = {}) {
 
   const cfg = applyDefaults(esquema, crudo);
 
+  // EL REMOTO ES OBLIGATORIO SEGUN DONDE TERMINA EL RECORRIDO, y por eso no lo
+  // dice el esquema. Con `pr` el PR se abre contra el remoto: sin el, el
+  // recorrido entero corre y falla en el ultimo paso, que es el peor sitio para
+  // enterarse. Con `commit` el trabajo se queda en una rama del repositorio del
+  // operador y el remoto no se usa — exigirlo dejaba fuera a cualquier proyecto
+  // que empieza en una carpeta. La regla se valida aqui, con la causa y la
+  // salida, en vez de con un `if/then` que el validador propio no habla.
+  if (cfg.termino === "pr") {
+    for (const [nombre, repo] of Object.entries(cfg.repos || {})) {
+      if (!repo.remote) {
+        problemas.push(
+          `$.repos.${nombre}.remote: falta, y con \`termino: pr\` es obligatorio — el pull request se abre contra ` +
+            `ese remoto. Declaralo, o usa \`"termino": "commit"\` para que el trabajo quede commiteado en una rama ` +
+            "local sin empujar nada.",
+        );
+      }
+    }
+    if (problemas.length) throw new ConfigError(problemas, file);
+  }
+
   // Las variables se expanden DESPUES de validar la forma: un error de forma es
   // mas util que un error de variable sobre una forma que ya estaba mal.
   const problemasEnv = [];

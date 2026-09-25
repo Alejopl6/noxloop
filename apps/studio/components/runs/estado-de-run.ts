@@ -12,7 +12,8 @@ export function tonoDeEstadoDeRun(estado: string): TonoDeBadge {
   const texto = estado.toLowerCase()
   if (/(fall|error|bloque|blocked|failed)/.test(texto)) return 'error'
   if (/(permiso|plan_listo|plan listo|criterio|espera|approval|needs)/.test(texto)) return 'advertencia'
-  if (/(pr|termin|integr|hecho|done|complet)/.test(texto)) return 'exito'
+  // `rama_lista`: el final del termino `commit`, bueno como un PR abierto.
+  if (/(pr|rama|termin|integr|hecho|done|complet)/.test(texto)) return 'exito'
   if (/(corr|curso|running|fase|planific|test|implement|gate|revis)/.test(texto)) return 'informativo'
   return 'neutral'
 }

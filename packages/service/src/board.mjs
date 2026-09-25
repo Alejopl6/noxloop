@@ -36,7 +36,7 @@ import { exigirProyecto } from "./comun.mjs";
 import { bloqueoPara, bloqueosParaElBoard } from "./diagnostico.mjs";
 import { ejecutorDelProyecto, flotaDelProyecto, problemaDeEjecucion, resolverEjecutor } from "./ejecutor.mjs";
 import { contextoDelGestor } from "./gestor.mjs";
-import { datosDelProyecto, diagnosticar, secretosDelGestor } from "./motor.mjs";
+import { datosDelProyecto, diagnosticar, secretosDelGestor, terminoPorDefecto } from "./motor.mjs";
 import { estadosDeRuntimes } from "./runtimes.mjs";
 import { ordenarTarjetas, ordenesDe } from "./orden.mjs";
 import { runsConProyecto } from "./runs.mjs";
@@ -134,6 +134,19 @@ function chipDe(run, ticket, parte) {
       const n = numeroDePr(run.pr);
       return { tipo: "pr_listo", texto: n ? `PR #${n} listo` : "PR listo", detalle: run.pr ?? null, posicion: null };
     }
+    if (e === "rama_lista") {
+      // El termino `commit`: no hay URL que abrir, hay una rama que mirar. El
+      // detalle dice DONDE esta y COMO verla, que es lo que el operador busca
+      // al pasar por encima; un «listo» sin la rama le haria abrir el run
+      // para saber que escribir en la terminal.
+      const rama = run.rama ?? detalle ?? "?";
+      return {
+        tipo: "rama_lista",
+        texto: `Rama lista · ${rama}`,
+        detalle: `La rama \`${rama}\` esta en tu repositorio local, commiteada y sin empujar. Mirala con: git log ${rama}`,
+        posicion: null,
+      };
+    }
     /** @type {Record<string, string>} */
     const TEXTO = {
       plan_listo: "Plan listo",
@@ -189,7 +202,12 @@ function decisionQueVale(decision, movida) {
 /**
  * Quien ejecuta un ticket y como termina, resuelto en cascada (FR-031/032).
  * Solo una tarea LOCAL declara los suyos (en `raw`, que es de su proveedor);
- * un ticket de un gestor externo hereda del proyecto y termina en PR.
+ * un ticket de un gestor externo hereda del proyecto: su ejecutor, y su
+ * termino — `pr` con remoto, `commit` sin el (`terminoPorDefecto`, la misma
+ * regla que el lanzamiento).
+ *
+ * `sinRemoto` va en la ejecucion para que `problemaDeEjecucion` diga `sin_repo`
+ * si una tarea pide `pr` en un proyecto sin remoto: el boton y la ruta, igual.
  *
  * @param {any} ticket
  * @param {any} parte
@@ -197,8 +215,16 @@ function decisionQueVale(decision, movida) {
 export function ejecucionDeTarjeta(ticket, parte) {
   const propia = parte.gestor === "local" ? ticket?.raw ?? null : null;
   const ejecutor = resolverEjecutor(propia?.ejecutor ?? null, parte.ejecutorDelProyecto ?? null);
-  const termino = typeof propia?.termino === "string" ? propia.termino : "pr";
-  return { ejecutor, termino, clave: String(ticket?.key ?? ticket?.id ?? "") };
+  // `tieneRemoto` ausente (una parte vieja, un test) se lee como «con remoto»:
+  // es lo que el board hacia antes, y no se inventa que falte.
+  const sinRemoto = parte.tieneRemoto === false;
+  const termino = typeof propia?.termino === "string" ? propia.termino : terminoPorDefecto(!sinRemoto);
+  return {
+    ejecutor,
+    termino,
+    clave: String(ticket?.key ?? ticket?.id ?? ""),
+    sinRemoto: sinRemoto ? parte.proyecto ?? null : null,
+  };
 }
 
 /**
@@ -212,7 +238,9 @@ export function ejecucionDeTarjeta(ticket, parte) {
  */
 function tarjetaDe(ticket, run, parte, runtimes, movida = null) {
   let columna;
-  if (run && run.estado === "pr_abierto") columna = "in_review";
+  // La rama lista del termino `commit` es a En revision lo que el PR abierto:
+  // el trabajo termino y lo que queda es que una persona lo mire.
+  if (run && (run.estado === "pr_abierto" || run.estado === "rama_lista")) columna = "in_review";
   else if (run && EN_BLOQUEADO.includes(run.estado)) columna = "blocked";
   else if (run && EN_CURSO.includes(run.estado)) columna = "in_progress";
   else {
@@ -278,7 +306,9 @@ function tarjetaDe(ticket, run, parte, runtimes, movida = null) {
     ...(movida ? { movida: { destino: movida.destino, detalle: movida.detalle } } : {}),
     avance: run?.avance ?? null,
     accion,
-    run: run ? { itemId: run.itemId, estado: run.estado, pr: run.pr ?? null, gasto: run.gasto ?? null } : null,
+    run: run
+      ? { itemId: run.itemId, estado: run.estado, pr: run.pr ?? null, rama: run.rama ?? null, gasto: run.gasto ?? null }
+      : null,
     tieneRepo: Boolean(parte.tieneRepo),
   };
 }
@@ -698,6 +728,7 @@ export async function board(p) {
         detalle: /** @type {any} */ (r.e).detalle,
         posicion: /** @type {any} */ (r.e).posicion,
         pr: r.run?.item?.pr ?? null,
+        rama: r.run?.item?.ramaLista?.rama ?? null,
         avance: avanceDe(r.run, /** @type {any} */ (r.e).estado),
         gasto: r.run ? gastoDe(r.run) : null,
         titulo: r.run?.item?.title ?? null,
@@ -711,7 +742,8 @@ export async function board(p) {
     const movidas = fuera.length ? await movidasDe(p, proyecto, diag, valorDelListado, fuera) : new Map();
 
     partes.push({
-      proyecto: { id: proyecto.id, nombre: proyecto.nombre },
+      // `ruta_local` solo para que `sin_repo` la nombre: la tarjeta no la saca.
+      proyecto: { id: proyecto.id, nombre: proyecto.nombre, ruta_local: proyecto.ruta_local },
       gestor: diag.gestor?.nombre ?? null,
       listItems: lista[lista.length - 1].listItems,
       tickets,
@@ -724,6 +756,7 @@ export async function board(p) {
       nota,
       lanzable: diag.lanzable,
       tieneRepo: diag.tieneRepo,
+      tieneRemoto: diag.tieneRemoto,
       motivo: diag.problema ? diag.problema.causa : null,
       ejecutorDelProyecto: ejecutorDelProyecto(p.dep, proyecto.id),
       revisor: flotaDelProyecto(p.dep, proyecto.id).revisor,

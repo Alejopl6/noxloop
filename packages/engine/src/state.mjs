@@ -452,7 +452,9 @@ export function addSpend(run, gasto, opts = {}) {
   });
 }
 
-const CAMPOS_ITEM = ["branch", "baseBranch", "prTarget", "pr", "providerStateWritten", "boardFields"];
+// `termino` y `ramaLista` son del termino `commit`: donde acaba el recorrido,
+// y la rama que quedo lista en el repositorio del operador cuando no hay PR.
+const CAMPOS_ITEM = ["branch", "baseBranch", "prTarget", "pr", "termino", "ramaLista", "providerStateWritten", "boardFields"];
 
 /**
  * Los unicos campos del item que el recorrido puede escribir. `id` no esta:

@@ -28,6 +28,28 @@
         "baseBranch": { "type": ["string", "null"] },
         "prTarget": { "type": ["string", "null"] },
         "pr": { "type": ["string", "null"] },
+        "termino": {
+          "enum": ["pr", "commit", null],
+          "description": "Donde termina el recorrido: `pr` abre un pull request; `commit` deja el trabajo commiteado en la rama del item, sin empujar ni abrir PR."
+        },
+        "ramaLista": {
+          "type": ["object", "null"],
+          "description": "Solo con `termino: commit`: la rama que quedo lista en el repositorio del operador. Es el final del recorrido igual que `pr` lo es con `termino: pr`.",
+          "required": ["rama", "base", "head", "commits"],
+          "properties": {
+            "rama": { "type": "string" },
+            "base": { "type": "string" },
+            "head": { "type": "string" },
+            "commits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["sha", "asunto"],
+                "properties": { "sha": { "type": "string" }, "asunto": { "type": "string" } }
+              }
+            }
+          }
+        },
         "providerStateWritten": {
           "type": ["string", "null"],
           "description": "El ultimo estado que el motor escribio en el ticket. Es lo que vuelve idempotente la escritura: relanzar no lo mueve dos veces."

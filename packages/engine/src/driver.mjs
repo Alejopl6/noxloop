@@ -17,6 +17,7 @@
 
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import {
   loadRun, saveRun, transition, bump, setTaskFields, setItemFields,
   setActiveTask, clearActiveTask, clearLastFailure, addSpend, retomarEnRojo, BUDGETS_DEFAULT,
@@ -158,7 +159,15 @@ export async function runItem(itemId, deps) {
 
   try {
     const { itemBranch, baseBranch, integrationPath } = deps.resolve(run.tasks[0].repo);
-    setItemFields(run, { branch: itemBranch, baseBranch, prTarget: baseBranch }, { home });
+    // DONDE TERMINA, decidido una vez y escrito en el estado: el servicio y el
+    // board leen del archivo si esperar un PR o una rama. Con `commit` no hay
+    // PR al que apuntar, y un `prTarget` escrito diria que lo habra.
+    const termino = terminoDe(config);
+    setItemFields(
+      run,
+      { branch: itemBranch, baseBranch, prTarget: termino === "pr" ? baseBranch : null, termino },
+      { home },
+    );
 
     // LA RAMA DEL ITEM SE PONE AL DIA ANTES DE EMPEZAR, y no al final.
     //
@@ -168,7 +177,9 @@ export async function runItem(itemId, deps) {
     // verdad cuando el worktree del item venia de un recorrido anterior: la
     // funcion existia en la cola y solo la usaba el recorrido de un hito, asi
     // que un `noxloop run` nunca la llamaba.
-    const alDia = syncItemBranch(integrationPath, itemBranch, baseBranch);
+    // Con `commit`, contra la base LOCAL y sin fetch: el recorrido no habla
+    // con ningun remoto, lo haya o no.
+    const alDia = syncItemBranch(integrationPath, itemBranch, baseBranch, { local: termino === "commit" });
     if (!alDia.ok) {
       // No se fuerza. Que la rama del item conflictue con su base es una
       // decision humana, y decirlo ahora cuesta un mensaje; descubrirlo al
@@ -252,6 +263,18 @@ export async function runItem(itemId, deps) {
       };
     }
 
+    // --------------------------------------------- o la rama, sin PR
+    //
+    // EL TERMINO `commit`. Todo lo anterior —worktrees, TDD, gate, revision,
+    // cola de integracion— es identico; lo que cambia es el ultimo paso. El
+    // trabajo YA esta commiteado en la rama del item, y esa rama ya esta en el
+    // repositorio del operador (los worktrees comparten refs): no hay nada que
+    // empujar ni que abrir. Queda del lado seguro del principio IV con mas
+    // margen que un PR — nada sale de la maquina y la base no se toca.
+    if (termino === "commit") {
+      return await entregarEnRama(run, integradas, bloqueadas, deps);
+    }
+
     const gaps = Object.fromEntries(
       [...new Set(run.tasks.map((t) => t.repo))].map((r) => [r, config.repos?.[r]?.gaps || []]),
     );
@@ -290,6 +313,126 @@ export async function runItem(itemId, deps) {
       if (t.worktree) clearActiveTask({ home, worktree: t.worktree });
     }
     lock.release();
+  }
+}
+
+/**
+ * Donde termina el recorrido. Lo que no sea `commit` es `pr`: el PR es el
+ * termino por defecto del esquema y el unico que existio hasta ahora, asi que
+ * una configuracion sin el campo sigue haciendo lo que hacia.
+ *
+ * @param {any} config
+ * @returns {"pr"|"commit"}
+ */
+export function terminoDe(config) {
+  return config?.termino === "commit" ? "commit" : "pr";
+}
+
+/**
+ * Los commits de la rama del item que no estan en la base, del mas viejo al
+ * mas nuevo: el orden en que se leen (el test antes que la implementacion).
+ *
+ * @param {string} cwd
+ * @param {string} base
+ * @param {string} rama
+ * @returns {Array<{sha: string, asunto: string}>}
+ */
+function commitsDeLaRama(cwd, base, rama) {
+  const salida = execFileSync("git", ["-C", cwd, "log", "--reverse", "--format=%H%x09%s", `${base}..${rama}`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (!salida) return [];
+  return salida.split("\n").map((linea) => {
+    const i = linea.indexOf("\t");
+    return { sha: linea.slice(0, i), asunto: linea.slice(i + 1) };
+  });
+}
+
+/**
+ * El final del termino `commit`: la rama del item, lista, dicha en el estado,
+ * en el gestor y en el resultado.
+ *
+ * NO LLAMA A `createPR`, NI HACE FETCH NI PUSH. Es lo que distingue este
+ * termino, y el test de punta a punta lo mide con un `createPR` que cuenta sus
+ * llamadas y un repositorio sin remoto.
+ *
+ * NUNCA DOS VECES EL MISMO COMENTARIO. Como `anotarEnGestor` con un PR que ya
+ * existia: un relanzamiento que encuentra la rama con la MISMA punta no vuelve
+ * a comentar. Si la punta cambio —se integro algo mas—, si: es otra entrega.
+ *
+ * @param {any} run
+ * @param {string[]} integradas
+ * @param {string[]} bloqueadas
+ * @param {any} deps
+ */
+async function entregarEnRama(run, integradas, bloqueadas, deps) {
+  const { home, log = consolaMuda() } = deps;
+  const destino = deps.resolve(run.tasks[0].repo);
+  const rama = destino.itemBranch;
+  const base = destino.baseBranch;
+  const commits = commitsDeLaRama(destino.integrationPath, base, rama);
+  const head = execFileSync("git", ["-C", destino.integrationPath, "rev-parse", rama], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+
+  const previa = run.item.ramaLista;
+  const ramaLista = { rama, base, head, commits };
+  setItemFields(run, { ramaLista }, { home });
+
+  if (previa?.head !== head) await anotarRamaEnGestor(run, ramaLista, deps);
+  else log.info("la rama ya estaba entregada con esta misma punta: no se repite el comentario");
+  await escribirEstadoEnGestor(run, "in_review", deps);
+
+  return {
+    item: run.item.id,
+    termino: "commit",
+    pr: null,
+    rama,
+    base,
+    commits,
+    integrated: integradas,
+    blocked: bloqueadas,
+    spent: loadRun(run.item.id, { home })?.spent || { usd: 0, calls: 0 },
+  };
+}
+
+/**
+ * El comentario de cierre del termino `commit`: la rama primero —es lo que se
+ * busca—, como mirarla, y lo integrado y lo bloqueado por id con su causa, igual
+ * que el del PR. Sin adjunto: no hay URL que adjuntar.
+ *
+ * @param {any} run
+ * @param {{rama: string, base: string, commits: Array<{sha: string, asunto: string}>}} r
+ * @param {any} deps
+ */
+async function anotarRamaEnGestor(run, r, deps) {
+  const { provider, providerCtx, log = consolaMuda() } = deps;
+  if (!provider) return;
+  const caps = provider.capabilities?.() || {};
+  if (!(caps.comment && typeof provider.comment === "function")) {
+    log.info("el gestor no declara `comment`: la rama queda sin comentario de cierre");
+    return;
+  }
+  const integradas = run.tasks.filter((/** @type {any} */ t) => t.status === "integrated");
+  const bloqueadas = run.tasks.filter((/** @type {any} */ t) => t.status === "blocked");
+  const lineas = [
+    `noxloop dejo el trabajo commiteado en la rama \`${r.rama}\` de tu repositorio local ` +
+      `(${r.commits.length} commit${r.commits.length === 1 ? "" : "s"} sobre \`${r.base}\`).`,
+    `Miralo con: git log ${r.base}..${r.rama}`,
+  ];
+  if (integradas.length) lineas.push(`Integradas: ${integradas.map((/** @type {any} */ t) => t.id).join(", ")}.`);
+  if (bloqueadas.length) {
+    lineas.push(
+      `Bloqueadas: ${bloqueadas.map((/** @type {any} */ t) => (t.lastFailure ? `${t.id} (${t.lastFailure})` : t.id)).join("; ")}.`,
+    );
+  }
+  lineas.push(`Nada se empujo ni se mergeo: \`${r.base}\` sigue donde estaba.`);
+  try {
+    await provider.comment(run.item.id, lineas.join("\n"), providerCtx);
+  } catch (e) {
+    log.warn(`no se pudo dejar el comentario de cierre en el ticket: ${e.message}`);
   }
 }
 

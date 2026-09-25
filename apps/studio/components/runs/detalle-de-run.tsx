@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowUpRight, GitPullRequest } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/insignia'
+import { Note } from '@/components/ui/nota'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { EsqueletoDeLista, FalloDeLectura } from '@/components/pantalla'
 import { formatearGasto } from '@/components/board/detalle-de-tarjeta'
@@ -94,6 +95,7 @@ export function PanelDeDetalleDeRun({
   const proyecto = referenciaDeProyecto(resumen?.proyecto ?? run?.project_id ?? null)
   const titulo = resumen?.titulo ?? run?.item.title ?? itemId
   const pr = resumen?.pr ?? run?.item.pr ?? null
+  const ramaLista = run?.item.ramaLista ?? null
   const gasto =
     resumen?.gasto ??
     (run?.spent ? { usd: run.spent.usd ?? null, calls: run.spent.calls ?? null, medido: run.spent.usd !== undefined } : null)
@@ -158,6 +160,16 @@ export function PanelDeDetalleDeRun({
             </div>
           ) : null}
         </dl>
+        {ramaLista ? (
+          // El final del termino `commit` (spec 006): no hay PR que abrir, hay
+          // una rama que mirar. Se dice DONDE esta y el comando exacto para
+          // verla, porque es lo siguiente que el operador va a escribir.
+          <Note tipo="exito" titulo={`Rama lista · ${ramaLista.rama}`}>
+            {ramaLista.commits.length} commit{ramaLista.commits.length === 1 ? '' : 's'} sobre{' '}
+            <span className="fuente-operativa">{ramaLista.base}</span>, en tu repositorio local y sin empujar. Miralo
+            con <code className="fuente-operativa">git log {ramaLista.base}..{ramaLista.rama}</code>.
+          </Note>
+        ) : null}
       </div>
 
       <FalloDeLectura error={error} />

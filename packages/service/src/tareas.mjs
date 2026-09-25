@@ -28,6 +28,7 @@
 import { coleccion, exigirProyecto, noEsta } from "./comun.mjs";
 import { ErrorDeServicio } from "./errores.mjs";
 import { leerRun } from "./lanzador.mjs";
+import { leerGit, terminoPorDefecto } from "./motor.mjs";
 import { ENUMS } from "../../store/src/index.mjs";
 
 /** Los estados que una tarea puede tener (el canonico del contrato mas `backlog`). */
@@ -233,6 +234,15 @@ export async function tareasDelProyecto(p) {
   }
 
   const datos = validar(await p.cuerpo(), { parcial: false });
+  // SIN TERMINO PEDIDO, EL DEL PROYECTO, escrito en la tarea. El almacen pone
+  // `pr` por defecto, y en un proyecto sin remoto eso es una tarea que nace
+  // sin poder lanzarse (`sin_repo`). Se resuelve AL CREAR y se guarda, no al
+  // lanzar: la tarea dice lo que va a hacer, y si mañana el proyecto gana un
+  // remoto, las tareas ya creadas no cambian de termino por debajo.
+  if (datos.termino === undefined) {
+    const remoto = proyecto.remoto ? String(proyecto.remoto) : leerGit(String(proyecto.ruta_local)).remoto;
+    datos.termino = terminoPorDefecto(remoto);
+  }
   const fila = p.dep.almacen.tareas.crear({ ...datos, project_id: proyecto.id });
   invalidarBoard(p, proyecto.id);
   return { codigo: 201, cuerpo: { tarea: tareaDeFila(fila) } };

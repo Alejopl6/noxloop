@@ -1124,6 +1124,9 @@ export interface Run {
     url?: string | null
     branch?: string | null
     pr?: string | null
+    /** Spec 006: donde termina el recorrido. Ver `RamaLista`, al final. */
+    termino?: TerminoDelMotor | null
+    ramaLista?: RamaLista | null
   }
   project_id?: string | null
   tasks?: TareaDeRun[]
@@ -1407,6 +1410,8 @@ export type TipoDeChip =
   // Spec 005 (FR-004): la issue del run salio de las reglas del proyecto. Pide
   // una decision —seguir aqui o soltarla—, ver `DecisionSobreMovida`.
   | 'movida'
+  // Spec 006: el run termino en `commit`. Ver la seccion del termino, al final.
+  | TipoDeChipDelTermino
 
 export interface ChipDeTarjeta {
   tipo: TipoDeChip
@@ -2152,4 +2157,46 @@ export interface RespuestaDeDecisionDeMovida {
     /** ISO-8601. */
     decidida: string
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 006 · El termino `commit`: la rama lista, sin PR                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Los terminos que el motor cumple. `changes` esta en `TerminoDeTarea` (es la
+ * eleccion del operador) y todavia no lo cumple: el board lo deshabilita.
+ */
+export type TerminoDelMotor = 'pr' | 'commit'
+
+/**
+ * El chip de un run terminado en `commit`: «Rama lista · <rama>», en verde como
+ * el del PR (termino bien). Su `detalle` dice donde esta la rama y como verla.
+ */
+export type TipoDeChipDelTermino = 'rama_lista'
+
+/**
+ * Lo que el motor escribe en `run.item.ramaLista` al terminar en `commit`: la
+ * rama del ticket, commiteada en el repositorio del operador y sin empujar.
+ * Es a `commit` lo que `item.pr` es a `pr`.
+ */
+export interface RamaLista {
+  rama: string
+  /** La rama base, que el recorrido no toco. */
+  base: string
+  /** El sha de la punta de la rama. */
+  head: string
+  /** Los commits sobre la base, del mas viejo al mas nuevo (el test primero). */
+  commits: Array<{ sha: string; asunto: string }>
+}
+
+/** El run de la tarjeta y la fila de `GET /v1/runs` traen la rama si la hay. */
+export interface RunDeTarjeta {
+  /** La rama lista del termino `commit`, o `null`. */
+  rama?: string | null
+}
+
+export interface RunListado {
+  /** La rama lista del termino `commit`, o `null`. */
+  rama?: string | null
 }

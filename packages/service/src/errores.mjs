@@ -276,15 +276,25 @@ export const CATALOGO = {
   // decidir es como se rompe una interfaz el dia que alguien reescribe la frase.
   // Los tres son 409: la peticion esta bien escrita, lo que falta es un dato del
   // proyecto.
+  // Desde el termino `commit` un proyecto sin remoto SI se lanza: su trabajo
+  // queda en una rama local. Lo que sigue sin poderse es pedir un PR sin
+  // remoto, y este error dice las dos salidas.
   sin_repo: {
     estado: 409,
     causa: (d) =>
-      `El proyecto \`${d.nombre}\` no tiene un repositorio remoto: ni el proyecto declara \`remoto\` ni ` +
-      `\`${d.ruta}\` tiene un \`origin\`. El motor trabaja en ramas que empuja al remoto y abre el PR contra el; ` +
-      "sin remoto no hay donde dejar el trabajo.",
+      d.noEsGit
+        ? `El proyecto \`${d.nombre}\` no tiene remoto y \`${d.ruta}\` no es un repositorio git: el motor deja el ` +
+          "trabajo en una rama de ese repositorio, y sin repositorio no hay donde dejarlo."
+        : `${d.clave ? `La tarea \`${d.clave}\` pide terminar en un pull request, y el` : "El"} proyecto ` +
+          `\`${d.nombre}\` no tiene un repositorio remoto: ni el proyecto declara \`remoto\` ni ` +
+          `\`${d.ruta}\` tiene un \`origin\`. El PR se abre contra el remoto; sin el no hay contra que abrirlo.`,
     accion: (d) =>
-      `Declara el remoto del proyecto con \`PATCH /v1/projects/${d.id}\` (\`{"remoto": "..."}\`) desde Settings del ` +
-      "proyecto, o agrega un `origin` al repositorio local, y vuelve a pulsar Run.",
+      d.noEsGit
+        ? `Inicializalo con \`git init ${d.ruta}\` y un primer commit, y vuelve a pulsar Run.`
+        : "Termina en `commit` —el trabajo queda commiteado en una rama de tu repositorio local, sin empujar nada—" +
+          `${d.clave ? " cambiando el termino de la tarea (`PATCH /v1/tasks/:id {\"termino\": \"commit\"}`)" : ""}, ` +
+          `o declara el remoto del proyecto con \`PATCH /v1/projects/${d.id}\` (\`{"remoto": "..."}\`) desde Settings ` +
+          "del proyecto o agrega un `origin` al repositorio local, y vuelve a pulsar Run.",
   },
 
   sin_gate: {
@@ -369,18 +379,21 @@ export const CATALOGO = {
       "del proyecto en Settings del proyecto -> Flota.",
   },
 
-  // FR-032. `changes` y `commit` estan en el contrato de la tarea y el motor
-  // todavia no sabe parar antes del PR: hoy su recorrido termina SIEMPRE en el
-  // PR abierto. Lanzar igual abriria un PR que el operador pidio no abrir.
+  // FR-032. `changes` esta en el contrato de la tarea y el motor todavia no
+  // sabe parar ANTES de commitear: su recorrido commitea el test y la
+  // implementacion por separado (es la evidencia del orden TDD) e integra en la
+  // rama del ticket. `commit` y `pr` si los sabe cumplir.
   termino_sin_soporte: {
     estado: 409,
     causa: (d) =>
-      `La tarea \`${d.clave}\` pide terminar en \`${d.termino}\`, y el motor todavia no sabe parar antes del PR: ` +
-      "su recorrido integra las tareas en la rama del ticket y abre el pull request. Lanzarla igual abriria un PR " +
-      "que pediste no abrir. Ningun modo mergea (principio IV); este hueco es de los otros dos.",
+      `La tarea \`${d.clave}\` pide terminar en \`${d.termino}\`, y el motor todavia no sabe parar antes de ` +
+      "commitear: su recorrido commitea el test antes que la implementacion —es la evidencia del orden TDD— y los " +
+      "integra en la rama del ticket. Lanzarla igual dejaria commits que pediste no hacer. Ningun modo mergea " +
+      "(principio IV).",
     accion: () =>
-      "Cambia el termino de la tarea a `pr` (`PATCH /v1/tasks/:id {\"termino\": \"pr\"}`) y vuelve a pulsar Run. " +
-      "El PR queda abierto y sin mergear: nada llega a la rama base sin tu revision.",
+      "Cambia el termino de la tarea a `commit` (`PATCH /v1/tasks/:id {\"termino\": \"commit\"}`): el trabajo " +
+      "queda en una rama de tu repositorio local, sin empujar nada, y lo revisas con `git log`. O a `pr` si el " +
+      "proyecto tiene remoto. Despues vuelve a pulsar Run.",
   },
 
   // Las opciones de un gestor viven en su conexion, y una conexion del espacio

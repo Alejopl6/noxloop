@@ -198,7 +198,9 @@ export function makeResolve(config, opts) {
     const integrationPath = join(home, "worktrees", repo, slug(itemBranch, 60) || `item-${elItem.id}`);
 
     if (!existsSync(integrationPath)) {
-      worktree.add(repoPath, { branch: itemBranch, base: baseBranch, dest: integrationPath });
+      // Con `termino: commit` la rama del item nace de la base LOCAL y sin
+      // fetch: nada de este recorrido habla con un remoto (ver worktree.add).
+      worktree.add(repoPath, { branch: itemBranch, base: baseBranch, dest: integrationPath, local: config.termino === "commit" });
     }
 
     const resuelto = { repoPath, integrationPath, itemBranch, baseBranch };

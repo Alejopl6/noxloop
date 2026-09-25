@@ -50,6 +50,23 @@ export function verifyRemote(path, esperado) {
 }
 
 /**
+ * Que la ruta sea un repositorio git. Es la verificacion de un repo sin remoto
+ * declarado: menos que comparar el remoto, y todo lo que se puede afirmar.
+ *
+ * @param {string} path
+ * @returns {{ok: boolean, actual: null, reason?: string}}
+ */
+export function esRepositorio(path) {
+  if (!existsSync(path)) return { ok: false, actual: null, reason: `${path} no existe` };
+  try {
+    execFileSync("git", ["-C", path, "rev-parse", "--git-dir"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return { ok: true, actual: null };
+  } catch {
+    return { ok: false, actual: null, reason: `${path} no es un repositorio git` };
+  }
+}
+
+/**
  * La ruta del checkout de un repositorio declarado, verificada.
  * @param {string} nombre
  * @param {object} config
@@ -71,7 +88,12 @@ export function repoRoot(nombre, config, opts = {}) {
 
   const fallos = [];
   for (const c of candidatos) {
-    const v = verifyRemote(c, repo.remote);
+    // SIN REMOTO DECLARADO (solo lo permite `termino: commit`, ver config.mjs)
+    // no hay contra que comparar, y la verificacion baja a lo unico que se
+    // puede comprobar sin inventar: que la ruta es un repositorio git. Con
+    // remoto declarado se sigue exigiendo que coincida, tambien con `commit`:
+    // declararlo es afirmar de que repositorio se trata.
+    const v = repo.remote ? verifyRemote(c, repo.remote) : esRepositorio(c);
     if (v.ok) return c;
     fallos.push(v.reason);
   }

@@ -27,7 +27,8 @@
 // LO QUE NO SE SABE NO SE RELLENA (principio X)
 // -----------------------------------------------------------------------------
 //
-// Sin remoto, `sin_repo`. Sin runner detectado, `sin_gate`. Con un gestor
+// Sin remoto, el termino es `commit` (la rama queda en el repositorio local,
+// sin empujar); `pr` sin remoto, `sin_repo`. Sin runner detectado, `sin_gate`. Con un gestor
 // DECLARADO que el motor no sabe usar, `sin_gestor`. Cada uno con lo que se busco y lo que se
 // encontro. La tentacion es poner `npm test` porque casi todos los proyectos de
 // Node lo tienen: el dia que no, el gate falla en cada tarea, el run entero se
@@ -406,7 +407,11 @@ export function datosDelProyecto(dep, proyecto, opts = {}) {
   const remoto = proyecto.remoto ? String(proyecto.remoto) : git.remoto;
   const { gate, hallado: gateHallado } = gateDelSnapshot(dep, proyecto);
   const { gestor, hallado: gestorHallado } = gestorDelProyecto(dep, proyecto, opts.raizDeProveedores ?? RAIZ_DE_PROVEEDORES);
-  return { proyecto, remoto, ramaBase: git.rama ?? "main", gate, gateHallado, gestor, gestorHallado };
+  // `esRepo`: si la carpeta tiene `.git` (archivo en un worktree, directorio en
+  // un checkout). Sin remoto es lo unico que el termino `commit` necesita, y
+  // se mira aqui —leer no escribe— para que `componerConfig` siga siendo pura.
+  const esRepo = existsSync(join(String(proyecto.ruta_local), ".git"));
+  return { proyecto, remoto, esRepo, ramaBase: git.rama ?? "main", gate, gateHallado, gestor, gestorHallado };
 }
 
 /**
@@ -459,15 +464,31 @@ export function opcionesDelGestor({ proyecto, remoto, gestor, esquemaDeOpciones 
 }
 
 /**
+ * El termino de un proyecto cuando la tarea no pide otro: `pr` si hay remoto
+ * contra el que abrirlo, `commit` si no.
+ *
+ * `commit` sin remoto no estira el principio IV: el trabajo queda en una rama
+ * del repositorio del operador, nada se empuja y la base no se toca — un PR sin
+ * mergear es el limite, y esto se queda antes.
+ *
+ * @param {string|boolean|null|undefined} remoto el remoto, o si lo hay
+ * @returns {"pr"|"commit"}
+ */
+export function terminoPorDefecto(remoto) {
+  return remoto ? "pr" : "commit";
+}
+
+/**
  * La configuracion del motor. PURA: mismos datos, misma configuracion.
  *
  * @param {{
- *   proyecto: any, home: string, remoto: string|null, ramaBase?: string,
+ *   proyecto: any, home: string, remoto: string|null, esRepo?: boolean, ramaBase?: string,
  *   gate: {comando: string, de: string, suelto?: string|null}|null, gateHallado?: string,
  *   gestor: any, gestorHallado?: string,
  *   raizDeProveedores?: string, maxParallelItems?: number,
  *   esquemaDeOpciones?: any,
  *   ejecutor?: {runtime: string, agente: string|null, de?: string}|null,
+ *   termino?: "pr"|"commit"|null,
  *   flota?: {revisor: {runtime: string, nombre: string}|null, planificador: {runtime: string, nombre: string}|null}|null,
  * }} e el `optionsSchema` del proveedor va en `esquemaDeOpciones`; `ejecutor`, el ya resuelto en cascada;
  *   `flota`, el revisor y el planificador del proyecto (`flotaDelProyecto`)
@@ -483,8 +504,19 @@ export function componerConfig(e) {
   // Run con el mismo motivo.
   const choque = choqueConElRevisor(e.ejecutor, e.flota?.revisor);
   if (choque) throw choque;
-  if (!e.remoto) {
+  // DONDE TERMINA. El de la tarea si lo pide; si no, el del proyecto: `pr` con
+  // remoto y `commit` sin el. Un proyecto que empieza en una carpeta —casi
+  // todos— corre a la primera y su trabajo queda en una rama local, sin salir
+  // de la maquina. Lo que NO se hace es degradar un `pr` pedido a `commit` en
+  // silencio: sin remoto no hay contra que abrir el PR, y se dice.
+  const termino = e.termino ?? terminoPorDefecto(e.remoto);
+  if (termino === "pr" && !e.remoto) {
     throw new ErrorDeServicio("sin_repo", { nombre: proyecto.nombre, ruta: proyecto.ruta_local, id: proyecto.id });
+  }
+  // Y sin remoto, la carpeta tiene que ser un repositorio: la rama del ticket
+  // vive en SUS refs. `esRepo` ausente (quien compone a mano) no se inventa.
+  if (termino === "commit" && !e.remoto && e.esRepo === false) {
+    throw new ErrorDeServicio("sin_repo", { nombre: proyecto.nombre, ruta: proyecto.ruta_local, id: proyecto.id, noEsGit: true });
   }
   if (!e.gate) {
     throw new ErrorDeServicio("sin_gate", {
@@ -513,6 +545,7 @@ export function componerConfig(e) {
   return {
     version: 1,
     home: e.home,
+    termino,
     // EL EJECUTOR RESUELTO (FR-031) llega al motor por aqui: el motor monta ese
     // runtime y no el primero de su registro. Sin ejecutor, el motor decide
     // (el de referencia), y la configuracion no finge una eleccion.
@@ -539,7 +572,9 @@ export function componerConfig(e) {
     repos: {
       [clave]: {
         path: String(proyecto.ruta_local),
-        remote: e.remoto,
+        // Sin remoto no se escribe la clave: el motor verifica el que se
+        // declara, y uno inventado lo haria fallar al resolver el repositorio.
+        ...(e.remoto ? { remote: e.remoto } : {}),
         baseBranch: e.ramaBase ?? "main",
         gate: e.gate.comando,
         fastGate: e.gate.comando,
@@ -628,7 +663,12 @@ export async function diagnosticar(dep, proyecto, opts = {}) {
   }
   return {
     lanzable: problema === null,
-    tieneRepo: Boolean(datos.remoto),
+    // UNA CARPETA CON GIT ES UN REPOSITORIO, tenga remoto o no. Antes esto era
+    // `Boolean(remoto)` y el board pintaba «Sin repo» sobre un proyecto que
+    // desde el termino `commit` corre perfectamente. El remoto va aparte.
+    tieneRepo: Boolean(datos.remoto) || datos.esRepo,
+    tieneRemoto: Boolean(datos.remoto),
+    termino: terminoPorDefecto(datos.remoto),
     gate: datos.gate,
     gestor: fallo ? null : datos.gestor,
     modulo,
@@ -646,7 +686,7 @@ export async function diagnosticar(dep, proyecto, opts = {}) {
  *
  * @param {any} dep
  * @param {any} proyecto
- * @param {OpcionesDelMotor & {home: string, ejecutor?: {runtime: string, agente: string|null}|null}} opts
+ * @param {OpcionesDelMotor & {home: string, ejecutor?: {runtime: string, agente: string|null}|null, termino?: "pr"|"commit"|null}} opts
  */
 export async function prepararMotor(dep, proyecto, opts) {
   const datos = datosDelProyecto(dep, proyecto, opts);
@@ -661,6 +701,7 @@ export async function prepararMotor(dep, proyecto, opts) {
     maxParallelItems: opts.maxParallelItems,
     esquemaDeOpciones: modulo?.optionsSchema,
     ejecutor: opts.ejecutor ?? null,
+    termino: opts.termino ?? null,
     // La flota se lee en CADA lanzamiento, como el resto: cambiar el revisor
     // en Settings tiene que valer en el siguiente Run, no en una copia vieja.
     flota: flotaDelProyecto(dep, proyecto.id),
