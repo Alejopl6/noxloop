@@ -397,7 +397,7 @@ export function crearLanzador(opts) {
         return liberar();
       }
       if (r && r.question) pasar(v, "necesita_criterios", explicar(String(r.question)));
-      else pasar(v, "fallido", explicar(r?.reason ? String(r.reason) : stderr));
+      else pasar(v, "fallido", explicar(causaDe(r, stderr)));
       return liberar();
     }
 
@@ -405,7 +405,7 @@ export function crearLanzador(opts) {
     // El final bueno: el PR abierto, o —con el termino `commit`— la rama lista.
     if (codigo === 0 && r && (r.pr || r.rama)) pasar(v, "terminado", null);
     else if (r && Array.isArray(r.blocked) && r.blocked.length) pasar(v, "terminado", explicar((r.humano || []).join("\n")));
-    else pasar(v, codigo === 0 ? "terminado" : "fallido", codigo === 0 ? null : explicar(r?.reason ? String(r.reason) : stderr));
+    else pasar(v, codigo === 0 ? "terminado" : "fallido", codigo === 0 ? null : explicar(causaDe(r, stderr)));
     liberar();
   }
 
@@ -583,4 +583,19 @@ export function crearLanzador(opts) {
       await Promise.all(esperas);
     },
   };
+}
+
+/**
+ * La causa de un fallo del motor, entera.
+ *
+ * `reason` resume («el plan no valida») y `problems` dice cual: tirar lo
+ * segundo dejaba al operador con un resumen y ningun lugar donde mirar.
+ *
+ * @param {any} r el JSON que imprimio el motor, si imprimio alguno
+ * @param {string} stderr
+ */
+function causaDe(r, stderr) {
+  if (!r?.reason) return stderr;
+  const problemas = Array.isArray(r.problems) ? r.problems.filter(Boolean) : [];
+  return problemas.length ? `${r.reason}: ${problemas.join("; ")}` : String(r.reason);
 }

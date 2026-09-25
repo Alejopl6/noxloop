@@ -216,6 +216,20 @@ test("un ticket sin criterios: `necesita_criterios` con la pregunta textual del 
   assert.equal(falso.llamadas.length, 1, "no se ejecuta un plan que no existe");
 });
 
+// Medido en el primer run real: la tarjeta decia «el plan no valida» y nada
+// mas. El motor SI devolvia cual era el problema (`$.notes: no esta declarado`)
+// y se tiraba al pasar al estado del run: el operador no tenia por donde seguir.
+test("un plan que no valida guarda CADA problema en la causa, no solo «el plan no valida»", async (t) => {
+  const { falso, lanzador, pedido } = montar();
+  t.after(() => lanzador.detener());
+
+  await lanzador.lanzar(pedido("2"));
+  await hasta(() => falso.llamadas.length === 1, "el plan");
+  falso.llamadas[0].terminar(1, { ok: false, reason: "el plan no valida", problems: ["$.notes: no esta declarado en el esquema"] });
+  await hasta(() => lanzador.estado("2").estado === "fallido", "el fallo");
+  assert.match(lanzador.estado("2").detalle, /\$\.notes: no esta declarado en el esquema/);
+});
+
 test("un fallo guarda la causa; si la causa trae el secreto, el secreto NO se guarda", async (t) => {
   const { falso, lanzador, pedido } = montar();
   t.after(() => lanzador.detener());

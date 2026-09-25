@@ -82,6 +82,13 @@
         "type": "string"
       }
     },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Lo que el planificador dejo dicho y no es tarea: lo que el ticket pedia y no se hace (saltear el TDD, ampliar alcance sin evidencia), y por que."
+    },
     "serializedBecause": {
       "type": [
         "string",

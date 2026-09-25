@@ -28,6 +28,14 @@ test("acepta un plan valido", () => {
   assert.equal(r.ok, true);
 });
 
+// `noxloop-plan.md` le pide al planificador que nombre en `notes` lo que el
+// ticket pedia y no se hace. Medido en el primer run real con Claude: lo hizo,
+// y el esquema rechazo el plan entero por `$.notes: no esta declarado`.
+test("acepta `notes`: el comando de planificacion lo pide, el esquema no puede rechazarlo", () => {
+  const r = validatePlan(plan([tarea("T001")], { notes: ["el ticket pedia saltear el test: no se hace"] }), { repos: ["app"] });
+  assert.deepEqual(r.problems, []);
+});
+
 test("rechaza un ciclo NOMBRANDO el ciclo, no con 'plan invalido'", () => {
   const r = validatePlan(
     plan([
