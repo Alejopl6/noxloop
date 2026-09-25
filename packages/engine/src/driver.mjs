@@ -696,6 +696,25 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
         const b = bump(run, taskId, "review", { home, budgets });
         if (await cortoPorPresupuesto(r, itemId, taskId, deps)) return;
 
+        // UNA REVISION QUE NO CORRIO NO APRUEBA. Medido en el primer run real:
+        // el revisor (Codex con la sesion vencida) volvio `ok: false` sin
+        // veredicto, esto caia en el `else` de abajo y la tarea se integraba
+        // sin que nadie la hubiera revisado — el verde inventado del principio
+        // II. Se reintenta con el presupuesto de revision; al agotarlo, la
+        // tarea se bloquea con la causa textual del runtime.
+        if (r.ok === false && r.findings !== "blocking") {
+          const causa = String(r.text || "el runtime del revisor no devolvio nada").trim();
+          if (b.exhausted) {
+            transition(run, taskId, "blocked", {
+              home,
+              failure: `la revision no pudo correr despues de ${b.count} intento(s): ${causa}`,
+            });
+            return;
+          }
+          bitacora.warn(`la revision no pudo correr (${b.count}): ${causa} — se reintenta`);
+          break;
+        }
+
         if (r.findings === "blocking") {
           if (b.exhausted) {
             transition(run, taskId, "blocked", {
