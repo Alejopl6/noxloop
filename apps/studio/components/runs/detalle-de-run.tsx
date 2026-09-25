@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowUpRight, GitPullRequest } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/insignia'
+import { Note } from '@/components/ui/nota'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { EsqueletoDeLista, FalloDeLectura } from '@/components/pantalla'
 import { formatearGasto } from '@/components/board/detalle-de-tarjeta'
@@ -13,6 +14,8 @@ import { VisorDeDiff, totalesDelDiff } from '@/components/runs/visor-de-diff'
 import { etiquetaDeTarea, tonoDeTarea } from '@/components/vista-runs'
 import { tonoDeEstadoDeRun } from '@/components/runs/estado-de-run'
 import { VistaDeTranscript } from '@/components/runs/transcript-de-tarea'
+import { ESTADOS_TRASPASABLES } from '@/components/runs/handoff'
+import { PasarAOtroAgente } from '@/components/runs/pasar-a-otro-agente'
 import { RUTAS, type ErrorDelServicio } from '@/lib/daemon'
 import { useLectura } from '@/lib/lectura'
 import {
@@ -65,6 +68,13 @@ export interface PropsDeDetalleDeRun {
    * y el catalogo pinta un ejemplo quieto. Sin ella, la seccion no se pinta.
    */
   transcript?: (tarea: TareaDeRun) => ReactNode
+  /**
+   * «Pasar a otro agente» para la tarea abierta (spec 005, FR-007). Una
+   * funcion por lo mismo que `transcript`: la vista viva la monta con sus
+   * lecturas, y el catalogo no. Solo se pinta en una tarea que todavia tiene
+   * implementacion pendiente.
+   */
+  pasarAOtroAgente?: (tarea: TareaDeRun) => ReactNode
 }
 
 export function PanelDeDetalleDeRun({
@@ -80,10 +90,12 @@ export function PanelDeDetalleDeRun({
   resumenDeTarea,
   diff,
   transcript,
+  pasarAOtroAgente,
 }: PropsDeDetalleDeRun) {
   const proyecto = referenciaDeProyecto(resumen?.proyecto ?? run?.project_id ?? null)
   const titulo = resumen?.titulo ?? run?.item.title ?? itemId
   const pr = resumen?.pr ?? run?.item.pr ?? null
+  const ramaLista = run?.item.ramaLista ?? null
   const gasto =
     resumen?.gasto ??
     (run?.spent ? { usd: run.spent.usd ?? null, calls: run.spent.calls ?? null, medido: run.spent.usd !== undefined } : null)
@@ -148,6 +160,16 @@ export function PanelDeDetalleDeRun({
             </div>
           ) : null}
         </dl>
+        {ramaLista ? (
+          // El final del termino `commit` (spec 006): no hay PR que abrir, hay
+          // una rama que mirar. Se dice DONDE esta y el comando exacto para
+          // verla, porque es lo siguiente que el operador va a escribir.
+          <Note tipo="exito" titulo={`Rama lista · ${ramaLista.rama}`}>
+            {ramaLista.commits.length} commit{ramaLista.commits.length === 1 ? '' : 's'} sobre{' '}
+            <span className="fuente-operativa">{ramaLista.base}</span>, en tu repositorio local y sin empujar. Miralo
+            con <code className="fuente-operativa">git log {ramaLista.base}..{ramaLista.rama}</code>.
+          </Note>
+        ) : null}
       </div>
 
       <FalloDeLectura error={error} />
@@ -184,6 +206,23 @@ export function PanelDeDetalleDeRun({
                     </button>
                     {tarea.lastFailure && esEsta ? (
                       <p className="whitespace-pre-wrap px-4 pb-3 text-copy-13 text-ds-red-900">{tarea.lastFailure}</p>
+                    ) : null}
+                    {esEsta && tarea.handoffs?.length ? (
+                      // Quien la tuvo antes: el hand-off es un hecho del run,
+                      // y el presupuesto que ya estaba agotado se dice.
+                      <ul aria-label={`Hand-offs de ${tarea.id}`} className="flex flex-col gap-1 px-4 pb-3 text-label-12 text-ds-gray-900">
+                        {tarea.handoffs.map((h) => (
+                          <li key={h.at}>
+                            Pasada de <span className="fuente-operativa text-ds-gray-1000">{h.de ?? '—'}</span> a{' '}
+                            <span className="fuente-operativa text-ds-gray-1000">{h.a}</span> desde {h.estado}
+                            {h.presupuesto?.agotados.length ? ` · ${h.presupuesto.agotados.join(', ')} agotado: ${h.presupuesto.concede}` : ''}
+                            {h.motivo ? ` · «${h.motivo}»` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {esEsta && pasarAOtroAgente && ESTADOS_TRASPASABLES.includes(String(tarea.status)) ? (
+                      <div className="px-4 pb-3">{pasarAOtroAgente(tarea)}</div>
                     ) : null}
                   </li>
                 )
@@ -287,6 +326,14 @@ export function VistaDeDetalleDeRun({
       resumenDeTarea={(tarea) => <ResumenDeDiffLeido itemId={itemId} tareaId={tarea.id} />}
       // `key` por tarea: cambiar de tarea es otro transcript, no una fusion con el anterior.
       transcript={(tarea) => <VistaDeTranscript key={tarea.id} itemId={itemId} tareaId={tarea.id} />}
+      pasarAOtroAgente={(tarea) => (
+        <PasarAOtroAgente
+          key={tarea.id}
+          itemId={itemId}
+          proyectoId={referenciaDeProyecto(resumen?.proyecto ?? lectura.datos?.projectId ?? lectura.datos?.project_id ?? null)?.id ?? null}
+          tarea={tarea}
+        />
+      )}
       // El diff de la tarea ANTERIOR se descarta mientras llega el de la nueva:
       // `useLectura` conserva los datos al cambiar de ruta, y pintar los
       // cambios de T002 bajo el titulo de T003 es peor que un segundo de

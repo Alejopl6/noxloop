@@ -188,6 +188,11 @@ export function createRun(plan, opts) {
       lastFailure: null,
       gateFingerprint: null,
       integratedAt: null,
+      // Quien implementa ESTA tarea si no es el del recorrido (hand-off, spec
+      // 005). `null` es "el del recorrido": ver `traspasar`.
+      implementador: null,
+      retomarEn: null,
+      handoffs: [],
     })),
     spent: { usd: 0, calls: 0 },
   };
@@ -447,7 +452,9 @@ export function addSpend(run, gasto, opts = {}) {
   });
 }
 
-const CAMPOS_ITEM = ["branch", "baseBranch", "prTarget", "pr", "providerStateWritten", "boardFields"];
+// `termino` y `ramaLista` son del termino `commit`: donde acaba el recorrido,
+// y la rama que quedo lista en el repositorio del operador cuando no hay PR.
+const CAMPOS_ITEM = ["branch", "baseBranch", "prTarget", "pr", "termino", "ramaLista", "providerStateWritten", "boardFields"];
 
 /**
  * Los unicos campos del item que el recorrido puede escribir. `id` no esta:
@@ -479,6 +486,131 @@ export function setTaskFields(run, taskId, fields, opts = {}) {
     }
   }
   return conEstadoFresco(run, opts, (fresco) => Object.assign(tareaDe(fresco, taskId), fields));
+}
+
+// ------------------------------------------------------------- hand-off
+
+/**
+ * Los estados desde los que una tarea se puede pasar a otro implementador.
+ *
+ * Son los que todavia tienen IMPLEMENTACION pendiente. Una tarea `gated` o
+ * posterior ya paso su GREEN con un gate verde: pasarla a otro no le da nada
+ * que hacer, y lo que le falte (revision, turno en la cola) no lo hace el
+ * implementador. `integrated` ya esta en la rama del item.
+ */
+export const TRASPASABLES = ["pending", "in_progress", "red", "green", "blocked"];
+
+/**
+ * Pasa una tarea a OTRO implementador (spec 005, FR-007). El override vive aqui,
+ * en el estado del run, porque es un hecho del recorrido que tiene que
+ * sobrevivir a un corte: el proceso que lo pidio puede morir antes de que el
+ * driver lo lea.
+ *
+ * LA ARISTA QUE AGREGA, y por que no rompe la maquina de estados: una tarea
+ * traspasable vuelve a `pending`. `pending` es el unico estado desde el que el
+ * driver lanza una tarea, y el unico paso que repone el puntero de tarea activa
+ * (`abrirTarea`); sin el, las fases del nuevo agente correrian sin que los hooks
+ * tengan contra que resolver. `pending` NO significa desde cero: el worktree,
+ * la rama, sus commits, `redVerified`, la evidencia del rojo y los intentos
+ * quedan como estaban.
+ *
+ * NO SE REPITE RED. Con el rojo ya verificado, `retomarEn = "red"` le dice al
+ * driver que, al reabrir la tarea, la ponga en `red` con la evidencia que ya
+ * hay (`retomarEnRojo`) y siga en GREEN. El test ya fallo contra el codigo de
+ * antes, que es lo que el paso RED existe para probar; hacerlo escribir de nuevo
+ * seria pedirle al segundo agente que rehaga el trabajo del primero.
+ *
+ * EL FALLO PENDIENTE SE CONSERVA (`lastFailure`): es el contexto del nuevo
+ * agente. El driver se lo pasa en su primera fase GREEN y lo consume cuando el
+ * test pasa.
+ *
+ * LA SESION SE TIRA: era de otro runtime. Pedirle al nuevo que retome una
+ * sesion ajena es un error en el mejor caso y una fuga de razonamiento en el
+ * peor.
+ *
+ * EL PRESUPUESTO NO SE TOCA (principio III). Lo que se devuelve dice que bucles
+ * ya estaban agotados: como el driver cuenta el intento DESPUES de probar, un
+ * bucle agotado le deja al nuevo agente exactamente UN intento — el que el
+ * hand-off declara y registra —, y si falla se bloquea en el acto. Mas que eso
+ * es un `unstick` con nota, que es una decision humana distinta.
+ *
+ * @param {object} run
+ * @param {string} taskId
+ * @param {{runtime: string, agente?: string|null, de?: string|null, motivo?: string|null, budgets?: object}} datos
+ * @param {{home?: string}} [opts]
+ * @returns {{de: string|null, a: string, estado: string, retomarEn: string|null, presupuesto: {agotados: string[], concede: string|null}}}
+ */
+export function traspasar(run, taskId, datos, opts = {}) {
+  const runtime = typeof datos?.runtime === "string" ? datos.runtime.trim() : "";
+  if (!runtime) throw new GuardError(`${taskId}: pasar la tarea a otro agente exige el runtime que la recibe`);
+  const budgets = { ...BUDGETS_DEFAULT, ...(datos.budgets || {}) };
+
+  return conEstadoFresco(run, opts, (fresco) => {
+    const t = tareaDe(fresco, taskId);
+    if (!TRASPASABLES.includes(t.status)) {
+      throw new GuardError(
+        `${taskId}: esta en "${t.status}" y no tiene implementacion pendiente que pasar a otro agente ` +
+          `(solo desde ${TRASPASABLES.join(", ")})`,
+      );
+    }
+    const estado = t.status;
+    const agotados = LOOPS.filter((l) => (t.attempts?.[l] || 0) >= budgets[l]);
+    const retomarEn = t.redVerified === true && typeof t.redEvidence?.exitCode === "number" && t.redEvidence.exitCode !== 0
+      ? "red"
+      : null;
+
+    t.status = "pending";
+    t.implementador = { runtime, agente: datos.agente ?? null };
+    t.retomarEn = retomarEn;
+    t.sessionId = null;
+    const registro = {
+      at: new Date().toISOString(),
+      de: datos.de ?? null,
+      a: runtime,
+      agente: datos.agente ?? null,
+      estado,
+      motivo: (datos.motivo || "").trim() || null,
+      retomarEn,
+      presupuesto: {
+        agotados,
+        concede: agotados.length ? "un intento, declarado: el bucle agotado corta en el primer fallo" : null,
+      },
+    };
+    if (!Array.isArray(t.handoffs)) t.handoffs = [];
+    t.handoffs.push(registro);
+    return { de: registro.de, a: runtime, estado, retomarEn, presupuesto: registro.presupuesto };
+  });
+}
+
+/**
+ * Pone en `red` una tarea reabierta por un hand-off, con la evidencia del rojo
+ * que YA estaba (ver `traspasar`). Consume la marca.
+ *
+ * La guarda es la misma que la de `transition` a `red` —hace falta una corrida
+ * del test que salio distinto de cero— y ademas la marca del hand-off: sin ella
+ * esto seria una forma de conceder un rojo sin correr nada.
+ *
+ * @param {object} run
+ * @param {string} taskId
+ * @param {{home?: string}} [opts]
+ */
+export function retomarEnRojo(run, taskId, opts = {}) {
+  conEstadoFresco(run, opts, (fresco) => {
+    const t = tareaDe(fresco, taskId);
+    if (t.retomarEn !== "red") {
+      throw new GuardError(`${taskId}: no hay un hand-off que retome esta tarea en rojo; el rojo se verifica corriendo el test`);
+    }
+    if (t.status !== "in_progress") {
+      throw new GuardError(`${taskId}: se retoma en rojo desde "in_progress", y esta en "${t.status}"`);
+    }
+    const ev = t.redEvidence;
+    if (t.redVerified !== true || !ev || typeof ev.exitCode !== "number" || ev.exitCode === 0) {
+      throw new GuardError(`${taskId}: no hay evidencia de un rojo verificado que conservar`);
+    }
+    t.status = "red";
+    t.retomarEn = null;
+  });
+  return run;
 }
 
 // --------------------------------------------------------- tarea activa

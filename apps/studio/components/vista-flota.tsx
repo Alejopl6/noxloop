@@ -47,6 +47,7 @@ import {
   type RolDeAgente,
 } from '@/lib/tipos'
 import type { Navegar } from '@/lib/ruta'
+import { explicarTdd } from '@/lib/tdd'
 
 /**
  * T188 · La flota del proyecto (etapa 07) y la activacion.
@@ -681,6 +682,9 @@ function DetalleDeAgente({
 
       <ListaDeDescripciones>
         <Description titulo="Runtime" contenido={agente.runtime} operativo />
+        {/* Como se fuerza su test-primero (spec 005, FR-008): por hook, por el
+            motor despues de la fase, o nadie. Ver `lib/tdd.ts`. */}
+        <Description titulo="TDD" contenido={explicarTdd(agente.tdd).etiqueta} nota={explicarTdd(agente.tdd).frase} />
         <Description titulo="Modelo" contenido={agente.modelo} operativo />
         <Description
           titulo="Skills"
@@ -922,6 +926,12 @@ export function PanelDeFlota({
                     {agente.modelo ? (
                       <span className="fuente-operativa text-label-12 text-ds-gray-700">
                         {agente.modelo}
+                      </span>
+                    ) : null}
+                    {agente.tdd !== 'no_aplica' ? (
+                      // Solo donde dice algo: en un revisor «no aplica» es ruido.
+                      <span title={explicarTdd(agente.tdd).frase}>
+                        <Badge tono={explicarTdd(agente.tdd).tono}>{explicarTdd(agente.tdd).etiqueta}</Badge>
                       </span>
                     ) : null}
                     {choque ? (

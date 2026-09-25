@@ -69,6 +69,9 @@ const IMPLEMENTADOR = Object.freeze({ nombre: "implementador", runtime: "claude-
 const REVISOR = Object.freeze({ nombre: "revisor", runtime: "codex" });
 const MODELO_POR_DEFECTO = "por-defecto-del-runtime";
 
+/** La autonomia con la que queda un proyecto activado por el modo rapido: ver `activarRapido`. */
+const AUTONOMIA_DEL_MODO_RAPIDO = "L2";
+
 /**
  * Las etapas, en el orden de la maquina de estados. `desde` es el estado en el
  * que la etapa se da; `artefacto`, la guarda que la juzga.
@@ -160,6 +163,33 @@ export async function activarRapido(p, inicial) {
       detalle: { etapa: e.etapa, hecho },
     });
     pasos.push({ etapa: e.etapa, hecho });
+  }
+
+  // AUTONOMIA L2: plan y ejecucion sin parar. El operador pidio que el modo
+  // rapido funcione A LA PRIMERA, y con L0/L1 el primer Run se detiene en
+  // `plan_listo` esperando una aprobacion que nadie le dijo que tenia que dar.
+  // No abre ninguna puerta que el principio IV cierre: con `commit` (el
+  // termino de un proyecto sin remoto) nada sale de la maquina, y con `pr` el
+  // PR queda abierto y nunca se mergea. El operador lo baja en Settings. Solo
+  // al llegar a ACTIVE, y solo por aqui: un proyecto que ya estaba activo
+  // (arriba, `return` temprano) conserva la autonomia que tenga.
+  if (p.dep.almacen.proyectos.porId(proyecto.id)?.estado === "ACTIVE") {
+    p.dep.almacen.base.escribir("UPDATE project SET autonomia = ?, actualizado = ? WHERE id = ?", [
+      AUTONOMIA_DEL_MODO_RAPIDO,
+      new Date().toISOString(),
+      proyecto.id,
+    ]);
+    p.dep.almacen.auditoria.registrar({
+      actor: ACTOR,
+      accion: "proyecto.autonomia",
+      objeto_tipo: "project",
+      objeto_id: proyecto.id,
+      resultado: "permitido",
+      detalle: {
+        autonomia: AUTONOMIA_DEL_MODO_RAPIDO,
+        porque: "modo rapido: plan y ejecucion sin parar; se cambia en Settings",
+      },
+    });
   }
 
   proyecto = p.dep.almacen.proyectos.porId(proyecto.id);

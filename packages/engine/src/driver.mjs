@@ -17,9 +17,10 @@
 
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import {
   loadRun, saveRun, transition, bump, setTaskFields, setItemFields,
-  setActiveTask, clearActiveTask, clearLastFailure, addSpend, BUDGETS_DEFAULT,
+  setActiveTask, clearActiveTask, clearLastFailure, addSpend, retomarEnRojo, BUDGETS_DEFAULT,
 } from "./state.mjs";
 import { readySet } from "./scheduler.mjs";
 import { drain, syncItemBranch } from "./merge-queue.mjs";
@@ -158,7 +159,15 @@ export async function runItem(itemId, deps) {
 
   try {
     const { itemBranch, baseBranch, integrationPath } = deps.resolve(run.tasks[0].repo);
-    setItemFields(run, { branch: itemBranch, baseBranch, prTarget: baseBranch }, { home });
+    // DONDE TERMINA, decidido una vez y escrito en el estado: el servicio y el
+    // board leen del archivo si esperar un PR o una rama. Con `commit` no hay
+    // PR al que apuntar, y un `prTarget` escrito diria que lo habra.
+    const termino = terminoDe(config);
+    setItemFields(
+      run,
+      { branch: itemBranch, baseBranch, prTarget: termino === "pr" ? baseBranch : null, termino },
+      { home },
+    );
 
     // LA RAMA DEL ITEM SE PONE AL DIA ANTES DE EMPEZAR, y no al final.
     //
@@ -168,7 +177,9 @@ export async function runItem(itemId, deps) {
     // verdad cuando el worktree del item venia de un recorrido anterior: la
     // funcion existia en la cola y solo la usaba el recorrido de un hito, asi
     // que un `noxloop run` nunca la llamaba.
-    const alDia = syncItemBranch(integrationPath, itemBranch, baseBranch);
+    // Con `commit`, contra la base LOCAL y sin fetch: el recorrido no habla
+    // con ningun remoto, lo haya o no.
+    const alDia = syncItemBranch(integrationPath, itemBranch, baseBranch, { local: termino === "commit" });
     if (!alDia.ok) {
       // No se fuerza. Que la rama del item conflictue con su base es una
       // decision humana, y decirlo ahora cuesta un mensaje; descubrirlo al
@@ -252,6 +263,18 @@ export async function runItem(itemId, deps) {
       };
     }
 
+    // --------------------------------------------- o la rama, sin PR
+    //
+    // EL TERMINO `commit`. Todo lo anterior —worktrees, TDD, gate, revision,
+    // cola de integracion— es identico; lo que cambia es el ultimo paso. El
+    // trabajo YA esta commiteado en la rama del item, y esa rama ya esta en el
+    // repositorio del operador (los worktrees comparten refs): no hay nada que
+    // empujar ni que abrir. Queda del lado seguro del principio IV con mas
+    // margen que un PR — nada sale de la maquina y la base no se toca.
+    if (termino === "commit") {
+      return await entregarEnRama(run, integradas, bloqueadas, deps);
+    }
+
     const gaps = Object.fromEntries(
       [...new Set(run.tasks.map((t) => t.repo))].map((r) => [r, config.repos?.[r]?.gaps || []]),
     );
@@ -290,6 +313,126 @@ export async function runItem(itemId, deps) {
       if (t.worktree) clearActiveTask({ home, worktree: t.worktree });
     }
     lock.release();
+  }
+}
+
+/**
+ * Donde termina el recorrido. Lo que no sea `commit` es `pr`: el PR es el
+ * termino por defecto del esquema y el unico que existio hasta ahora, asi que
+ * una configuracion sin el campo sigue haciendo lo que hacia.
+ *
+ * @param {any} config
+ * @returns {"pr"|"commit"}
+ */
+export function terminoDe(config) {
+  return config?.termino === "commit" ? "commit" : "pr";
+}
+
+/**
+ * Los commits de la rama del item que no estan en la base, del mas viejo al
+ * mas nuevo: el orden en que se leen (el test antes que la implementacion).
+ *
+ * @param {string} cwd
+ * @param {string} base
+ * @param {string} rama
+ * @returns {Array<{sha: string, asunto: string}>}
+ */
+function commitsDeLaRama(cwd, base, rama) {
+  const salida = execFileSync("git", ["-C", cwd, "log", "--reverse", "--format=%H%x09%s", `${base}..${rama}`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (!salida) return [];
+  return salida.split("\n").map((linea) => {
+    const i = linea.indexOf("\t");
+    return { sha: linea.slice(0, i), asunto: linea.slice(i + 1) };
+  });
+}
+
+/**
+ * El final del termino `commit`: la rama del item, lista, dicha en el estado,
+ * en el gestor y en el resultado.
+ *
+ * NO LLAMA A `createPR`, NI HACE FETCH NI PUSH. Es lo que distingue este
+ * termino, y el test de punta a punta lo mide con un `createPR` que cuenta sus
+ * llamadas y un repositorio sin remoto.
+ *
+ * NUNCA DOS VECES EL MISMO COMENTARIO. Como `anotarEnGestor` con un PR que ya
+ * existia: un relanzamiento que encuentra la rama con la MISMA punta no vuelve
+ * a comentar. Si la punta cambio —se integro algo mas—, si: es otra entrega.
+ *
+ * @param {any} run
+ * @param {string[]} integradas
+ * @param {string[]} bloqueadas
+ * @param {any} deps
+ */
+async function entregarEnRama(run, integradas, bloqueadas, deps) {
+  const { home, log = consolaMuda() } = deps;
+  const destino = deps.resolve(run.tasks[0].repo);
+  const rama = destino.itemBranch;
+  const base = destino.baseBranch;
+  const commits = commitsDeLaRama(destino.integrationPath, base, rama);
+  const head = execFileSync("git", ["-C", destino.integrationPath, "rev-parse", rama], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+
+  const previa = run.item.ramaLista;
+  const ramaLista = { rama, base, head, commits };
+  setItemFields(run, { ramaLista }, { home });
+
+  if (previa?.head !== head) await anotarRamaEnGestor(run, ramaLista, deps);
+  else log.info("la rama ya estaba entregada con esta misma punta: no se repite el comentario");
+  await escribirEstadoEnGestor(run, "in_review", deps);
+
+  return {
+    item: run.item.id,
+    termino: "commit",
+    pr: null,
+    rama,
+    base,
+    commits,
+    integrated: integradas,
+    blocked: bloqueadas,
+    spent: loadRun(run.item.id, { home })?.spent || { usd: 0, calls: 0 },
+  };
+}
+
+/**
+ * El comentario de cierre del termino `commit`: la rama primero —es lo que se
+ * busca—, como mirarla, y lo integrado y lo bloqueado por id con su causa, igual
+ * que el del PR. Sin adjunto: no hay URL que adjuntar.
+ *
+ * @param {any} run
+ * @param {{rama: string, base: string, commits: Array<{sha: string, asunto: string}>}} r
+ * @param {any} deps
+ */
+async function anotarRamaEnGestor(run, r, deps) {
+  const { provider, providerCtx, log = consolaMuda() } = deps;
+  if (!provider) return;
+  const caps = provider.capabilities?.() || {};
+  if (!(caps.comment && typeof provider.comment === "function")) {
+    log.info("el gestor no declara `comment`: la rama queda sin comentario de cierre");
+    return;
+  }
+  const integradas = run.tasks.filter((/** @type {any} */ t) => t.status === "integrated");
+  const bloqueadas = run.tasks.filter((/** @type {any} */ t) => t.status === "blocked");
+  const lineas = [
+    `noxloop dejo el trabajo commiteado en la rama \`${r.rama}\` de tu repositorio local ` +
+      `(${r.commits.length} commit${r.commits.length === 1 ? "" : "s"} sobre \`${r.base}\`).`,
+    `Miralo con: git log ${r.base}..${r.rama}`,
+  ];
+  if (integradas.length) lineas.push(`Integradas: ${integradas.map((/** @type {any} */ t) => t.id).join(", ")}.`);
+  if (bloqueadas.length) {
+    lineas.push(
+      `Bloqueadas: ${bloqueadas.map((/** @type {any} */ t) => (t.lastFailure ? `${t.id} (${t.lastFailure})` : t.id)).join("; ")}.`,
+    );
+  }
+  lineas.push(`Nada se empujo ni se mergeo: \`${r.base}\` sigue donde estaba.`);
+  try {
+    await provider.comment(run.item.id, lineas.join("\n"), providerCtx);
+  } catch (e) {
+    log.warn(`no se pudo dejar el comentario de cierre en el ticket: ${e.message}`);
   }
 }
 
@@ -344,7 +487,15 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
       }
 
       case "red": {
-        const r = await fase("GREEN", run, taskId, politica, deps);
+        // EL FALLO PENDIENTE DE UN HAND-OFF. Una tarea que llega a `red` con
+        // `lastFailure` puesto la reabrio un hand-off (spec 005, FR-007): el
+        // agente anterior no supo pasar el test, y lo que fallo es exactamente
+        // lo que el nuevo necesita leer antes de escribir. En el camino normal
+        // `red` no trae fallo pendiente y esto no cambia nada.
+        const pendiente = t.lastFailure || null;
+        const r = await fase("GREEN", run, taskId, politica, deps, pendiente
+          ? { extra: `Otro agente no llego a pasar el test. Lo que quedo pendiente:\n${comoDato(pendiente, "el fallo pendiente")}` }
+          : {});
         if (await cortoPorPresupuesto(r, itemId, taskId, deps)) return;
         const alcanceVerde = atenderAlcance(r, itemId, taskId, "green", deps, budgets, bitacora);
         if (alcanceVerde === "corta") return;
@@ -352,7 +503,10 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
         run = loadRun(itemId, { home });
         const ev = correrElTest(run, taskId, deps);
         if (ev.ok) {
-          transition(run, taskId, "green", { home });
+          // Se consume ANTES de pasar a green: en green un `lastFailure` es la
+          // senia de un hallazgo por atender, y el test ya paso.
+          if (pendiente) clearLastFailure(loadRun(itemId, { home }), taskId, { home });
+          transition(loadRun(itemId, { home }), taskId, "green", { home });
           bitacora.info("el test pasa");
         } else {
           const b = bump(run, taskId, "green", { home, budgets });
@@ -542,6 +696,25 @@ async function pipelineDeTarea(itemId, taskId, deps, budgets) {
         const b = bump(run, taskId, "review", { home, budgets });
         if (await cortoPorPresupuesto(r, itemId, taskId, deps)) return;
 
+        // UNA REVISION QUE NO CORRIO NO APRUEBA. Medido en el primer run real:
+        // el revisor (Codex con la sesion vencida) volvio `ok: false` sin
+        // veredicto, esto caia en el `else` de abajo y la tarea se integraba
+        // sin que nadie la hubiera revisado — el verde inventado del principio
+        // II. Se reintenta con el presupuesto de revision; al agotarlo, la
+        // tarea se bloquea con la causa textual del runtime.
+        if (r.ok === false && r.findings !== "blocking") {
+          const causa = String(r.text || "el runtime del revisor no devolvio nada").trim();
+          if (b.exhausted) {
+            transition(run, taskId, "blocked", {
+              home,
+              failure: `la revision no pudo correr despues de ${b.count} intento(s): ${causa}`,
+            });
+            return;
+          }
+          bitacora.warn(`la revision no pudo correr (${b.count}): ${causa} — se reintenta`);
+          break;
+        }
+
         if (r.findings === "blocking") {
           if (b.exhausted) {
             transition(run, taskId, "blocked", {
@@ -600,6 +773,14 @@ async function abrirTarea(run, taskId, deps) {
     allowedCommands: comandosPermitidos(config.repos?.[t.repo]),
   });
   transition(loadRun(run.item.id, { home }), taskId, "in_progress", { home });
+
+  // UNA TAREA REABIERTA POR UN HAND-OFF con el rojo ya verificado sigue en
+  // GREEN: el test ya fallo contra el codigo de antes, y repetir RED seria
+  // pedirle al nuevo agente que rehaga el trabajo del anterior. Pasa por aqui
+  // —y no directo a `red`— para que el puntero de arriba quede escrito.
+  if (tareaDe(loadRun(run.item.id, { home }), taskId).retomarEn === "red") {
+    retomarEnRojo(loadRun(run.item.id, { home }), taskId, { home });
+  }
 }
 
 /**
@@ -707,7 +888,10 @@ export async function fase(nombre, run, taskId, politica, deps, opts = {}) {
   // runtime que declara `hooks: false`, porque ahi no hay hook que bloquee la
   // escritura antes. Es un dato que trae `deps`, no una pregunta por el nombre
   // del runtime (principio VI). Ver `alcance-de-fase.mjs`.
-  const necesitaGuarda = deps.alcancePorElMotor === true && permitidosEnFase(nombre, t) !== null;
+  // Por tarea si el cableado lo sabe: tras un hand-off, quien escribe ESTA
+  // tarea puede no ser el implementador del recorrido.
+  const sinHooks = typeof deps.alcancePorElMotorDe === "function" ? deps.alcancePorElMotorDe(t) : deps.alcancePorElMotor;
+  const necesitaGuarda = sinHooks === true && permitidosEnFase(nombre, t) !== null;
   // SIN WORKTREE NO HAY DONDE MIRAR, y entonces la fase NO se invoca. Correrla
   // igual seria dejar a un runtime sin hooks escribir en RED sin nada que
   // sostenga el principio I: ni el hook, que no tiene, ni esta guarda, que no
@@ -892,6 +1076,16 @@ export function excedeLlamadas(run, techo) {
 }
 
 async function cortoPorPresupuesto(r, itemId, taskId, deps) {
+  // SESION VENCIDA: tampoco es un fallo del codigo, y reintentar con la misma
+  // sesion da el mismo error y quema los intentos de la tarea. Se bloquea en
+  // el acto con la accion que la arregla, que el adaptador ya sabe decir.
+  if (r?.subtype === "sin_sesion") {
+    transition(loadRun(itemId, { home: deps.home }), taskId, "blocked", {
+      home: deps.home,
+      failure: [r.causa || r.text || "la sesion del runtime esta vencida", r.accion].filter(Boolean).join(" "),
+    });
+    return true;
+  }
   if (!r?.budgetExhausted) return false;
   // Un corte por presupuesto NO es que la tarea este mal: es que la invocacion
   // se quedo sin plata a mitad. Tratarlo como fallo del codigo manda a revisar
@@ -998,20 +1192,69 @@ async function escribirEstadoEnGestor(run, estadoCanonico, deps) {
   }
 }
 
+/**
+ * El PR, en el ticket: el adjunto nativo y el COMENTARIO DE CIERRE (spec 005,
+ * FR-003).
+ *
+ * POR QUE LOS DOS Y NO UNO U OTRO. Hasta la 005 el comentario era solo la
+ * degradacion de `linkUrl`. Pero no dicen lo mismo: el adjunto dice «hay un
+ * PR» en un costado del ticket; el comentario es lo que se lee en la
+ * conversacion, le llega por notificacion a quien sigue el ticket, y dice QUE
+ * quedo integrado y que no. Sin el, quien mira el gestor ve el ticket moverse a
+ * revision sin una palabra de por que.
+ *
+ * NUNCA DOS VECES EL MISMO CIERRE. Un relanzamiento que encuentra el PR ya
+ * abierto (`alreadyExisted`) no comenta: el cierre ya se dijo cuando se abrio.
+ * El precio, declarado: si aquel primer comentario fallo, el relanzamiento no
+ * lo reintenta. Llevar la marca en el estado del run exigiria un campo nuevo
+ * del item, y un comentario de menos se ve; uno repetido en cada relanzamiento
+ * ensucia el ticket de cualquiera que adopte esto.
+ *
+ * Cada escritura con su propio `try`: que el adjunto falle no puede comerse el
+ * comentario, que es el unico que el operador lee.
+ */
 async function anotarEnGestor(run, pr, deps) {
   const { provider, providerCtx, log = consolaMuda() } = deps;
   if (!provider) return;
   const caps = provider.capabilities?.() || {};
-  try {
-    if (caps.linkUrl && typeof provider.linkUrl === "function") {
+  if (caps.linkUrl && typeof provider.linkUrl === "function") {
+    try {
       await provider.linkUrl(run.item.id, pr.url, "Pull request", providerCtx);
-    } else if (caps.comment && typeof provider.comment === "function") {
-      // Degradacion declarada: sin `linkUrl`, el PR va como comentario.
-      await provider.comment(run.item.id, `Pull request abierto por noxloop: ${pr.url}`, providerCtx);
+    } catch (e) {
+      log.warn(`no se pudo adjuntar el PR al ticket: ${e.message}`);
     }
-  } catch (e) {
-    log.warn(`no se pudo anotar el PR en el ticket: ${e.message}`);
   }
+  if (!(caps.comment && typeof provider.comment === "function")) {
+    // Degradacion declarada: sin `comment` el cierre queda en el adjunto y en
+    // el estado. Se dice en el log para que no parezca olvido.
+    log.info("el gestor no declara `comment`: el PR queda sin comentario de cierre");
+    return;
+  }
+  if (pr.alreadyExisted) return;
+  try {
+    await provider.comment(run.item.id, comentarioDeCierre(run, pr), providerCtx);
+  } catch (e) {
+    log.warn(`no se pudo dejar el comentario de cierre en el ticket: ${e.message}`);
+  }
+}
+
+/**
+ * El texto del comentario de cierre: el enlace primero —es lo que se busca—, y
+ * despues lo integrado y lo bloqueado POR ID, con la causa del bloqueo tal cual
+ * (nunca un resumen: el resumen borra el dato que hace falta para seguir).
+ */
+function comentarioDeCierre(run, pr) {
+  const integradas = run.tasks.filter((t) => t.status === "integrated");
+  const bloqueadas = run.tasks.filter((t) => t.status === "blocked");
+  const lineas = [`noxloop abrio el pull request: ${pr.url}`];
+  if (integradas.length) lineas.push(`Integradas: ${integradas.map((t) => t.id).join(", ")}.`);
+  if (bloqueadas.length) {
+    lineas.push(
+      `Bloqueadas: ${bloqueadas.map((t) => (t.lastFailure ? `${t.id} (${t.lastFailure})` : t.id)).join("; ")}.`,
+    );
+  }
+  lineas.push("El merge sigue siendo de una persona.");
+  return lineas.join("\n");
 }
 
 // ------------------------------------------------------------- utilidades

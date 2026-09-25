@@ -31,12 +31,18 @@ export const IDS = {
   inexistente: "00000000-0000-4000-8000-0000000000ff",
   equipo: "7a1e0000-0000-4000-8000-00000000eeee",
   proyecto: "7a1e0000-0000-4000-8000-00000000dddd",
+  // Un SEGUNDO proyecto de Linear en el mismo equipo: es lo que las reglas de
+  // ruteo (spec 005, FR-001) separan en dos boards de noxloop.
+  proyectoPagos: "7a1e0000-0000-4000-8000-00000000ffff",
   hito: "7a1e0000-0000-4000-8000-00000000aaaa",
   ciclo: "7a1e0000-0000-4000-8000-00000000cccc",
   persona: "7a1e0000-0000-4000-8000-00000000bbbb",
 };
 
 const EQUIPO = { id: IDS.equipo, key: "ENG", name: "Ingeniería" };
+
+/** El proyecto de Linear «Pagos»: el de las reglas de ruteo de la spec 005. */
+const PAGOS = { id: IDS.proyectoPagos, name: "Pagos" };
 
 /**
  * Los estados de workflow del equipo ENG, tal como los devuelve
@@ -136,7 +142,7 @@ const ISSUES = {
     assignee: null,
     labels: { nodes: [etiqueta("Story")] },
     team: EQUIPO,
-    project: null,
+    project: PAGOS,
     projectMilestone: null,
     cycle: null,
   },
@@ -190,7 +196,7 @@ const ISSUES = {
     assignee: null,
     labels: { nodes: [] },
     team: EQUIPO,
-    project: null,
+    project: PAGOS,
     projectMilestone: null,
     cycle: null,
   },
@@ -377,9 +383,20 @@ function responder(query, variables) {
     const porEquipo = (i) =>
       (f.team?.id?.eq && i.team.id === f.team.id.eq) || (f.team?.key?.eq && i.team.key === f.team.key.eq);
     const fuera = f.state?.type?.nin || [];
+    // Las reglas de ruteo (spec 005): el servidor de verdad aplica
+    // `project.{id|name}.eq` y `labels.some.name.in` del lado de Linear; el
+    // grabado hace lo mismo, asi que un filtro mal armado devuelve de mas.
+    const porProyecto = (i) =>
+      !f.project ||
+      (f.project.id?.eq ? i.project?.id === f.project.id.eq : f.project.name?.eq ? i.project?.name === f.project.name.eq : false);
+    const nombresDeEtiqueta = f.labels?.some?.name?.in;
+    const porEtiquetas = (i) =>
+      !nombresDeEtiqueta || (i.labels?.nodes || []).some((l) => l && nombresDeEtiqueta.includes(l.name));
     const todos = Object.values(ISSUES)
       .filter(porEquipo)
       .filter((i) => !fuera.includes(i.state.type))
+      .filter(porProyecto)
+      .filter(porEtiquetas)
       // orderBy: updatedAt, del más reciente al más viejo, como Linear.
       .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const desde = variables.after ? Number(String(variables.after).replace("cursor-listado-", "")) : 0;
@@ -428,6 +445,15 @@ function responder(query, variables) {
     const issue = porId(variables.id);
     const rel = (issue && RELACIONES[issue.id]) || { relations: { nodes: [] }, inverseRelations: { nodes: [] } };
     return respuesta({ data: { issue: rel } });
+  }
+
+  // --- los estados del equipo (spec 005, `listStates`). Va ANTES que la
+  // resolucion de un nombre, que tambien es `workflowStates(`: la distingue la
+  // variable `$equipoDeEstados`.
+  if (query.includes("$equipoDeEstados")) {
+    const f = variables.equipoDeEstados || {};
+    const esEste = (f.id?.eq && f.id.eq === EQUIPO.id) || (f.key?.eq && f.key.eq === EQUIPO.key);
+    return respuesta({ data: { workflowStates: { nodes: esEste ? ESTADOS.map((e, i) => ({ ...e, position: i })) : [] } } });
   }
 
   if (query.includes("workflowStates(")) {

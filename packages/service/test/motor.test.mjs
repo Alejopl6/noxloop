@@ -11,7 +11,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -107,10 +107,16 @@ test("lo que el esquema del proveedor EXIGE y nadie declara se dice al pulsar Ru
   assert.deepEqual(bien.provider.options, { organization: "o", project: "p" }, "las opciones vienen de la conexion");
 });
 
-test("sin remoto -> `sin_repo`, sin gate -> `sin_gate`, sin gestor -> `sin_gestor`, cada uno con su accion", () => {
-  const sinRepo = codigoDe(() => componerConfig(entrada({ remoto: null })));
+test("`pr` sin remoto -> `sin_repo`, sin gate -> `sin_gate`, sin gestor -> `sin_gestor`, cada uno con su accion", () => {
+  // Sin remoto a secas el termino es `commit` y se compone (ver
+  // termino-commit.test.mjs); lo que sigue sin poderse es PEDIR un PR sin el.
+  const sinRepo = codigoDe(() => componerConfig(entrada({ remoto: null, termino: "pr" })));
   assert.equal(sinRepo?.codigo, "sin_repo");
   assert.match(sinRepo.causa, /La App/, "la causa tiene que nombrar el proyecto");
+  // Y sin remoto sobre una carpeta que no es un repositorio, tampoco.
+  const sinGit = codigoDe(() => componerConfig(entrada({ remoto: null, esRepo: false })));
+  assert.equal(sinGit?.codigo, "sin_repo");
+  assert.match(sinGit.accion, /git init/);
 
   const sinGate = codigoDe(() => componerConfig(entrada({ gate: null, gateHallado: "el snapshot no encontro runner" })));
   assert.equal(sinGate?.codigo, "sin_gate");
@@ -119,7 +125,7 @@ test("sin remoto -> `sin_repo`, sin gate -> `sin_gate`, sin gestor -> `sin_gesto
   const sinGestor = codigoDe(() => componerConfig(entrada({ gestor: null, gestorHallado: "no hay conexion tracker" })));
   assert.equal(sinGestor?.codigo, "sin_gestor");
 
-  for (const e of [sinRepo, sinGate, sinGestor]) assert.ok(e.accion.length > 30, `${e.codigo}: accion vacia`);
+  for (const e of [sinRepo, sinGit, sinGate, sinGestor]) assert.ok(e.accion.length > 30, `${e.codigo}: accion vacia`);
 });
 
 test("un remoto sin forma de forja (una ruta local) no da `owner/repo` inventados: `sin_gestor`", () => {
@@ -263,7 +269,12 @@ test("`diagnosticar` no lanza nunca: dice si se puede lanzar y, si no, por que",
     assert.equal(d1.lanzable, true, JSON.stringify(d1));
     assert.equal(d1.tieneRepo, true);
 
-    const sinRepo = await proyectoActivo(svc, { nombre: "Sin Repo", ruta: repoConRemoto({ remoto: null }).repo });
+    // Una carpeta que PERDIO su git despues del alta (el alta de `local` lo
+    // exige): sin remoto y sin repositorio no hay donde dejar nada. Sin remoto
+    // pero con git se lanza, en `commit` (termino-commit.test.mjs).
+    const suelto = repoConRemoto({ remoto: null }).repo;
+    const sinRepo = await proyectoActivo(svc, { nombre: "Sin Repo", ruta: suelto });
+    rmSync(join(suelto, ".git"), { recursive: true, force: true });
     const d2 = await diagnosticar(svc.dep, sinRepo);
     assert.equal(d2.lanzable, false);
     assert.equal(d2.tieneRepo, false);

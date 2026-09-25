@@ -213,11 +213,11 @@ test("GET /v1/diagnostics: maquina y proyecto, con repo, confianza, gate y runti
       assert.equal(pb.gate.declarado, false);
       assert.ok(pb.problemas.some((x) => x.codigo === "sin_gate" && x.causa && x.accion));
 
-      // Sin remoto Y sin gate: los dos se dicen, no solo el primero que para
-      // la composicion de la configuracion.
+      // Sin remoto Y sin gate: el remoto ya no es un problema —el proyecto
+      // termina en `commit`, en una rama local—; el gate si, y se dice.
       const c = await proyectoActivo(svc, { nombre: "Suelto", conexiones: [], runner: null, ruta: repoConRemoto({ remoto: null }).repo });
       const pc = (await (await pedir(svc, `/v1/diagnostics?project=${c.id}`)).json()).proyectos[0];
-      assert.deepEqual(pc.problemas.map((x) => x.codigo).filter((k) => k.startsWith("sin_")).sort(), ["sin_gate", "sin_repo"]);
+      assert.deepEqual(pc.problemas.map((x) => x.codigo).filter((k) => k.startsWith("sin_")).sort(), ["sin_gate"]);
 
       const solo = await (await pedir(svc, `/v1/diagnostics?project=${a.id}`)).json();
       assert.deepEqual(solo.proyectos.map((x) => x.id), [a.id]);

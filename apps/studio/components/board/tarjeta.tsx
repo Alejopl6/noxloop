@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/indicador-de-carga'
 import { ChipDeEstado, COLOR_DE_TONO, tonoDeChip } from '@/components/board/chip'
 import { colorDeProyecto, iniciales, inicialesDeEjecutor } from '@/components/board/derivar'
+import { PasarAOtroAgente } from '@/components/runs/pasar-a-otro-agente'
 import type { ErrorDelServicio } from '@/lib/daemon'
 import type { AsignadoDeTicket, AvanceDeTarjeta, EjecutorDeTarea, Tarjeta } from '@/lib/tipos'
 import { cn } from '@/lib/utils'
@@ -376,6 +377,19 @@ export function TarjetaDelBoard({
 
       {motivo || sinAccionConMotivo ? (
         <p className="text-label-12 text-ds-gray-900">{motivo ?? sinAccionConMotivo}</p>
+      ) : null}
+
+      {/* LA SEGUNDA SALIDA DE UN BLOQUEADO (spec 005, FR-007): ademas de Retry
+          con el mismo agente, pasar la tarea a otro. Va plegada y debajo, no
+          junto a la accion principal: FR-005 sigue siendo UNA accion por
+          tarjeta, y esta es la alternativa a ella. */}
+      {tarjeta.run?.estado === 'bloqueado' ? (
+        <PasarAOtroAgente
+          itemId={tarjeta.run.itemId}
+          proyectoId={proyecto.id}
+          implementadorDelRun={tarjeta.ejecutor?.runtime ?? null}
+          compacto
+        />
       ) : null}
 
       {error ? (

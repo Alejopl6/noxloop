@@ -1107,8 +1107,9 @@ const SIN_EFECTO = () => undefined
 /**
  * DATOS DE EJEMPLO DEL BOARD, con todos los chips del contrato.
  *
- * Trece tarjetas en tres proyectos, y cada una esta ahi por un estado que el
- * operador va a ver algun dia: los diez chips de `TipoDeChip`, una tarea
+ * Catorce tarjetas en tres proyectos, y cada una esta ahi por un estado que el
+ * operador va a ver algun dia: los once chips de `TipoDeChip` (con «movida»,
+ * cuyo detalle ofrece «Seguir aqui» y «Soltarla», spec 005), una tarea
  * propia (`origen: 'local'`), una sin repo, una con el modelo sin conectar,
  * una sin asignar y una terminada. Un gestor sin `listItems` (el de
  * Facturacion) para ver la nota de columna y el aviso sin tumbar el board.
@@ -1254,6 +1255,25 @@ const TARJETAS: Tarjeta[] = [
     run: { itemId: 'PAY-160', estado: 'fallido', pr: null, gasto: gasto(3.4, 41) }, tieneRepo: true,
   },
   {
+    // Spec 005, FR-004: el run sigue, pero la issue ya no cumple las reglas del
+    // proyecto. El detalle ofrece «Seguir aqui» y «Soltarla» con el destino.
+    id: 'pagos:PAY-171',
+    proyecto: REF.pagos,
+    ejecutor: CLAUDE,
+    ticket: { id: 'PAY-171', key: 'PAY-171', titulo: 'Limites de gasto por tarjeta corporativa', url: null, prioridad: 2, equipo: 'Core', etiquetas: ['tarjetas'], asignado: ANA },
+    columna: 'in_progress',
+    chip: {
+      tipo: 'movida',
+      texto: 'Movida · Tarjetas',
+      detalle: 'PAY-171 ya no cumple las reglas de este proyecto: ahora esta en el proyecto «Tarjetas» de `linear`. El run sigue aqui hasta su PR. Decide en la tarjeta: «Seguir aqui» la deja en este board sin este aviso; «Soltarla» la quita de el (ni Linear ni el run se tocan). Para que vuelva a cumplirlas, ajusta las reglas en Settings del proyecto → Gestor.',
+      posicion: null,
+      destino: 'Tarjetas',
+    },
+    movida: { destino: 'Tarjetas', detalle: 'PAY-171 ya no cumple las reglas de este proyecto.' },
+    avance: { hechas: 2, total: 5, fase: 'Implementar' }, accion: ABRIR_RUN,
+    run: { itemId: 'PAY-171', estado: 'corriendo', pr: null, gasto: gasto(0.97, 12) }, tieneRepo: true,
+  },
+  {
     id: 'portal:103',
     proyecto: REF.portal,
     ejecutor: CLAUDE,
@@ -1286,13 +1306,13 @@ const BOARD_DE_EJEMPLO: Board = {
   columnas: [
     { id: 'backlog', titulo: 'Backlog', total: 2, nota: null },
     { id: 'todo', titulo: 'Todo', total: 4, nota: 'Facturacion: Azure DevOps no declara la capacidad de listar tickets; de ese proyecto solo aparecen los que ya tienen run.' },
-    { id: 'in_progress', titulo: 'En curso', total: 6, nota: null },
+    { id: 'in_progress', titulo: 'En curso', total: 7, nota: null },
     { id: 'in_review', titulo: 'En revision', total: 1, nota: null },
     { id: 'blocked', titulo: 'Bloqueado', total: 1, nota: null },
     { id: 'done', titulo: 'Hecho', total: 1, nota: null },
   ],
   tarjetas: TARJETAS,
-  resumen: { enCurso: 1, teNecesitan: 3, enCola: 1 },
+  resumen: { enCurso: 2, teNecesitan: 3, enCola: 1 },
   proyectos: PROYECTOS_DEL_BOARD,
   avisos: [
     {
@@ -1671,6 +1691,7 @@ function MarcoDeEjemplo({
           errores={{}}
           alAbrirExterno={SIN_EFECTO}
           alNuevaTarea={SIN_EFECTO}
+          alDecidirMovida={SIN_EFECTO}
         />
       </div>
     </div>
@@ -1682,7 +1703,7 @@ function CatalogoDelBoard({ navegar }: { navegar: Navegar }) {
     <>
       <Pantalla
         titulo="Board · spec 003"
-        nota="La pantalla de inicio: navegacion lateral (cuatro destinos, proyectos y runs activos) y el board con sus columnas. Trece tarjetas de ejemplo con los diez chips del contrato, una tarea propia, una sin repo y una con el modelo sin conectar."
+        nota="La pantalla de inicio: navegacion lateral (cuatro destinos, proyectos y runs activos) y el board con sus columnas. Catorce tarjetas de ejemplo con los once chips del contrato (la «movida» abre su detalle con «Seguir aqui» y «Soltarla»), una tarea propia, una sin repo y una con el modelo sin conectar."
       >
         <Estado nombre="todos los proyectos">
           <MarcoDeEjemplo navegar={navegar} board={BOARD_DE_EJEMPLO} />

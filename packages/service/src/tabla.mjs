@@ -33,6 +33,10 @@ import * as diff from "./diff.mjs";
 import * as transcript from "./transcript.mjs";
 import * as modoRapido from "./modo-rapido.mjs";
 import * as diagnostico from "./diagnostico.mjs";
+import * as orden from "./orden.mjs";
+import * as cola from "./cola.mjs";
+import * as ajustes from "./ajustes.mjs";
+import * as movidas from "./movidas.mjs";
 
 export const TABLA = crearTabla([
   // ---- Salud y sesion -----------------------------------------------------
@@ -168,6 +172,9 @@ export const TABLA = crearTabla([
   // lee los transcripts que el motor escribio, redactados, paginados. `GET` y
   // nada mas; crecer lo avisa el evento `run.transcript` (ver `transcript.mjs`).
   { patron: "/v1/runs/:id/tasks/:taskId/transcript", metodos: ["GET"], manejar: transcript.transcriptDeTarea },
+  // El hand-off (spec 005, FR-007): pasar UNA tarea a otro implementador. El
+  // servicio valida y lanza `resume`; el override lo escribe el motor.
+  { patron: "/v1/runs/:id/tasks/:taskId/handoff", metodos: ["POST"], manejar: runs.pasarAOtroAgente },
 
   // ---- El board (spec 003) ------------------------------------------------
   // Lanzar es `POST /v1/projects/:id/runs`, arriba: desde la spec 003 arranca
@@ -180,6 +187,17 @@ export const TABLA = crearTabla([
   { patron: "/v1/runs", metodos: ["GET"], manejar: runs.listaDeRuns },
   { patron: "/v1/usage", metodos: ["GET"], manejar: runs.uso },
   { patron: "/v1/board", metodos: ["GET"], manejar: board.board },
+
+  // ---- Orden a mano y cola global (spec 005, FR-005..006) -----------------
+  // El orden del board se guarda en el almacen y NO en el gestor: reordenar no
+  // carga el proveedor (su test cuenta cada llamada). La cola vive en el
+  // lanzador, en memoria; el limite, en el almacen, porque es una preferencia.
+  { patron: "/v1/projects/:id/board/orden", metodos: ["PUT"], manejar: orden.ordenDelBoard },
+  // «Seguir aqui» o «Soltarla» sobre una tarjeta «movida» (spec 005, US1 esc.
+  // 4): se guarda en el almacen, y ni el gestor ni el run en disco se tocan.
+  { patron: "/v1/projects/:id/board/movidas/:itemId", metodos: ["POST"], manejar: movidas.decisionDeMovida },
+  { patron: "/v1/queue", metodos: ["GET", "PUT"], manejar: cola.cola },
+  { patron: "/v1/settings", metodos: ["GET", "PATCH"], manejar: ajustes.ajustes },
 
   // ---- Tareas propias: el gestor local (spec 003, FR-030) -----------------
   // El servicio es su UNICO escritor (principio VIII). Las usan la interfaz
@@ -194,6 +212,9 @@ export const TABLA = crearTabla([
   // `motor.mjs` lee de la conexion y nadie escribia (ADO y Linear quedaban en
   // `sin_gestor`). Validadas contra el `optionsSchema` del proveedor.
   { patron: "/v1/projects/:id/tracker", metodos: ["PATCH"], manejar: gestor.opcionesDelGestor },
+  // Los estados reales del gestor y el mapa vigente, para el editor visual del
+  // `stateMap` (spec 005, FR-002). Solo lee: se guarda por el PATCH de arriba.
+  { patron: "/v1/projects/:id/tracker/estados", metodos: ["GET"], manejar: gestor.estadosDelGestor },
 
   // ---- Settings -> Modelos: los runtimes de agente ------------------------
   // El parametro se llama `:id` y no `:runtime` A PROPOSITO: la prueba del

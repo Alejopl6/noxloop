@@ -76,7 +76,7 @@ siempre los cerrados.
   "ticket": { "id", "key": "CORE-142|null", "titulo", "url", "prioridad": 0, "equipo": "Core|null",
               "etiquetas": ["api"], "asignado": { "nombre", "iniciales", "avatarUrl" } },
   "columna": "backlog|todo|in_progress|in_review|blocked|done",
-  "chip": null | { "tipo": "en_cola|necesita_permiso|necesita_criterios|plan_listo|fase|bloqueado|fallido|interrumpido|pr_listo|sin_repo",
+  "chip": null | { "tipo": "en_cola|necesita_permiso|necesita_criterios|plan_listo|fase|bloqueado|fallido|interrumpido|pr_listo|sin_repo|movida",
                    "texto": "Needs permission", "detalle": "causa textual completa|null", "posicion": 1 },
   "avance": null | { "hechas": 3, "total": 9, "fase": "Leer|Test|Implementar|Gate|Revisión" },
   "accion": { "tipo": "run|open_run|retry|approve|ninguna", "habilitada": true, "motivo": null },

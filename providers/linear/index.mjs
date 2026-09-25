@@ -67,7 +67,8 @@ export function capabilities() {
     // estimate. Declararlo true es honesto porque `createChild` los pasa.
     boardFields: true,
     identityAssignee: false, // assignee: { isMe: { eq: true } } es del token; pedir otro exige otra consulta
-    listItems: true, // issues(filter: { team, state.type }) con pageInfo
+    listItems: true, // issues(filter: { team, state.type, project?, labels? }) con pageInfo
+    listStates: true, // workflowStates(filter: { team }): el editor visual del stateMap (spec 005)
   };
 }
 
@@ -89,6 +90,24 @@ export const optionsSchema = {
       description: "La clave corta del equipo (ENG), para resolver identificadores humanos y listar el board.",
     },
     acceptanceHeading: { type: "string", description: "El encabezado de la descripcion donde viven los criterios." },
+    // LAS REGLAS DE RUTEO (spec 005, FR-001). Un equipo de Linear suele llevar
+    // varios proyectos, y noxloop puede tener un board por cada uno: sin reglas
+    // los dos boards listan el equipo entero y la misma issue se ofrece para
+    // correr desde los dos. Cerradas (`additionalProperties: false`): una regla
+    // mal escrita («proyect») tiene que fallar al guardar, no dejar pasar todo.
+    reglas: {
+      type: "object",
+      additionalProperties: false,
+      description: "Que issues del equipo le tocan a este proyecto: el proyecto de Linear Y alguna de las etiquetas.",
+      properties: {
+        proyecto: { type: "string", description: "El proyecto de Linear, por nombre o por UUID (el UUID sobrevive a un renombre)." },
+        etiquetas: {
+          type: "array",
+          items: { type: "string" },
+          description: "Basta con que la issue lleve UNA de estas etiquetas.",
+        },
+      },
+    },
   },
 };
 
@@ -246,6 +265,11 @@ function aItem(crudo, ctx) {
     // exacto; inventar la URL seria peor que el hueco.
     url: crudo.url,
     boardFields: camposDeTablero(crudo),
+    // Donde vive HOY la issue (spec 005, FR-004): si sale de las reglas del
+    // proyecto con un run abierto, el board dice adonde fue con este dato. Va
+    // aparte de `boardFields` —que es lo que `createChild` hereda— porque el
+    // nombre no se hereda: solo se muestra.
+    project: crudo.project?.id ? { id: String(crudo.project.id), name: String(crudo.project.name ?? "") } : null,
     raw: crudo,
   };
 }
@@ -845,6 +869,33 @@ function filtroDeEquipo(ctx) {
 }
 
 /**
+ * El filtro de las reglas de ruteo, para sumar al del equipo (spec 005,
+ * FR-001). EN EL FILTRO DE GRAPHQL y no despues: `listItems` pide `first` igual
+ * a lo que falta del limite, y filtrar aca perderia en silencio las issues de
+ * este proyecto que Linear pusiera detras de una pagina de issues ajenas.
+ *
+ * - `proyecto` por UUID va a `project.id` (sobrevive a un renombre); por nombre,
+ *   a `project.name`. El nombre no se normaliza: normalizar es inventar un dato
+ *   del gestor.
+ * - `etiquetas`: basta UNA (`labels.some.name.in`). Una lista vacia NO se manda:
+ *   `in: []` no deja pasar nada, y una regla sin etiquetas quiere decir «sin
+ *   condicion de etiquetas», no «ninguna».
+ */
+function filtroDeReglas(ctx) {
+  const reglas = ctx.options?.reglas;
+  if (!reglas || typeof reglas !== "object") return {};
+  /** @type {Record<string, any>} */
+  const filtro = {};
+  const proyecto = typeof reglas.proyecto === "string" ? reglas.proyecto.trim() : "";
+  if (proyecto) filtro.project = UUID.test(proyecto) ? { id: { eq: proyecto } } : { name: { eq: proyecto } };
+  const etiquetas = Array.isArray(reglas.etiquetas)
+    ? reglas.etiquetas.filter((e) => typeof e === "string" && e.trim()).map((e) => e.trim())
+    : [];
+  if (etiquetas.length) filtro.labels = { some: { name: { in: etiquetas } } };
+  return filtro;
+}
+
+/**
  * Los tickets abiertos del equipo, para el board.
  *
  * Se pide `first` EXACTAMENTE igual a lo que falta para el limite (tope 250 por
@@ -859,6 +910,7 @@ export async function listItems(query, ctx) {
   const listado = {
     team: filtroDeEquipo(ctx),
     state: { type: { nin: includeDone ? TIPOS_CERRADOS.filter((t) => t !== "completed") : TIPOS_CERRADOS } },
+    ...filtroDeReglas(ctx),
   };
   const consulta = `query($listado: IssueFilter!, $first: Int!, $after: String) {
     issues(filter: $listado, first: $first, after: $after, orderBy: updatedAt) {
@@ -911,6 +963,57 @@ export async function listItems(query, ctx) {
     nextCursor = after;
   }
   return { items, nextCursor, total: null };
+}
+
+// ---------------------------------------- los estados del equipo (spec 005)
+
+/**
+ * Los estados de workflow REALES del equipo, para el editor visual del
+ * `stateMap` (FR-002): una fila por estado, en el orden del tablero de Linear
+ * (`position`), con su tipo y la columna en que el board lo leeria sin mapa.
+ *
+ * POR QUE DEL EQUIPO Y NO DEL WORKSPACE. Los estados son por equipo, con UUID
+ * propio, y dos equipos pueden tener plantillas distintas: listar los del
+ * workspace ofreceria en el selector un "In Review" que el equipo de este
+ * proyecto no tiene, y `setState` fallaria despues con "el equipo no tiene un
+ * estado llamado...". Sin equipo se niega, como `listItems`.
+ *
+ * `suggested` sale de la MISMA regla que el listado (`estadoDelBoard`) pero SIN
+ * el stateMap: es lo que el proveedor diria del estado por su tipo, que es lo
+ * que el editor propone a quien todavia no mapeo nada.
+ */
+export async function listStates(ctx) {
+  const equipoDeEstados = filtroDeEquipo(ctx);
+  const data = await gql(
+    ctx,
+    `query($equipoDeEstados: TeamFilter!) {
+      workflowStates(filter: { team: $equipoDeEstados }, first: 100) { nodes { id name type position } }
+    }`,
+    { equipoDeEstados },
+  );
+  const nodos = Array.isArray(data?.workflowStates?.nodes) ? data.workflowStates.nodes : [];
+  const sinMapa = { ...ctx, options: { ...(ctx.options || {}), stateMap: {} } };
+  const vistos = new Set();
+  return nodos
+    .filter((n) => n?.id && typeof n.name === "string" && n.name.trim())
+    .sort((a, b) => (Number(a.position) || 0) - (Number(b.position) || 0))
+    .filter((n) => {
+      // Dos estados homonimos en un equipo no deberian existir; si el gestor
+      // los devolviera, el selector de uno escribiria el nombre del otro. Se
+      // queda el primero, y se anota.
+      if (vistos.has(n.name)) {
+        ctx.log?.warn?.(`Linear: el equipo tiene dos estados llamados "${n.name}"; el editor muestra el primero`);
+        return false;
+      }
+      vistos.add(n.name);
+      return true;
+    })
+    .map((n) => ({
+      id: String(n.id),
+      name: String(n.name),
+      category: typeof n.type === "string" ? n.type : null,
+      suggested: estadoDelBoard(n, sinMapa),
+    }));
 }
 
 // Nada mas se exporta, y es a proposito: una capacidad en `false` no expone una

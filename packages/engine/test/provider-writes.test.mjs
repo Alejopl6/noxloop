@@ -126,7 +126,11 @@ test("el PR se enlaza nativo cuando el gestor puede, y como comentario cuando no
   const g1 = gestorQueCuenta();
   await runItem("1", deps(conEnlace, g1));
   assert.deepEqual(g1.escrituras.enlaces, ["http://forge/pr/7"]);
-  assert.deepEqual(g1.escrituras.comentarios, [], "con linkUrl no hace falta el comentario");
+  // Spec 005, FR-003: ademas del adjunto, UN comentario de cierre con el
+  // enlace. El adjunto dice «hay un PR»; el comentario es lo que se lee en la
+  // conversacion del ticket y le llega por notificacion a quien lo sigue.
+  assert.equal(g1.escrituras.comentarios.length, 1, "con linkUrl igual queda el comentario de cierre");
+  assert.match(g1.escrituras.comentarios[0], /http:\/\/forge\/pr\/7/);
 
   const sinEnlace = escenario();
   const g2 = gestorQueCuenta({ linkUrl: false });
@@ -162,4 +166,37 @@ test("sin capacidad de escribir estado, el recorrido igual llega al PR", async (
   const r = await runItem("1", deps(esc, g));
   assert.equal(r.pr, "http://forge/pr/7");
   assert.deepEqual(g.escrituras.estados, []);
+});
+
+// ---------------------------------------------------- spec 005, FR-003
+
+test("FR-003: al abrir el PR, el estado pasa a in_review y queda UN comentario de cierre con el enlace y lo integrado", async () => {
+  const esc = escenario();
+  const g = gestorQueCuenta();
+  const r = await runItem("1", deps(esc, g));
+  assert.equal(r.pr, "http://forge/pr/7");
+  assert.ok(g.escrituras.estados.includes("in_review"), `estados escritos: ${g.escrituras.estados.join(", ")}`);
+  assert.equal(g.escrituras.comentarios.length, 1);
+  const cierre = g.escrituras.comentarios[0];
+  assert.match(cierre, /http:\/\/forge\/pr\/7/, "el comentario de cierre lleva el enlace al PR");
+  assert.match(cierre, /T1/, "y dice que tareas quedaron integradas");
+  assert.equal(loadRun("1", { home: esc.home }).item.providerStateWritten, "in_review");
+});
+
+test("FR-003: un relanzamiento que encuentra el PR ya abierto no repite el comentario de cierre", async () => {
+  const esc = escenario();
+  const g = gestorQueCuenta();
+  await runItem("1", deps(esc, g));
+  await runItem("1", deps(esc, g, { createPR: async () => ({ url: "http://forge/pr/7", alreadyExisted: true }) }));
+  assert.equal(g.escrituras.comentarios.length, 1, `comento ${g.escrituras.comentarios.length} veces el mismo PR`);
+});
+
+test("FR-003: sin `comment`, el cierre se degrada al adjunto y al estado, sin tumbar nada", async () => {
+  const esc = escenario();
+  const g = gestorQueCuenta({ comment: false });
+  const r = await runItem("1", deps(esc, g));
+  assert.equal(r.pr, "http://forge/pr/7");
+  assert.deepEqual(g.escrituras.enlaces, ["http://forge/pr/7"]);
+  assert.deepEqual(g.escrituras.comentarios, [], "comment en false: el motor no lo llama");
+  assert.ok(g.escrituras.estados.includes("in_review"));
 });

@@ -60,6 +60,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { RUNTIMES_CON_SESION } from "../../adapters/src/autenticacion.mjs";
+import { carpetasConocidas, pathAmpliado, resolverBinario } from "../../adapters/src/binarios.mjs";
 import { exigirProyecto, slugDe } from "./comun.mjs";
 import { ejecutorDelProyecto, flotaDelProyecto, resolverEjecutor } from "./ejecutor.mjs";
 import { VARIABLES_DEL_ENTORNO_BASE } from "./lanzador.mjs";
@@ -105,7 +106,7 @@ const BINARIOS = Object.freeze([
 ]);
 
 /**
- * @typedef {{code: number|null, stdout: string, stderr: string, agotado?: boolean}} SalidaDeVersion
+ * @typedef {{code: number|null, stdout: string, stderr: string, agotado?: boolean, ruta?: string}} SalidaDeVersion
  * @typedef {(argv: string[], o: {env: Record<string, string>, timeoutMs: number}) => Promise<SalidaDeVersion>} EjecutorDeVersion
  *
  * @typedef {object} Problema
@@ -123,16 +124,30 @@ const BINARIOS = Object.freeze([
  * entorno que se le da y un tope. Lanza con `code: "ENOENT"` si no esta; si
  * no contesta a tiempo devuelve `agotado`.
  *
+ * EL BINARIO SE BUSCA COMO LO BUSCA LA FASE: en el PATH del servicio y despues
+ * en las carpetas donde lo dejan los instaladores (`binarios.mjs`). Una app de
+ * macOS abierta desde el Dock recibe `/usr/bin:/bin:/usr/sbin:/sbin`; si aqui
+ * se preguntara solo con ese PATH, el diagnostico diria «falta `claude`» con
+ * Claude Code instalado en `~/.local/bin`, y el motor —que si lo encuentra—
+ * contradiria a la pantalla. Devuelve la `ruta` que uso.
+ *
  * @type {EjecutorDeVersion}
  */
 export function ejecutorDeVersion(argv, { env, timeoutMs }) {
+  const ruta = resolverBinario(argv[0], { env }) ?? argv[0];
+  // Con el PATH ampliado, como la fase: un `claude` de npm es un script de node.
+  const conPath = { ...env, PATH: pathAmpliado(env) };
   return new Promise((resolver, rechazar) => {
-    execFile(argv[0], argv.slice(1), { env, timeout: timeoutMs, encoding: "utf8" }, (error, stdout, stderr) => {
+    const hijo = execFile(ruta, argv.slice(1), { env: conPath, timeout: timeoutMs, encoding: "utf8" }, (error, stdout, stderr) => {
       if (error && /** @type {any} */ (error).code === "ENOENT") return rechazar(error);
-      if (error && /** @type {any} */ (error).killed) return resolver({ code: null, stdout: "", stderr: "", agotado: true });
+      if (error && /** @type {any} */ (error).killed) return resolver({ code: null, stdout: "", stderr: "", agotado: true, ruta });
       const code = error ? (typeof (/** @type {any} */ (error).code) === "number" ? /** @type {any} */ (error).code : 1) : 0;
-      resolver({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+      resolver({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), ruta });
     });
+    // `execFile` deja el stdin del hijo como un pipe abierto: un binario que lo
+    // lee (Codex lee el prompt de stdin si no lo recibe) esperaria hasta el tope.
+    // Nadie le va a escribir nada: se cierra.
+    hijo.stdin?.end();
   });
 }
 
@@ -164,7 +179,7 @@ export async function diagnosticoDeMaquina(o = {}) {
             : `\`${b.nombre} --version\` ${s.code !== 0 ? `salio con ${s.code}` : "no imprimio una version"}.`;
           return { nombre: b.nombre, estado: "fallo", version: null, causa, accion: `Comprueba \`${b.nombre} --version\` en una terminal; si falla, reinstalalo. ${b.comoInstalar}` };
         }
-        return { nombre: b.nombre, estado: "presente", version };
+        return { nombre: b.nombre, estado: "presente", version, ...(typeof s.ruta === "string" ? { ruta: s.ruta } : {}) };
       } catch (e) {
         const ausente = /** @type {any} */ (e)?.code === "ENOENT";
         return {
@@ -173,7 +188,8 @@ export async function diagnosticoDeMaquina(o = {}) {
           version: null,
           // El mensaje del error puede traer rutas; se dice el codigo.
           causa: ausente
-            ? `\`${b.nombre}\` no esta en el PATH del servicio${env.PATH ? "" : " (el entorno del servicio no trae PATH)"}.`
+            ? `\`${b.nombre}\` no esta en el PATH del servicio${env.PATH ? "" : " (el entorno del servicio no trae PATH)"} ` +
+              `ni en las carpetas donde lo dejan los instaladores (${carpetasConocidas("~").join(", ")}).`
             : `\`${b.nombre} --version\` no se pudo lanzar (${/** @type {any} */ (e)?.code || "sin codigo"}).`,
           accion: b.comoInstalar,
         };
@@ -479,6 +495,9 @@ async function diagnosticoDeProyecto(p, proyecto) {
       agente: r.agente,
       conectado: typeof e.conectado === "boolean" ? e.conectado : null,
       detalle: e.detalle ?? (RUNTIMES_CON_SESION.includes(r.runtime) ? null : `noxloop no sabe preguntar si \`${r.runtime}\` tiene sesion.`),
+      // «Sesion vencida» y no «sin sesion»: el binario dice que hay, y una fase
+      // demostro que no la aceptan. Ver `runtimes.mjs`.
+      ...(e.sesionVencida ? { sesionVencida: e.sesionVencida } : {}),
       ...(e.causa ? { causa: e.causa } : {}),
       ...(e.accion ? { accion: e.accion } : {}),
     };
@@ -487,13 +506,20 @@ async function diagnosticoDeProyecto(p, proyecto) {
     if (r.conectado !== false) continue;
     // El implementador afecta a las tareas que corren con ese runtime; el
     // revisor y el planificador, a todas las del proyecto: todas pasan por el.
+    const vencida = Boolean(/** @type {any} */ (r).sesionVencida);
     problemas.push({
+      // El mismo codigo: el board ya sabe que este problema lo pinta el estado
+      // del runtime, y uno nuevo lo pintaria dos veces.
       codigo: "runtime_desconectado",
       nivel: "bloqueante",
       afecta: r.rol === "implementador" ? r.runtime : null,
-      causa: `El ${r.rol} (${r.runtime}) no tiene con que invocar al modelo: ${r.causa ?? r.detalle ?? "sin sesion ni API key"}`,
+      causa: vencida
+        ? `El ${r.rol} (${r.runtime}) tiene la sesion vencida: ${r.causa ?? r.detalle}`
+        : `El ${r.rol} (${r.runtime}) no tiene con que invocar al modelo: ${r.causa ?? r.detalle ?? "sin sesion ni API key"}`,
       accion: r.accion ?? "Conecta el runtime en Settings → Modelos.",
-      motivo: `Conecta un modelo en Settings → Modelos: el ${r.rol} usa ${r.runtime} y no tiene sesion ni API key.`,
+      motivo: vencida
+        ? `Sesion vencida: el ${r.rol} usa ${r.runtime} y su credencial fue rechazada. ${r.accion ?? "Vuelve a iniciar sesion en Settings → Modelos."}`
+        : `Conecta un modelo en Settings → Modelos: el ${r.rol} usa ${r.runtime} y no tiene sesion ni API key.`,
     });
   }
 

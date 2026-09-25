@@ -108,7 +108,20 @@ const TODAS_EN_TRUE = {
   boardFields: true,
   identityAssignee: true,
   listItems: true,
+  listStates: true,
 };
+
+/**
+ * Los estados de workflow del gestor falso, en su orden: los tres que el mapa
+ * nombra y uno que no ("En pausa"), que es el caso que el editor de estados
+ * tiene que nombrar como «sin asignar».
+ */
+const ESTADOS_DEL_GESTOR = [
+  { id: "e-nuevo", name: "Nuevo", category: null, suggested: "todo" },
+  { id: "e-curso", name: "En curso", category: null, suggested: "in_progress" },
+  { id: "e-bloqueado", name: "Bloqueado", category: null, suggested: "blocked" },
+  { id: "e-pausa", name: "En pausa", category: null, suggested: null },
+];
 
 /**
  * Un gestor falso con las capacidades que se le digan.
@@ -149,6 +162,7 @@ export function gestorFalso(overrides = {}) {
     createChild: 0,
     searchInbox: 0,
     listItems: 0,
+    listStates: 0,
   };
 
   /** El estado canonico que corresponde a un nativo, segun el mapa del `ctx`. */
@@ -283,6 +297,12 @@ export function gestorFalso(overrides = {}) {
     return { items: todos.slice(desde, hasta), nextCursor: hasta < todos.length ? String(hasta) : null, total: todos.length };
   }
 
+  /** Los estados del gestor (spec 005): clonados, el llamador no los muta. */
+  async function listStates(_ctx) {
+    llamadas.listStates++;
+    return structuredClone(ESTADOS_DEL_GESTOR);
+  }
+
   /** La funcion de una capacidad apagada: lanza, y nombra la capacidad. */
   function negar(capacidad) {
     return async () => {
@@ -304,6 +324,7 @@ export function gestorFalso(overrides = {}) {
     linkUrl: caps.linkUrl ? linkUrl : negar("linkUrl"),
     addLabel: caps.labels ? addLabel : negar("labels"),
     listItems: caps.listItems ? listItems : negar("listItems"),
+    listStates: caps.listStates ? listStates : negar("listStates"),
     // Apagadas las dos busquedas, la funcion no se exporta: el daemon no puede
     // ni intentarlo, y el validador lo dice al arrancar.
     ...(caps.searchAssigned || caps.searchMentioned ? { searchInbox } : {}),

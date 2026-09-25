@@ -24,8 +24,16 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ejecutorDeProceso, entornoDeclarado, estadoDeAutenticacion } from "../autenticacion.mjs";
-import { normalizarPeticion, resultadoDeFase, validarPeticion } from "../contrato.mjs";
+import { ejecutorDeProceso, entornoDeclarado, errorDeSesion, estadoDeAutenticacion } from "../autenticacion.mjs";
+import { resolverBinario } from "../binarios.mjs";
+import {
+  PROMPT_DESATENDIDO,
+  conSesionReconocida,
+  esRevision,
+  normalizarPeticion,
+  resultadoDeFase,
+  validarPeticion,
+} from "../contrato.mjs";
 import { lanzar, leerLanzamiento } from "../proceso.mjs";
 import { emisorDeEventos, eventosDeMensajeClaude } from "../eventos.mjs";
 import { esCorteDePresupuesto, leerResultadoJson } from "../salida.mjs";
@@ -44,6 +52,68 @@ const PAQUETE = "@anthropic-ai/claude-agent-sdk";
 export const HERRAMIENTAS_POR_DEFECTO = Object.freeze([
   "Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "Task", "Skill", "TodoWrite", "WebFetch",
 ]);
+
+/**
+ * Lo que una REVISION puede hacer sin preguntar: leer, y mirar el diff.
+ *
+ * POR QUE UNA LISTA CERRADA Y `dontAsk`. La revision corria con la lista del
+ * implementador y `acceptEdits`: podia escribir, y cualquier herramienta fuera
+ * de la lista se quedaba esperando un permiso que nadie iba a conceder —con
+ * `-p` eso no cuelga, pero la fase se pierde pidiendolo—. El referente (Nodal)
+ * lanza su revisor con `--permission-mode dontAsk` y una lista cerrada: lo
+ * permitido corre, lo demas se NIEGA sin preguntar, y el revisor sigue con lo
+ * que tiene. Verificado contra lo instalado: `claude --help` (2.1.281) lista
+ * `dontAsk` entre las opciones de `--permission-mode`, y el SDK (0.3.274) lo
+ * declara en `PermissionMode`: "Don't prompt for permissions, deny if not
+ * pre-approved".
+ *
+ * NUNCA `bypassPermissions` ni `--dangerously-skip-permissions`: la revision es
+ * la fase que menos permisos necesita, y saltarse la capa de permisos para que
+ * no pregunte seria resolver el problema al reves.
+ *
+ * El gate del repositorio se suma por fase (`comandosPermitidos`): el revisor
+ * tiene que poder correr los tests para no afirmar que pasan sin verlos.
+ */
+export const HERRAMIENTAS_DE_REVISION = Object.freeze([
+  "Read", "Grep", "Glob",
+  "Bash(git diff:*)", "Bash(git status:*)", "Bash(git log:*)", "Bash(git show:*)",
+]);
+
+/** Lo que una revision no puede usar aunque otra capa de configuracion lo permita. */
+export const PROHIBIDAS_EN_REVISION = Object.freeze(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+
+/**
+ * Prefijos que no entran en la lista aunque el gate los traiga: `bash -c` o
+ * `env` delante de un comando permitido devuelven el agujero entero. Es la
+ * misma lista que `comandosPermitidos` del motor.
+ */
+const NUNCA_EN_REVISION = new Set(["env", "sudo", "command", "eval", "exec", "bash", "sh", "zsh", "xargs", "time", "nohup", "ssh"]);
+
+/**
+ * La lista cerrada de una revision: las de lectura, `git` de consulta y cada
+ * segmento del gate como prefijo de `Bash`.
+ *
+ * Un gate es una tuberia escrita por una persona (`npm test && npm run
+ * typecheck`): Claude Code juzga cada subcomando por separado, asi que se parte
+ * igual. Un segmento con parentesis no se puede escribir como regla `Bash(...)`
+ * sin romperla, y se descarta en vez de adivinar.
+ *
+ * @param {readonly string[]} [comandos]
+ * @returns {string[]}
+ */
+export function herramientasDeRevision(comandos = []) {
+  const reglas = new Set(HERRAMIENTAS_DE_REVISION);
+  for (const comando of comandos) {
+    for (const trozo of String(comando).split(/&&|\|\||;|\|/)) {
+      const segmento = trozo.trim().replace(/\s+/g, " ");
+      if (!segmento || /[()]/.test(segmento)) continue;
+      const primero = segmento.split(" ")[0].replace(/^.*\//, "");
+      if (NUNCA_EN_REVISION.has(primero)) continue;
+      reglas.add(`Bash(${segmento}:*)`);
+    }
+  }
+  return [...reglas];
+}
 
 /**
  * Las variables que ESTE runtime necesita recibir, si la maquina las tiene.
@@ -119,6 +189,7 @@ export function sdkDisponible() {
  *   comando?: string,
  *   argsPrefijo?: string[],
  *   hooks?: object|null,
+ *   pluginCargado?: boolean,
  *   herramientas?: readonly string[],
  *   sdk?: ((opts: any) => AsyncIterable<any>)|null,
  *   resolverSdk?: () => {disponible: boolean, motivo: string|null},
@@ -133,9 +204,15 @@ export function sdkDisponible() {
  */
 export function crearAdaptadorClaude(opts = {}) {
   const {
-    comando = "claude",
+    // SIN `comando` se busca `claude` en cada fase, con el PATH de esa fase y
+    // las carpetas donde lo dejan los instaladores: desde una app de macOS el
+    // nombre a secas da ENOENT. Ver `binarios.mjs`.
+    comando: comandoDeclarado = null,
     argsPrefijo = [],
     hooks = null,
+    // Si el plugin de noxloop viaja cargado con este runtime. Por defecto no:
+    // el motor no lo carga, y la mayoria de las maquinas no lo tienen.
+    pluginCargado = false,
     herramientas = HERRAMIENTAS_POR_DEFECTO,
     sdk = null,
     resolverSdk = sdkDisponible,
@@ -150,9 +227,15 @@ export function crearAdaptadorClaude(opts = {}) {
     entornoDisponible = {},
   } = opts;
 
+  /** El nombre con el que se dice en los mensajes: la ruta si se declaro, `claude` si no. */
+  const comando = comandoDeclarado ?? "claude";
+  /** La ruta ABSOLUTA del binario para una fase con este entorno. */
+  const binarioPara = (/** @type {Record<string, string>} */ env) =>
+    comandoDeclarado ?? resolverBinario("claude", { env }) ?? "claude";
+
   /** El ejecutor del preflight, apuntado al binario que este adaptador usa de verdad. */
   const ejecutar = ejecutarAutenticacion
-    ?? ((/** @type {string[]} */ argv, /** @type {any} */ o) => ejecutorDeProceso([comando, ...argsPrefijo, ...argv.slice(1)], o));
+    ?? ((/** @type {string[]} */ argv, /** @type {any} */ o) => ejecutorDeProceso([binarioPara(o?.env ?? {}), ...argsPrefijo, ...argv.slice(1)], o));
 
   /** El camino que se va a usar. Se resuelve una vez: no cambia a mitad de un run. */
   const conSdk = Boolean(sdk) || resolverSdk().disponible;
@@ -209,11 +292,11 @@ export function crearAdaptadorClaude(opts = {}) {
         // entere. Una lista corta inventada haria que la pantalla ofreciera
         // solo esos, que es peor que decir que no se sabe.
         models: "desconocido",
-        // Entiende `/noxloop-task ...` como comando: el plugin de noxloop lo
-        // expande al texto de `packages/plugin/commands/`. Lo que esto afirma es
-        // que el runtime SABE expandir comandos de plugin; que el plugin este
-        // instalado en la maquina es asunto del doctor, no del contrato.
-        comandos: true,
+        // Entiende `/noxloop-task ...` solo si el plugin de noxloop esta
+        // CARGADO. Medido en un run real: sin el plugin, Claude no reconocio
+        // `/noxloop-plan` y paso la fase explorando el home para adivinar que
+        // se le pedia. Por defecto el motor le manda la fase entera.
+        comandos: Boolean(pluginCargado),
       };
     },
 
@@ -309,7 +392,7 @@ export function crearAdaptadorClaude(opts = {}) {
       const emitir = emisorDeEventos(opcionesDeFase.alEvento);
       const salida = query
         ? await porSdk({ sdk: query, peticion, hooks, herramientas, directoriosExtra, alLanzar, alProgreso, emitir })
-        : await porCli({ comando, argsPrefijo, peticion, hooks, herramientas, directoriosExtra, timeoutMs, alLanzar, signal: opcionesDeFase.signal, emitir });
+        : await porCli({ comando: binarioPara(peticion.env), argsPrefijo, peticion, hooks, herramientas, directoriosExtra, timeoutMs, alLanzar, signal: opcionesDeFase.signal, emitir });
 
       return { ...salida, degradaciones };
     },
@@ -319,12 +402,24 @@ export function crearAdaptadorClaude(opts = {}) {
 /** @param {any} p */
 async function porCli(p) {
   const { peticion } = p;
+  const revision = esRevision(peticion.phase);
   const args = [
     ...p.argsPrefijo,
     "-p", peticion.prompt,
     "--output-format", "json",
-    "--permission-mode", "acceptEdits",
-    "--allowedTools", [...p.herramientas].join(" "),
+    // Ver `PROMPT_DESATENDIDO`: se AÑADE al prompt de sistema de Claude Code,
+    // no lo reemplaza.
+    "--append-system-prompt", PROMPT_DESATENDIDO,
+    ...(revision
+      ? [
+          // Ver `HERRAMIENTAS_DE_REVISION`. Separadas por coma, que es como las
+          // pasa el propio SDK al CLI: una regla `Bash(git diff:*)` lleva un
+          // espacio dentro.
+          "--permission-mode", "dontAsk",
+          "--allowedTools", herramientasDeRevision(peticion.comandosPermitidos).join(","),
+          "--disallowedTools", PROHIBIDAS_EN_REVISION.join(","),
+        ]
+      : ["--permission-mode", "acceptEdits", "--allowedTools", [...p.herramientas].join(" ")]),
   ];
   // `--settings` acepta el JSON entero: no hay archivo que crear, ni limpiar, ni
   // que quede colgado en un worktree si el proceso muere a mitad.
@@ -371,6 +466,20 @@ async function porCli(p) {
  * @param {(e: any) => void} [emitir]
  */
 function traducirCli(l, emitir = () => {}) {
+  const r = traducirCliSinSesion(l, emitir);
+  // LA SESION VENCIDA, reconocida por su error. Se mira lo que el runtime dijo
+  // DE SU ERROR —el `result` de un `is_error`, o su stderr—, y solo si la fase
+  // fallo: la prosa de una fase que termino bien no cuenta.
+  const crudo = leerResultadoJson(l.stdout);
+  const delError = [crudo?.isError ? crudo.texto : "", l.stderr, crudo ? "" : l.stdout].filter(Boolean).join("\n");
+  return conSesionReconocida("claude-agent-sdk", r, delError, errorDeSesion);
+}
+
+/**
+ * @param {import("../proceso.mjs").Lanzamiento} l
+ * @param {(e: any) => void} emitir
+ */
+function traducirCliSinSesion(l, emitir) {
   if (l.cancelado) {
     return resultadoDeFase({ ok: false, subtype: "cancelada", text: `la fase se cancelo${l.stderr ? `: ${l.stderr.trim()}` : ""}` });
   }
@@ -411,14 +520,20 @@ function traducirCli(l, emitir = () => {}) {
  */
 async function porSdk(p) {
   const { peticion } = p;
+  const revision = esRevision(peticion.phase);
   const options = {
     cwd: peticion.cwd,
     // EXACTAMENTE `req.env`. Es el mismo invariante que del lado del CLI, y es
     // el mas facil de perder aqui: el SDK corre en proceso y la tentacion de
     // "heredar lo que ya hay" no necesita ni escribir una linea de mas.
     env: peticion.env,
-    permissionMode: "acceptEdits",
-    allowedTools: [...p.herramientas],
+    // Ver `HERRAMIENTAS_DE_REVISION`: la revision niega sin preguntar lo que no
+    // este en su lista cerrada.
+    permissionMode: revision ? "dontAsk" : "acceptEdits",
+    allowedTools: revision ? herramientasDeRevision(peticion.comandosPermitidos) : [...p.herramientas],
+    ...(revision ? { disallowedTools: [...PROHIBIDAS_EN_REVISION] } : {}),
+    // El prompt de Claude Code, con lo de `PROMPT_DESATENDIDO` AÑADIDO al final.
+    systemPrompt: { type: "preset", preset: "claude_code", append: PROMPT_DESATENDIDO },
     includePartialMessages: true,
     // Ver el mismo campo del lado del CLI: sin el home, la planificacion no
     // tiene donde dejar el plan.
@@ -467,7 +582,13 @@ async function porSdk(p) {
       }
     }
   } catch (e) {
-    return resultadoDeFase({ ok: false, sessionId, subtype: "transporte_fallo", text: e?.message || String(e) });
+    const mensaje = e?.message || String(e);
+    return conSesionReconocida(
+      "claude-agent-sdk",
+      resultadoDeFase({ ok: false, sessionId, subtype: "transporte_fallo", text: mensaje }),
+      mensaje,
+      errorDeSesion,
+    );
   }
 
   if (!final) {
@@ -478,7 +599,7 @@ async function porSdk(p) {
 
   const subtype = typeof final.subtype === "string" ? final.subtype : null;
   const budgetExhausted = esCorteDePresupuesto(subtype);
-  return resultadoDeFase({
+  const r = resultadoDeFase({
     ok: final.is_error !== true && !budgetExhausted,
     sessionId,
     usd: typeof final.total_cost_usd === "number" ? final.total_cost_usd : null,
@@ -486,6 +607,8 @@ async function porSdk(p) {
     budgetExhausted,
     subtype,
   });
+  // Solo el `result` de un `is_error` es el error del runtime; ver `traducirCli`.
+  return conSesionReconocida("claude-agent-sdk", r, final.is_error === true ? texto : "", errorDeSesion);
 }
 
 /** Si en el entorno declarado viaja una credencial del modelo. El valor no se mira, solo que este. */

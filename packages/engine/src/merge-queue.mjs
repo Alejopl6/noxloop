@@ -130,14 +130,23 @@ export async function drain(run, opts) {
  * Se hace al principio del recorrido y no al final: arrancar sobre una base
  * vieja significa que cada tarea va a rebasar contra algo que ya cambio, y el
  * conflicto aparece al integrar en vez de al empezar.
+ *
+ * `local`: con el termino `commit` la base es la rama LOCAL del operador, sin
+ * fetch. Rebasar la rama del item sobre ella no toca la base: mueve solo la
+ * rama del item, que es del motor.
+ *
+ * @param {string} integrationPath
+ * @param {string} itemBranch
+ * @param {string} baseBranch
+ * @param {{local?: boolean}} [opts]
  */
-export function syncItemBranch(integrationPath, itemBranch, baseBranch) {
-  git(integrationPath, ["fetch", "origin", baseBranch], { permitirFallo: true });
+export function syncItemBranch(integrationPath, itemBranch, baseBranch, opts = {}) {
+  if (!opts.local) git(integrationPath, ["fetch", "origin", baseBranch], { permitirFallo: true });
   const actual = git(integrationPath, ["rev-parse", "--abbrev-ref", "HEAD"]).out;
   if (actual !== itemBranch) {
     throw new Error(`${integrationPath} esta en "${actual}", no en la rama del item "${itemBranch}"`);
   }
-  const base = git(integrationPath, ["rev-parse", "--verify", `origin/${baseBranch}`], { permitirFallo: true }).ok
+  const base = !opts.local && git(integrationPath, ["rev-parse", "--verify", `origin/${baseBranch}`], { permitirFallo: true }).ok
     ? `origin/${baseBranch}`
     : baseBranch;
   const r = git(integrationPath, ["rebase", base], { permitirFallo: true });

@@ -14,7 +14,7 @@ import { createLogger } from "./log.mjs";
 import { revisarBandeja } from "./inbox.mjs";
 import { correrDaemon, unaVuelta } from "./daemon.mjs";
 import { prepararHito, correrHito, reporteDeHito } from "./milestone.mjs";
-import { diagnosticar, prepararReanudacion, destrabar, limpiarHuerfanos } from "./recovery.mjs";
+import { diagnosticar, prepararReanudacion, destrabar, limpiarHuerfanos, pasarAOtroAgente } from "./recovery.mjs";
 
 /** Que hace falta correr para cada nivel de ticket. */
 const POR_NIVEL = {
@@ -77,11 +77,15 @@ function hacerDespachador(config, opts) {
     }
 
     const corrida = /** @type {any} */ (await ejecutar(String(item.id), config, { ...opts, comando: "run" }));
+    // Con `termino: commit` el final es la rama lista, no un PR: tambien es
+    // un despacho que salio bien.
+    const entregado = Boolean(corrida.pr || (corrida.termino === "commit" && corrida.rama));
     return {
-      ok: Boolean(corrida.pr),
-      porque: corrida.pr ? undefined : (corrida.reason || corrida.humano?.join(" ")),
+      ok: entregado,
+      porque: entregado ? undefined : (corrida.reason || corrida.humano?.join(" ")),
       clase: "transitorio",
       pr: corrida.pr || null,
+      ...(corrida.rama ? { rama: corrida.rama } : {}),
     };
   };
 }
@@ -376,10 +380,64 @@ async function ejecutar(itemId, config, opts) {
     const aMedias = resumable(run);
     if (aMedias.length) {
       opts.log.info(`retomando ${aMedias.length} tarea(s) que quedaron en vuelo: ${aMedias.join(", ")}`);
+      // REBOBINAR ANTES DE RECORRER. El conjunto listo excluye a proposito lo
+      // que esta en vuelo, asi que sin esto una tarea cortada a mitad de fase
+      // no la levantaba nadie y el recorrido cortaba por estancado al instante
+      // (medido en un run real al matar el motor en RED). `prepararReanudacion`
+      // relanza lo que se puede relanzar sin riesgo y pide decision —con su
+      // causa— para lo que tiene trabajo sin commitear: eso no se adivina.
+      const prep = /** @type {any} */ (prepararReanudacion(itemId, { home: config.home, config }));
+      if (!prep.ok) {
+        const pendientes = (prep.requiereDecision || []).map((/** @type {any} */ d) => `${d.task}: ${d.motivo ?? d.porque ?? ""}`.trim());
+        return {
+          ok: false,
+          reason: prep.motivo,
+          requiereDecision: prep.requiereDecision ?? [],
+          humano: [
+            `no se puede retomar ${itemId}: ${prep.motivo}`,
+            ...pendientes.map((/** @type {string} */ x) => `  · ${x}`),
+            "Mira `noxloop diagnose` para ver que quedo en cada worktree: commitea o descarta esos cambios y vuelve a retomar.",
+          ],
+        };
+      }
+      for (const a of prep.advertencias || []) opts.log.warn(a);
     }
   }
 
-  const deps = await buildDeps(run.item, config, { ...opts, inject: opts.inject });
+  // `runtime` en opts es el del HAND-OFF, no el del recorrido: `buildDeps` lo
+  // leeria como el implementador de todo el item. Se separa antes de cablear.
+  const { runtime: runtimeDelHandoff, ...resto } = opts;
+  const deps = await buildDeps(run.item, config, { ...resto, inject: opts.inject });
+
+  // EL HAND-OFF (spec 005, FR-007): `resume <item> --task <t> --runtime <r>`.
+  // Va DESPUES de cablear porque las guardas necesitan saber que runtimes hay
+  // registrados y cual es el revisor, y ANTES de recorrer para que la primera
+  // vuelta del driver ya lea el override. Un rechazo no escribe nada y no
+  // recorre: el lanzador del servicio lo explica con `reason`.
+  if (opts.comando === "resume" && runtimeDelHandoff) {
+    if (!opts.task) {
+      return { ok: false, reason: "un hand-off necesita la tarea: `--task <t>`", humano: ["uso: noxloop resume <item> --task <t> --runtime <r>"] };
+    }
+    const tarea = run.tasks.find((t) => t.id === opts.task);
+    const h = /** @type {any} */ (pasarAOtroAgente(itemId, opts.task, {
+      home: config.home,
+      runtime: String(runtimeDelHandoff),
+      agente: opts.agente ?? null,
+      nota: opts.nota ?? null,
+      de: tarea?.implementador?.runtime ?? deps.runtimes?.implementador ?? null,
+      revisor: config.runtimes?.revisor ?? null,
+      registrados: deps.registroDeRuntimes?.ids?.() ?? [],
+      budgets: config.budgets,
+    }));
+    if (!h.ok) {
+      return { ...h, reason: `${h.causa} ${h.accion}`, humano: [`no se paso ${opts.task} a otro agente: ${h.causa}`, h.accion] };
+    }
+    opts.log.info(
+      `${opts.task} pasa de ${h.de ?? "?"} a ${h.a}${h.retomarEn === "red" ? " y sigue en GREEN, sin repetir RED" : ""}` +
+        `${h.presupuesto.agotados.length ? ` — con ${h.presupuesto.agotados.join(", ")} agotado: ${h.presupuesto.concede}` : ""}`,
+    );
+  }
+
   const r = /** @type {any} */ (await runItem(itemId, { ...deps, dryRun: opts.dryRun }));
 
   const humano = [];
@@ -389,7 +447,12 @@ async function ejecutar(itemId, config, opts) {
     return { ...r, humano };
   }
 
-  if (r.pr) {
+  if (r.termino === "commit" && r.rama) {
+    // Sin PR, y a proposito: decir «sin PR» aqui se leeria como un fallo.
+    humano.push(`rama lista: ${r.rama} (${r.commits.length} commit(s) sobre ${r.base}, sin empujar)`);
+    humano.push(`miralo con: git log ${r.base}..${r.rama}`);
+    humano.push(`integradas: ${r.integrated.join(", ") || "ninguna"}`);
+  } else if (r.pr) {
     humano.push(`PR ${r.prAlreadyExisted ? "(ya existia) " : ""}${r.pr}`);
     humano.push(`integradas: ${r.integrated.join(", ") || "ninguna"}`);
   } else {

@@ -113,6 +113,9 @@ if (!abortado) {
     setInterval(() => {}, 1000);
   } else if (typeof guion.salida === "string") {
     process.stdout.write(guion.salida);
+    // Lo que un runtime de verdad dice por stderr al fallar —una sesion
+    // vencida, un 401—: sin esto no se puede reproducir una salida grabada.
+    if (typeof guion.stderr === "string") process.stderr.write(guion.stderr);
     process.exitCode = Number.isInteger(guion.code) ? guion.code : 0;
   } else {
     const i = args.indexOf("--resume");

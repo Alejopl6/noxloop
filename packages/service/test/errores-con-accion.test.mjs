@@ -190,9 +190,14 @@ const PROVOCADORES = {
   // Los cuatro por la ruta de verdad: un proyecto ACTIVE al que le falta UNA
   // cosa, y `POST /runs`. Ninguno llega a lanzar el motor: la validacion va
   // antes, que es justo lo que se afirma.
+  // Sin remoto un proyecto se lanza en `commit`; lo que da `sin_repo` es una
+  // tarea que PIDE el PR en ese proyecto.
   sin_repo: async (svc) => {
-    const proyecto = await proyectoActivo(svc, { nombre: "Sin Remoto", ruta: repoConRemoto({ remoto: null }).repo });
-    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: "2" })).json()).error;
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Remoto", ruta: repoConRemoto({ remoto: null }).repo, conexiones: [] });
+    const tarea = (
+      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", termino: "pr" })).json()
+    ).tarea;
+    return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
   },
 
   sin_gate: async (svc) => {
@@ -228,11 +233,12 @@ const PROVOCADORES = {
     return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
   },
 
-  // Run sobre una tarea local que pide terminar sin PR.
+  // Run sobre una tarea local que pide terminar sin commitear: `commit` y `pr`
+  // los cumple el motor; `changes` todavia no.
   termino_sin_soporte: async (svc) => {
-    const proyecto = await proyectoActivo(svc, { nombre: "Solo Commit", conexiones: [] });
+    const proyecto = await proyectoActivo(svc, { nombre: "Sin Commitear", conexiones: [] });
     const tarea = (
-      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", termino: "commit" })).json()
+      await (await pedirJson(svc, `/v1/projects/${proyecto.id}/tasks`, "POST", { titulo: "x", termino: "changes" })).json()
     ).tarea;
     return (await (await pedirJson(svc, `/v1/projects/${proyecto.id}/runs`, "POST", { itemId: tarea.id })).json()).error;
   },
@@ -269,6 +275,12 @@ const PROVOCADORES = {
   run_sin_esa_accion: async (svc) => {
     runEnDisco(svc.home, "con-pr", { item: { id: "con-pr", title: "t", pr: "https://forja.test/pr/1" } });
     return (await (await pedirJson(svc, "/v1/runs/con-pr/approve", "POST")).json()).error;
+  },
+
+  // Spec 005, FR-007: un hand-off sobre una tarea que ya esta integrada.
+  handoff_rechazado: async (svc) => {
+    runEnDisco(svc.home, "ya-integrada", { tasks: [{ id: "T001", status: "integrated", attempts: {}, dependsOn: [] }] });
+    return (await (await pedirJson(svc, "/v1/runs/ya-integrada/tasks/T001/handoff", "POST", { runtime: "codex" })).json()).error;
   },
 
   fallo_interno: async () => deExcepcion(new Error("una excepcion que nadie previo")).error,

@@ -13,6 +13,11 @@
       "type": "string",
       "description": "Donde vive el estado. Por defecto ~/.noxloop. Fuera de los repos a proposito."
     },
+    "termino": {
+      "enum": ["pr", "commit"],
+      "default": "pr",
+      "description": "Donde termina el recorrido. `pr`: la rama del item se entrega como pull request contra la base (exige `remote` en cada repo). `commit`: el trabajo queda commiteado en la rama del item, en el repositorio del operador, sin fetch, sin push y sin PR; el remoto deja de ser obligatorio. Ninguno mergea ni toca la rama base (principio IV)."
+    },
     "provider": {
       "type": "object",
       "required": ["name", "module"],
@@ -88,11 +93,11 @@
       "minProperties": 1,
       "additionalProperties": {
         "type": "object",
-        "required": ["remote", "baseBranch", "gate"],
+        "required": ["baseBranch", "gate"],
         "additionalProperties": false,
         "properties": {
           "path": { "type": "string", "description": "Checkout local. Si falta, se busca; siempre se verifica contra el remote." },
-          "remote": { "type": "string" },
+          "remote": { "type": "string", "description": "Obligatorio con `termino: pr` (el PR se abre contra el). Con `termino: commit` es opcional: si esta, se verifica igual que con `pr`; si no, basta con que `path` sea un repositorio git." },
           "baseBranch": { "type": "string" },
           "gate": { "type": "string", "description": "El comando cuyo exit code decide si una tarea cumple." },
           "fastGate": { "type": "string", "description": "Version corta para tiers baratos y para el rechequeo tras el rebase." },

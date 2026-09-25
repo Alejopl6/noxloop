@@ -143,6 +143,19 @@ test("PRINCIPIO IX: el secreto va en el entorno del subproceso, nunca en argv, y
   assert.deepEqual(Object.keys(opciones.env).sort(), ["GITHUB_TOKEN", "HOME", "NOXLOOP_HOME", "PATH"]);
 });
 
+// DESDE LA APP INSTALADA el servicio hereda el PATH minimo de una app GUI de
+// macOS (`/usr/bin:/bin`), y el motor corre el gate (`npm test`) y `gh` en su
+// propio proceso: sin ampliar el PATH no encuentra ninguno de los dos.
+test("el motor recibe el PATH ampliado: con el PATH de una app GUI igual encuentra npm y gh de Homebrew", async (t) => {
+  const { falso, lanzador, pedido } = montar();
+  t.after(() => lanzador.detener());
+  await lanzador.lanzar(pedido("2"));
+  await hasta(() => falso.llamadas.length === 1, "el plan");
+  const path = falso.llamadas[0].opciones.env.PATH.split(":");
+  assert.equal(path[0], "/usr/bin", "el PATH recibido va primero");
+  assert.ok(path.includes("/opt/homebrew/bin"), `el motor no vera npm ni gh de Homebrew: ${path.join(":")}`);
+});
+
 test("L0/L1: planifica y PARA en `plan_listo`; aprobar lanza `run`", async (t) => {
   const { falso, lanzador, pedido } = montar();
   t.after(() => lanzador.detener());
@@ -216,6 +229,20 @@ test("un ticket sin criterios: `necesita_criterios` con la pregunta textual del 
   assert.equal(falso.llamadas.length, 1, "no se ejecuta un plan que no existe");
 });
 
+// Medido en el primer run real: la tarjeta decia «el plan no valida» y nada
+// mas. El motor SI devolvia cual era el problema (`$.notes: no esta declarado`)
+// y se tiraba al pasar al estado del run: el operador no tenia por donde seguir.
+test("un plan que no valida guarda CADA problema en la causa, no solo «el plan no valida»", async (t) => {
+  const { falso, lanzador, pedido } = montar();
+  t.after(() => lanzador.detener());
+
+  await lanzador.lanzar(pedido("2"));
+  await hasta(() => falso.llamadas.length === 1, "el plan");
+  falso.llamadas[0].terminar(1, { ok: false, reason: "el plan no valida", problems: ["$.notes: no esta declarado en el esquema"] });
+  await hasta(() => lanzador.estado("2").estado === "fallido", "el fallo");
+  assert.match(lanzador.estado("2").detalle, /\$\.notes: no esta declarado en el esquema/);
+});
+
 test("un fallo guarda la causa; si la causa trae el secreto, el secreto NO se guarda", async (t) => {
   const { falso, lanzador, pedido } = montar();
   t.after(() => lanzador.detener());
@@ -272,4 +299,107 @@ test("detener mata los subprocesos: un run no sobrevive al servicio que lo lanzo
   await lanzador.detener();
   assert.equal(falso.llamadas[0].hijo.matado, "SIGTERM");
   assert.equal(lanzador.estado("2").estado, "interrumpido");
+});
+
+// ---------------------------------------------------------------------------
+// LA COLA GLOBAL (spec 005, FR-006)
+// ---------------------------------------------------------------------------
+//
+// El limite es de la MAQUINA, no del proyecto: cuatro proyectos con tope 2
+// cada uno son ocho agentes a la vez sobre el mismo portatil y la misma cuota
+// del modelo. El tope por proyecto sigue valiendo ademas (un proyecto no se
+// come el limite entero si su config dice 1).
+
+test("cola global: con limite 2 y cuatro pedidos de dos proyectos, 2 corren y 2 esperan con su posicion", async (t) => {
+  const { falso, lanzador, pedido } = montar({ limite: () => 2 });
+  t.after(() => lanzador.detener());
+
+  await lanzador.lanzar(pedido("a", { maxParalelo: 5 }));
+  await lanzador.lanzar(pedido("b", { projectId: "prj-2", maxParalelo: 5 }));
+  const c = await lanzador.lanzar(pedido("c", { maxParalelo: 5 }));
+  const d = await lanzador.lanzar(pedido("d", { projectId: "prj-2", maxParalelo: 5 }));
+  await hasta(() => falso.llamadas.length === 2, "los dos primeros");
+  await espera(20);
+  assert.equal(falso.llamadas.length, 2, "el limite global es 2: no puede haber un tercer motor");
+  assert.deepEqual(c.run, { itemId: "c", estado: "en_cola", posicion: 1 });
+  assert.deepEqual(d.run, { itemId: "d", estado: "en_cola", posicion: 2 });
+
+  const cola = lanzador.cola();
+  assert.equal(cola.limite, 2);
+  assert.deepEqual(cola.corriendo.map((r) => r.itemId).sort(), ["a", "b"]);
+  assert.deepEqual(cola.esperando, [
+    { itemId: "c", projectId: "prj-1", posicion: 1 },
+    { itemId: "d", projectId: "prj-2", posicion: 2 },
+  ]);
+});
+
+test("cola global: reordenar lo que espera hace que el movido arranque antes", async (t) => {
+  const { falso, lanzador, pedido, eventos } = montar({ limite: () => 2 });
+  t.after(() => lanzador.detener());
+
+  for (const id of ["a", "b", "c", "d"]) await lanzador.lanzar(pedido(id, { maxParalelo: 5 }));
+  await hasta(() => falso.llamadas.length === 2, "los dos primeros");
+
+  eventos.length = 0;
+  const r = lanzador.reordenar(["d"]);
+  assert.deepEqual(
+    r.esperando.map((x) => [x.itemId, x.posicion]),
+    [
+      ["d", 1],
+      ["c", 2],
+    ],
+    "lo no listado conserva su orden relativo, detras de lo listado",
+  );
+  assert.ok(eventos.some((e) => e.tipo === "run.cambio" && e.datos.itemId === "d"), "la interfaz tiene que enterarse");
+  assert.ok(eventos.some((e) => e.tipo === "board.invalidado"));
+
+  falso.llamadas[0].terminar(1, { ok: false, reason: "x" });
+  await hasta(() => falso.llamadas.length === 3, "que se libere un hueco");
+  assert.deepEqual(falso.llamadas[2].args.slice(1, 3), ["plan", "d"], "arranca el movido, no el que llego antes");
+  assert.equal(lanzador.estado("c").posicion, 1);
+});
+
+test("cola global: reordenar ignora ids que no esperan (corriendo o desconocidos) sin fallar", async (t) => {
+  const { lanzador, pedido } = montar({ limite: () => 1 });
+  t.after(() => lanzador.detener());
+  for (const id of ["a", "b", "c"]) await lanzador.lanzar(pedido(id, { maxParalelo: 5 }));
+  const r = lanzador.reordenar(["zzz", "a", "c"]);
+  assert.deepEqual(r.esperando.map((x) => x.itemId), ["c", "b"]);
+});
+
+test("cola global: el tope POR proyecto sigue valiendo, y no bloquea a los de otro proyecto", async (t) => {
+  const { falso, lanzador, pedido } = montar({ limite: () => 3 });
+  t.after(() => lanzador.detener());
+
+  await lanzador.lanzar(pedido("a1", { maxParalelo: 1 }));
+  const a2 = await lanzador.lanzar(pedido("a2", { maxParalelo: 1 }));
+  await lanzador.lanzar(pedido("b1", { projectId: "prj-2", maxParalelo: 1 }));
+  await hasta(() => falso.llamadas.length === 2, "a1 y b1");
+  assert.equal(a2.run.estado, "en_cola", "prj-1 tiene tope 1 aunque el global deje 3");
+  assert.equal(lanzador.estado("b1").estado, "planificando", "b1 adelanta a a2: a2 espera por SU proyecto, no por el limite");
+});
+
+test("cola global: subir el limite arranca lo que esperaba sin esperar a que termine nadie", async (t) => {
+  let limite = 1;
+  const { falso, lanzador, pedido } = montar({ limite: () => limite });
+  t.after(() => lanzador.detener());
+
+  for (const id of ["a", "b", "c"]) await lanzador.lanzar(pedido(id, { maxParalelo: 5 }));
+  await hasta(() => falso.llamadas.length === 1, "uno");
+  limite = 3;
+  lanzador.revisar();
+  await hasta(() => falso.llamadas.length === 3, "que arranquen los que esperaban");
+  assert.equal(lanzador.cola().esperando.length, 0);
+});
+
+test("cola global: sin limite inyectado, el defecto es 3", async (t) => {
+  const { falso, lanzador, pedido } = montar();
+  t.after(() => lanzador.detener());
+  for (const id of ["a", "b", "c", "d"]) {
+    await lanzador.lanzar(pedido(id, { projectId: `prj-${id}`, maxParalelo: 5 }));
+  }
+  await hasta(() => falso.llamadas.length === 3, "tres");
+  await espera(20);
+  assert.equal(falso.llamadas.length, 3);
+  assert.equal(lanzador.cola().limite, 3);
 });

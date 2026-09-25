@@ -28,6 +28,28 @@
         "baseBranch": { "type": ["string", "null"] },
         "prTarget": { "type": ["string", "null"] },
         "pr": { "type": ["string", "null"] },
+        "termino": {
+          "enum": ["pr", "commit", null],
+          "description": "Donde termina el recorrido: `pr` abre un pull request; `commit` deja el trabajo commiteado en la rama del item, sin empujar ni abrir PR."
+        },
+        "ramaLista": {
+          "type": ["object", "null"],
+          "description": "Solo con `termino: commit`: la rama que quedo lista en el repositorio del operador. Es el final del recorrido igual que `pr` lo es con `termino: pr`.",
+          "required": ["rama", "base", "head", "commits"],
+          "properties": {
+            "rama": { "type": "string" },
+            "base": { "type": "string" },
+            "head": { "type": "string" },
+            "commits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["sha", "asunto"],
+                "properties": { "sha": { "type": "string" }, "asunto": { "type": "string" } }
+              }
+            }
+          }
+        },
         "providerStateWritten": {
           "type": ["string", "null"],
           "description": "El ultimo estado que el motor escribio en el ticket. Es lo que vuelve idempotente la escritura: relanzar no lo mueve dos veces."
@@ -103,7 +125,38 @@
           },
           "lastFailure": { "type": ["string", "null"] },
           "gateFingerprint": { "type": ["string", "null"], "description": "La huella del ultimo fallo del gate, sin lo que cambia entre corridas. Sirve para cortar cuando dos intentos producen el mismo fallo." },
-          "integratedAt": { "type": ["string", "null"], "format": "date-time" }
+          "integratedAt": { "type": ["string", "null"], "format": "date-time" },
+          "implementador": {
+            "type": ["object", "null"],
+            "description": "Quien implementa ESTA tarea si no es el implementador del recorrido: lo escribe un hand-off (spec 005, FR-007). null es el del recorrido.",
+            "required": ["runtime"],
+            "properties": {
+              "runtime": { "type": "string" },
+              "agente": { "type": ["string", "null"] }
+            }
+          },
+          "retomarEn": {
+            "enum": ["red", null],
+            "description": "Donde retoma el driver una tarea reabierta por un hand-off: en red, con la evidencia del rojo que ya habia, para no repetir RED."
+          },
+          "handoffs": {
+            "type": "array",
+            "description": "Cada vez que la tarea paso de un implementador a otro: de quien, a quien, desde que estado y que presupuesto ya estaba agotado.",
+            "items": {
+              "type": "object",
+              "required": ["at", "a", "estado"],
+              "properties": {
+                "at": { "type": "string", "format": "date-time" },
+                "de": { "type": ["string", "null"] },
+                "a": { "type": "string" },
+                "agente": { "type": ["string", "null"] },
+                "estado": { "type": "string" },
+                "motivo": { "type": ["string", "null"] },
+                "retomarEn": { "enum": ["red", null] },
+                "presupuesto": { "type": "object" }
+              }
+            }
+          }
         }
       }
     },

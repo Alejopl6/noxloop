@@ -40,6 +40,8 @@
  * @property {string} [tier]
  * @property {Record<string, string>} env el entorno, ya construido por la boveda
  * @property {string[]} [secretos] los nombres de `env` cuyo valor no puede aparecer en argv; sin esto, todos
+ * @property {string[]} [comandosPermitidos] los comandos del repositorio (su gate, sus runners) que una
+ *   REVISION puede correr ademas de leer; el adaptador los traduce a su lista cerrada de permisos
  */
 
 /**
@@ -51,6 +53,8 @@
  * @property {boolean} [budgetExhausted]
  * @property {string|null} [subtype] `null` es "no hubo subtipo", distinto de "no se declaro"
  * @property {string[]} [degradaciones] lo que el adaptador NO pudo hacer de lo que se le pidio
+ * @property {string} [causa] por que fallo, en una frase fija; hoy solo con `subtype: "sin_sesion"`
+ * @property {string} [accion] que hacer para que no vuelva a fallar; idem
  */
 
 // `degradaciones` no esta en el contrato escrito y esta aqui a proposito: la
@@ -155,6 +159,31 @@ export function validarEvento(ev) {
   }
   return { ok: problems.length === 0, problems };
 }
+
+/**
+ * Lo que se le dice a TODO runtime al lanzar una fase, ademas del encargo.
+ *
+ * EL FALLO QUE CIERRA. Lanzado con `-p`, un agente se comporta como en una
+ * conversacion: termina con "¿quieres que tambien...?" o se para a preguntar
+ * cual de dos caminos prefiere el operador. En una fase del motor no hay nadie
+ * que conteste: la pregunta ES el final de la fase, y lo que el motor lee es una
+ * fase que no hizo lo que se le pidio. El referente (Nodal, `launch.rs`) lo
+ * resuelve igual: un prompt de sistema AÑADIDO —no reemplaza el del runtime,
+ * que trae el uso de sus herramientas— que dice como es la situacion.
+ *
+ * Es texto del motor y no de un runtime, por eso vive en el contrato: cada
+ * adaptador lo entrega por la via que su CLI tenga (Claude:
+ * `--append-system-prompt` / `systemPrompt.append`; Codex: antepuesto al
+ * encargo, porque `codex exec --help` no ofrece otra).
+ */
+export const PROMPT_DESATENDIDO = [
+  "Estas corriendo sin supervision: te lanzo noxloop, un orquestador, para UNA fase de una tarea, y no hay",
+  "ninguna persona leyendo en vivo ni nadie que pueda contestarte.",
+  "- No hagas preguntas ni pidas confirmacion: nadie va a responder. Si falta un dato, decide lo razonable",
+  "  dentro del encargo y dilo en el reporte.",
+  "- Cuando termines, reporta en un mensaje corto que hiciste y que no pudiste hacer, y detente.",
+  "- No ofrezcas siguientes pasos ni preguntes si hace falta algo mas: el motor decide que sigue.",
+].join("\n");
 
 /** @type {readonly string[]} */
 export const CLAVES_DE_CAPACIDAD = Object.freeze(["resume", "cost", "effort", "hooks", "models"]);
@@ -321,6 +350,12 @@ export function validarPeticion(req) {
     }
   }
 
+  if (req.comandosPermitidos != null) {
+    const bien = Array.isArray(req.comandosPermitidos)
+      && req.comandosPermitidos.every((/** @type {any} */ x) => typeof x === "string" && x.trim());
+    if (!bien) problems.push("comandosPermitidos: tiene que ser una lista de comandos (strings no vacios)");
+  }
+
   if (esRevision(req.phase) && req.resume != null) {
     problems.push(
       `phase "${req.phase}" con resume "${req.resume}": una revision nunca retoma la sesion del implementador. ` +
@@ -429,9 +464,14 @@ export function adaptarADriver(adaptador, opts) {
   };
 }
 
-/** Un resultado de fase completo, para que ningun adaptador devuelva a medias. */
+/**
+ * Un resultado de fase completo, para que ningun adaptador devuelva a medias.
+ *
+ * `causa` y `accion` solo aparecen si vienen: son opcionales en el contrato, y
+ * un campo `undefined` de mas lo veria cualquiera que compare el resultado.
+ */
 export function resultadoDeFase(
-  /** @type {{ok: boolean, sessionId?: string|null, usd?: number|null, text?: string, budgetExhausted?: boolean, subtype?: string|null}} */ p,
+  /** @type {{ok: boolean, sessionId?: string|null, usd?: number|null, text?: string, budgetExhausted?: boolean, subtype?: string|null, causa?: string, accion?: string}} */ p,
 ) {
   return {
     ok: p.ok,
@@ -440,5 +480,40 @@ export function resultadoDeFase(
     text: p.text ?? "",
     budgetExhausted: p.budgetExhausted ?? false,
     subtype: p.subtype ?? null,
+    ...(typeof p.causa === "string" ? { causa: p.causa } : {}),
+    ...(typeof p.accion === "string" ? { accion: p.accion } : {}),
+  };
+}
+
+/**
+ * Si una fase que FALLO lo hizo porque la credencial del runtime no vale, el
+ * resultado lo dice con `subtype: "sin_sesion"`, su causa y su accion. Si no,
+ * el resultado sale tal cual.
+ *
+ * `errorDelRuntime` es SOLO lo que el runtime dijo de su error, nunca la prosa
+ * del agente: ver `errorDeSesion`. Una fase que termino bien no se mira.
+ *
+ * EL TEXTO ORIGINAL NO SE COPIA al resultado: un error de autenticacion es
+ * justo donde un runtime repite el token que le rechazaron, y `text` acaba en
+ * el estado del run y en el board. Lo que dijo el runtime ya quedo en el
+ * transcript de la fase, que se redacta antes de tocar disco.
+ *
+ * @param {string} runtime
+ * @param {PhaseResult} resultado
+ * @param {string} errorDelRuntime
+ * @param {(runtime: string, texto: string) => {causa: string, accion: string}|null} reconocer
+ * @returns {PhaseResult}
+ */
+export function conSesionReconocida(runtime, resultado, errorDelRuntime, reconocer) {
+  if (resultado.ok || resultado.subtype === "cancelada") return resultado;
+  const s = reconocer(runtime, errorDelRuntime);
+  if (!s) return resultado;
+  return {
+    ...resultado,
+    ok: false,
+    subtype: "sin_sesion",
+    causa: s.causa,
+    accion: s.accion,
+    text: `${s.causa}\n${s.accion}`,
   };
 }

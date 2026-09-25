@@ -25,6 +25,7 @@
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { buildHookSettings, validateHookSettings } from "./session-settings.mjs";
+import { resolverBinario } from "../../adapters/src/binarios.mjs";
 
 const PAQUETE = "@anthropic-ai/claude-agent-sdk";
 
@@ -372,7 +373,9 @@ export function cliArgs(p) {
 async function transporteCli(p) {
   const args = cliArgs(p);
 
-  const r = spawnSync("claude", args, {
+  // POR SU RUTA ABSOLUTA: lanzado desde una app de macOS, el PATH no trae
+  // `~/.local/bin` ni Homebrew y `claude` a secas da ENOENT. Ver `binarios.mjs`.
+  const r = spawnSync(resolverBinario("claude", { env: p.env }) ?? "claude", args, {
     cwd: p.cwd,
     encoding: "utf8",
     timeout: p.timeoutMs,

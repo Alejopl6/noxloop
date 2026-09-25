@@ -57,9 +57,13 @@ function dentroDe(ruta, base) {
 
 /**
  * @param {string} repoPath checkout principal
- * @param {{branch: string, base: string, dest: string, fetch?: boolean}} opts
+ * @param {{branch: string, base: string, dest: string, fetch?: boolean, local?: boolean}} opts
  *   `base` va SIN el prefijo `origin/`: se antepone aca. Es un error que ya se
  *   cometio pasandolo de las dos formas segun el llamador.
+ *   `local`: la base es la rama LOCAL, sin fetch y sin mirar `origin/`. Es el
+ *   termino `commit`: el trabajo nace de lo que el operador tiene en su
+ *   maquina y no sale de ella, asi que preguntarle al remoto —si lo hay— seria
+ *   hacer red para un recorrido que prometio no hacerla.
  */
 export function add(repoPath, opts) {
   const { branch, base, dest } = opts;
@@ -69,9 +73,9 @@ export function add(repoPath, opts) {
     throw new Error(`${dest} existe y no es un worktree de ${repoPath}`);
   }
 
-  if (opts.fetch !== false) git(repoPath, ["fetch", "origin", base], { permitirFallo: true });
+  if (opts.fetch !== false && !opts.local) git(repoPath, ["fetch", "origin", base], { permitirFallo: true });
 
-  const puntoBase = git(repoPath, ["rev-parse", "--verify", `origin/${base}`], { permitirFallo: true })
+  const puntoBase = !opts.local && git(repoPath, ["rev-parse", "--verify", `origin/${base}`], { permitirFallo: true })
     ? `origin/${base}`
     : base;
 

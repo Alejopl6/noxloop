@@ -19,6 +19,7 @@ import type {
   Board,
   DiffDeTarea,
   EstadoDeRuntime,
+  RespuestaDeDecisionDeMovida,
   RespuestaDeLanzamiento,
   ResultadoDelModoRapido,
   RunListado,
@@ -740,4 +741,124 @@ export const RUTAS_DEL_TRANSCRIPT = {
     const base = `/v1/runs/${encodeURIComponent(itemId)}/tasks/${encodeURIComponent(taskId)}/transcript`
     return consulta ? `${base}?${consulta}` : base
   },
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · Orden a mano del board y cola global (FR-005..006)              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Las rutas del orden, la cola y los ajustes, aparte de `RUTAS` por lo mismo
+ * que el diagnostico: se LEEN con `useLectura` (necesita la ruta como texto) y
+ * se escriben con `cliente.enviar`/`useMutacion`. La interfaz pide; el
+ * servicio guarda (principio VIII).
+ */
+export const RUTAS_DE_ORDEN_Y_COLA = {
+  /** `PUT {columna, itemIds}`: la columna entera de ESE proyecto, de arriba abajo. */
+  ordenDelBoard(proyectoId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/board/orden`
+  },
+  /** `GET` la cola; `PUT {orden: [itemId...]}` reordena lo que espera. */
+  cola(): string {
+    return '/v1/queue'
+  },
+  /** `GET` y `PATCH {runsSimultaneos}`. */
+  ajustes(): string {
+    return '/v1/settings'
+  },
+}
+
+/** Los eventos que cambian la cola: cada run que arranca, termina o cambia de puesto. */
+export const EVENTOS_DE_LA_COLA = ['run.cambio', 'board.invalidado', 'sincronizar_completo'] as const
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · Linear completo: el gestor del proyecto (FR-001..004)            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Las rutas del gestor de un proyecto, aparte de `RUTAS` por lo mismo que el
+ * diagnostico: la pestana «Gestor» LEE los estados con `useLectura` y GUARDA
+ * con `useMutacion` por el PATCH de siempre, que valida contra el esquema del
+ * proveedor. La interfaz no escribe nada por su cuenta (principio VIII).
+ */
+export const RUTAS_DEL_GESTOR = {
+  /** `PATCH {opciones?, stateMap?}` (`CambioDelTracker` → `TrackerGuardado`). */
+  tracker(proyectoId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/tracker`
+  },
+  /** `GET` → `EstadosDelTracker`: los estados reales del gestor y el mapa vigente. */
+  estados(proyectoId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/tracker/estados`
+  },
+}
+
+/**
+ * Cuando releer la pestana: `board.invalidado` lo emite el PATCH del tracker
+ * (y cualquier otra ventana que lo guarde), `sincronizar_completo` la
+ * reconexion del canal.
+ */
+export const EVENTOS_DEL_GESTOR = ['board.invalidado', 'sincronizar_completo'] as const
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · El hand-off: pasar una tarea a otro agente (FR-007)             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * La ruta del hand-off, aparte de `RUTAS` por lo mismo que el diagnostico. Se
+ * ESCRIBE con `useMutacion` (`POST` con `PedidoDeHandoff` → `RespuestaDeHandoff`):
+ * la interfaz pide, el servicio valida y lanza el motor, y el motor escribe el
+ * override en el estado del run (principio VIII).
+ */
+export const RUTAS_DEL_HANDOFF = {
+  handoff(itemId: string, taskId: string): string {
+    return `/v1/runs/${encodeURIComponent(itemId)}/tasks/${encodeURIComponent(taskId)}/handoff`
+  },
+  /** La flota del proyecto: de ahi sale el revisor que el selector excluye. */
+  agentes(proyectoId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/agents`
+  },
+}
+
+/** Cuando releer lo que el selector del hand-off muestra: el run cambio, o la sesion de un runtime. */
+export const EVENTOS_DEL_HANDOFF = ['run.cambio', 'board.invalidado', 'sincronizar_completo'] as const
+
+/* -------------------------------------------------------------------------- */
+/* Spec 005 · «Seguir aqui» o «Soltarla» sobre una tarjeta movida (FR-004)     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * La ruta de la decision sobre una movida, aparte de `RUTAS` por lo mismo que
+ * el orden del board: la guarda el servicio en su almacen, y ni el gestor ni el
+ * run en disco se enteran (principios VI y VIII).
+ */
+export const RUTAS_DE_MOVIDAS = {
+  /** `POST {decision, destino?}` (`PedidoDeDecisionDeMovida` → `RespuestaDeDecisionDeMovida`). */
+  decision(proyectoId: string, itemId: string): string {
+    return `/v1/projects/${encodeURIComponent(proyectoId)}/board/movidas/${encodeURIComponent(itemId)}`
+  },
+}
+
+/**
+ * Que se le pide al servicio al pulsar «Seguir aqui» o «Soltarla». Va al
+ * proyecto de la TARJETA (en «Todos» hay varios) con el id del TICKET —no el
+ * `id` compuesto de la tarjeta—, y lleva el destino que el operador vio.
+ */
+export function pedidoDeDecision(
+  tarjeta: { proyecto: { id: string }; ticket: { id: string }; movida?: { destino: string | null } | null },
+  decision: 'seguir' | 'soltar',
+): { ruta: string; cuerpo: { decision: 'seguir' | 'soltar'; destino: string | null } } {
+  return {
+    ruta: RUTAS_DE_MOVIDAS.decision(tarjeta.proyecto.id, tarjeta.ticket.id),
+    cuerpo: { decision, destino: tarjeta.movida?.destino ?? null },
+  }
+}
+
+/** Pide la decision al servicio. La interfaz no guarda nada: repinta al volver. */
+export function decidirMovida(
+  cliente: Pick<ClienteServicio, 'enviar'>,
+  tarjeta: Parameters<typeof pedidoDeDecision>[0],
+  decision: 'seguir' | 'soltar',
+): Promise<RespuestaDeDecisionDeMovida> {
+  const { ruta, cuerpo } = pedidoDeDecision(tarjeta, decision)
+  return cliente.enviar<RespuestaDeDecisionDeMovida>('POST', ruta, cuerpo)
 }

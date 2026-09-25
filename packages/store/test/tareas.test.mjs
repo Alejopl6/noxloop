@@ -26,9 +26,11 @@ function proyecto(almacen, workspace, nombre = "Payments") {
 }
 
 test("la migracion de las tareas es una version NUEVA, no un retoque de las que ya corrieron", () => {
-  const ultima = MIGRACIONES.at(-1);
-  assert.equal(ultima.nombre, "tareas-propias");
-  assert.ok(ultima.version >= 5);
+  // Por nombre y no `at(-1)`: despues llegaron otras (el orden del board, spec
+  // 005), y lo que importa es que esta sea una version propia, no la ultima.
+  const propia = MIGRACIONES.find((m) => m.nombre === "tareas-propias");
+  assert.ok(propia);
+  assert.ok(propia.version >= 5);
 });
 
 test("el enum del estado es el canonico mas `backlog`, y el termino es changes|commit|pr", () => {

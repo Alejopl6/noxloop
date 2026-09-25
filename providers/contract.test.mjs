@@ -271,3 +271,51 @@ test("sin la capacidad, el chequeo de listItems exige la degradacion declarada y
   await chequeo.run();
   assert.equal(llamadas, 0);
 });
+
+// ---------------------------------------------------------------------------
+// listStates (spec 005, FR-002: el editor visual del stateMap)
+// ---------------------------------------------------------------------------
+
+import { validateStateList } from "./contract.mjs";
+
+test("listStates es una capacidad OPCIONAL conocida, respaldada por la funcion listStates", () => {
+  assert.ok(CAPABILITY_KEYS.includes("listStates"));
+  assert.ok(OPTIONAL_CAPABILITY_KEYS.includes("listStates"), "hacerla obligatoria rompe a todo proveedor anterior");
+  assert.equal(CAPABILITY_FUNCTIONS.listStates, "listStates");
+});
+
+test("un proveedor sin listStates sigue validando, y can() lo dice nombrando proveedor y capacidad", () => {
+  // El falso no la declara: es exactamente el proveedor escrito antes de ella.
+  assert.equal("listStates" in fake.capabilities(), false);
+  assert.equal(validateProvider(fake).ok, true);
+  const r = can(fake, "listStates");
+  assert.equal(r.available, false);
+  assert.match(String(r.reason), /listStates/);
+  assert.match(String(r.reason), /fake/);
+});
+
+test("listStates en true sin la funcion falla AL CARGAR, no al abrir el editor", () => {
+  const sinFuncion = { ...fake, capabilities: () => ({ ...fake.capabilities(), listStates: true }) };
+  assert.ok(validateProvider(sinFuncion).problems.join(" ").includes("listStates"));
+});
+
+test("validateStateList: {id, name, category, suggested}, sin nombres repetidos ni un canonico inventado", () => {
+  const bien = [
+    { id: "1", name: "Todo", category: "unstarted", suggested: "todo" },
+    { id: "2", name: "Pausa", category: null, suggested: null },
+  ];
+  assert.equal(validateStateList(bien).ok, true, validateStateList(bien).problems.join("; "));
+  assert.match(validateStateList("no").problems.join(" "), /array/);
+  assert.match(validateStateList([{ id: "1", name: "" }]).problems.join(" "), /name/);
+  assert.match(validateStateList([{ id: "1", name: "A", suggested: "revisando" }]).problems.join(" "), /suggested/);
+  // El editor guarda NOMBRES (el stateMap es por nombre): dos estados con el
+  // mismo nombre harian que el selector de uno escriba el del otro.
+  assert.match(validateStateList([{ id: "1", name: "A" }, { id: "2", name: "A" }]).problems.join(" "), /repetid/);
+});
+
+test("el contrato lleva un chequeo de listStates: en true lista estados validos; en false can() lo declara", async () => {
+  const nombres = contractChecks(fake, fake.fixtures).map((c) => c.name);
+  assert.ok(nombres.some((n) => /listStates/.test(n)), nombres.join("\n"));
+  // El falso no la tiene: el chequeo pasa por la rama de la degradacion.
+  for (const check of contractChecks(fake, fake.fixtures)) await check.run();
+});
