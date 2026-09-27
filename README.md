@@ -134,6 +134,17 @@ npm run desktop                       # escritorio (necesita Rust)
 npm run service & npm run studio:dev  # o servicio + interfaz en el navegador
 ```
 
+**Si `npm run desktop` no encuentra `cargo`**, Rust está instalado pero no en el
+`PATH` de esta shell. Cárgalo antes de volver a lanzarlo:
+
+```bash
+source "$HOME/.cargo/env"
+```
+
+Eso vale solo para la shell actual. Los shells no interactivos —los que usan el
+servicio y las tareas— no leen `~/.zshrc`, así que para que lo encuentren
+siempre, deja esa misma línea en `~/.zshenv`.
+
 Cómo se levanta cada pieza y cómo se verifica, en
 [`specs/002-control-plane/quickstart.md`](specs/002-control-plane/quickstart.md).
 
